@@ -3,8 +3,10 @@ plugins {
     id 'org.jetbrains.kotlin.android'
     id 'org.jetbrains.kotlin.plugin.compose'
     id 'com.google.devtools.ksp'
-    id 'com.google.gms.google-services'
-    id 'com.google.firebase.crashlytics'
+
+    // Disabled for GitHub build (google-services.json not available)
+    // id 'com.google.gms.google-services'
+    // id 'com.google.firebase.crashlytics'
 }
 
 android {
