@@ -453,44 +453,92 @@ object SipEngine {
             }
         }
     }
+    private fun configureCodecs(
+    preferred: PreferredCodec,
+    ecEnabled: Boolean,
+    nsEnabled: Boolean,
+    agcEnabled: Boolean
+) {
+    val ep = endpoint ?: return
 
-    private fun configureCodecs(preferred: PreferredCodec, ecEnabled: Boolean, nsEnabled: Boolean, agcEnabled: Boolean) {
-        val ep = endpoint ?: return
-        try {
-            val codecs = ep.codecEnum2()
-            for (i in 0 until codecs.size) {
-                val codec = codecs.get(i)
-                val codecId = codec.codecId
-                val name = codecId.lowercase()
-                
-                log("Codec found: $codecId")
-                
-                // Keep only G722, PCMA, PCMU, and OPUS. Disable all others (priority = 0)
-                val isPreferred = when (preferred) {
-                    PreferredCodec.OPUS -> name.contains("opus")
-                    PreferredCodec.G722 -> name.contains("g722") && !name.contains("g7221")
-                    PreferredCodec.G711U -> name.contains("pcmu")
-                    PreferredCodec.G711A -> name.contains("pcma")
-                }
-                
-                val keep = when (preferred) {
-                    PreferredCodec.OPUS -> name.contains("opus") || name.contains("pcma") || name.contains("pcmu")
-                    PreferredCodec.G722 -> (name.contains("g722") && !name.contains("g7221")) || name.contains("pcma") || name.contains("pcmu")
-                    PreferredCodec.G711U, PreferredCodec.G711A -> name.contains("pcmu") || name.contains("pcma")
-                }
-                
-                if (keep) {
-                    val priority = if (isPreferred) 250 else 150
-                    ep.codecSetPriority(codecId, priority.toShort())
-                } else {
-                    ep.codecSetPriority(codecId, 0.toShort())
-                }
+    try {
+        val codecs = ep.codecEnum2()
+
+        for (i in 0 until codecs.size) {
+            val codec = codecs.get(i)
+            val codecId = codec.codecId
+            val name = codecId.lowercase()
+
+            log("Codec found: $codecId")
+
+            val isPreferred = when (preferred) {
+                PreferredCodec.AUTO ->
+                    name.contains("g729")
+
+                PreferredCodec.G729 ->
+                    name.contains("g729")
+
+                PreferredCodec.OPUS ->
+                    name.contains("opus")
+
+                PreferredCodec.G722 ->
+                    name.contains("g722") && !name.contains("g7221")
+
+                PreferredCodec.G711U ->
+                    name.contains("pcmu")
+
+                PreferredCodec.G711A ->
+                    name.contains("pcma")
             }
-        } catch (e: Throwable) {
-            log("Error configuring codecs: ${e.message}", true)
-        }
-    }
 
+            val keep = when (preferred) {
+
+                PreferredCodec.AUTO ->
+                    name.contains("g729") ||
+                    (name.contains("g722") && !name.contains("g7221")) ||
+                    name.contains("pcmu") ||
+                    name.contains("pcma")
+
+                PreferredCodec.G729 ->
+                    name.contains("g729") ||
+                    name.contains("pcmu") ||
+                    name.contains("pcma")
+
+                PreferredCodec.OPUS ->
+                    name.contains("opus") ||
+                    name.contains("pcmu") ||
+                    name.contains("pcma")
+
+                PreferredCodec.G722 ->
+                    (name.contains("g722") && !name.contains("g7221")) ||
+                    name.contains("pcmu") ||
+                    name.contains("pcma")
+
+                PreferredCodec.G711U,
+                PreferredCodec.G711A ->
+                    name.contains("pcmu") ||
+                    name.contains("pcma")
+            }
+
+            if (keep) {
+                val priority = when {
+                    isPreferred -> 250
+                    name.contains("g729") -> 240
+                    name.contains("g722") && !name.contains("g7221") -> 220
+                    name.contains("pcmu") -> 180
+                    name.contains("pcma") -> 170
+                    else -> 150
+                }
+
+                ep.codecSetPriority(codecId, priority.toShort())
+            } else {
+                ep.codecSetPriority(codecId, 0.toShort())
+            }
+        }
+    } catch (e: Throwable) {
+        log("Error configuring codecs: ${e.message}", true)
+    }
+}
     fun destroy() {
         try {
             registerCurrentThread()
