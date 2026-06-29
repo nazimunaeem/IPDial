@@ -21,38 +21,45 @@ object TelecomHelper {
     fun registerPhoneAccount(context: Context) {
         val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as TelecomManager
         val handle = getPhoneAccountHandle(context)
-        
+
         try {
             telecomManager.unregisterPhoneAccount(handle)
         } catch (e: Exception) {
             android.util.Log.e("TelecomHelper", "Error unregistering phone account", e)
         }
-        
+
         val extras = Bundle().apply {
             putBoolean(PhoneAccount.EXTRA_LOG_SELF_MANAGED_CALLS, false)
-            // Use string literal if constant is missing in current API level context
             putBoolean("android.telecom.extra.SKIP_CALL_LOGGING", true)
         }
-        val phoneAccount = PhoneAccount.builder(handle, context.getString(R.string.app_name))
+
+        val phoneAccount = PhoneAccount.builder(
+            handle,
+            context.getString(R.string.app_name)
+        )
             .setCapabilities(PhoneAccount.CAPABILITY_SELF_MANAGED)
             .setShortDescription("SIP Calls via IPDial")
             .addSupportedUriScheme("ipdial")
             .setExtras(extras)
             .build()
-            
+
         telecomManager.registerPhoneAccount(phoneAccount)
     }
 
     fun reportIncomingCall(context: Context, number: String, name: String) {
         val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as TelecomManager
         val handle = getPhoneAccountHandle(context)
-        
+
         val cleanNumber = number.removePrefix("sip:")
+
         val extras = Bundle().apply {
-            putParcelable(TelecomManager.EXTRA_INCOMING_CALL_ADDRESS, Uri.fromParts("ipdial", cleanNumber, null))
+            putParcelable(
+                TelecomManager.EXTRA_INCOMING_CALL_ADDRESS,
+                Uri.fromParts("ipdial", cleanNumber, null)
+            )
             putString(TelecomManager.EXTRA_INCOMING_CALL_EXTRAS, name)
         }
-        
+
         try {
             telecomManager.addNewIncomingCall(handle, extras)
         } catch (e: Exception) {
@@ -60,29 +67,18 @@ object TelecomHelper {
         }
     }
 
-    fun placeOutgoingCall(context: Context, number: String, accountId: String): Boolean {
-        val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as TelecomManager
-        val handle = getPhoneAccountHandle(context)
-        
-        val cleanNumber = number.removePrefix("sip:")
-        val uri = Uri.fromParts("ipdial", cleanNumber, null)
-        
-        // Put accountId in both the root extras and the outgoing call extras bundle for compatibility
-        val extras = Bundle().apply {
-            putParcelable(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, handle)
-            putString("com.ipdial.EXTRA_ACCOUNT_ID", accountId)
-            val subExtras = Bundle().apply {
-                putString("com.ipdial.EXTRA_ACCOUNT_ID", accountId)
-            }
-            putBundle(TelecomManager.EXTRA_OUTGOING_CALL_EXTRAS, subExtras)
-        }
-        
-        return try {
-            telecomManager.placeCall(uri, extras)
-            true
-        } catch (e: Exception) {
-            android.util.Log.e("TelecomHelper", "Error placing call via Telecom", e)
-            false
-        }
+    // Vivo Android 8.1 test patch
+    fun placeOutgoingCall(
+        context: Context,
+        number: String,
+        accountId: String
+    ): Boolean {
+
+        android.util.Log.w(
+            "TelecomHelper",
+            "Telecom bypass enabled - forcing direct SIP call"
+        )
+
+        return false
     }
 }
