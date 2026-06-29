@@ -28,8 +28,12 @@ data class SipAccount(
 enum class Transport { UDP, TCP, TLS }
 
 enum class PreferredCodec(val codecName: String, val priority: Int) {
-    OPUS("opus/48000/2", 255),
-    G722("G722/16000/1", 200),
+    AUTO("AUTO", 255),
+    G729("G729/8000/1", 250),
+
+    OPUS("opus/48000/2", 240),
+    G722("G722/16000/1", 220),
+
     G711U("PCMU/8000/1", 150),
     G711A("PCMA/8000/1", 140),
 }
