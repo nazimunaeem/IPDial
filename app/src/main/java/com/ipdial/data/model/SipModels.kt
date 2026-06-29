@@ -16,7 +16,8 @@ data class SipAccount(
     val regStatus: RegStatus = RegStatus.UNREGISTERED,
     val regStatusText: String = "",
     // Audio quality settings
-    val codec: PreferredCodec = PreferredCodec.G711A,
+    // Audio quality settings
+    val codec: PreferredCodec = PreferredCodec.G729,
     val ecEnabled: Boolean = true,   // Echo cancellation
     val nsEnabled: Boolean = true,   // Noise suppression
     val agcEnabled: Boolean = true,  // Auto gain control
