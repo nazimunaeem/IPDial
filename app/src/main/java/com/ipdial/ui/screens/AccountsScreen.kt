@@ -230,7 +230,7 @@ fun AccountEditSheet(
     var proxy     by remember { mutableStateOf(existing?.proxy ?: "") }
     var port      by remember { mutableStateOf(existing?.port?.toString() ?: "") }
     var transport by remember { mutableStateOf(existing?.transport ?: Transport.UDP) }
-    var codec     by remember { mutableStateOf(existing?.codec ?: PreferredCodec.G711A) }
+    var codec     by remember { mutableStateOf(existing?.codec ?: PreferredCodec.G729) }
     var ecEnabled by remember { mutableStateOf(existing?.ecEnabled ?: true) }
     var nsEnabled by remember { mutableStateOf(existing?.nsEnabled ?: true) }
     var agcEnabled by remember { mutableStateOf(existing?.agcEnabled ?: true) }
