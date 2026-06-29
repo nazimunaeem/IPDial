@@ -463,6 +463,8 @@ object SipEngine {
                 val codecId = codec.codecId
                 val name = codecId.lowercase()
                 
+                log("Codec found: $codecId")
+                
                 // Keep only G722, PCMA, PCMU, and OPUS. Disable all others (priority = 0)
                 val isPreferred = when (preferred) {
                     PreferredCodec.OPUS -> name.contains("opus")
