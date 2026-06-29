@@ -176,19 +176,6 @@ class SipService : Service() {
                     }
                 }
             }
-
-            // 2. Ensure default codec G711A
-            try {
-                val accountsList = repo.accounts.first()
-                accountsList.forEach { acc ->
-                    if (acc.codec != com.ipdial.data.model.PreferredCodec.G711A) {
-                        repo.saveAccount(acc.copy(codec = com.ipdial.data.model.PreferredCodec.G711A))
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e("SipService", "Failed to force G711A codec", e)
-            }
-
             // 3. Register accounts flow
             registerAccountsFromDataStore()
 
