@@ -41,7 +41,6 @@ object SipEngine {
     private var tcpTransportId: Int = -1
     private var tlsTransportId: Int = -1
 
-    // Added AudioManager for Hardware Level Audio Routing
     private lateinit var audioManager: AudioManager
 
     private val _callSession = MutableStateFlow<CallSession?>(null)
@@ -95,7 +94,6 @@ object SipEngine {
         try {
             System.loadLibrary("pjsua2")
             
-            // Initialize AudioManager
             audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
             
             val writer = SipLogWriter()
@@ -108,13 +106,12 @@ object SipEngine {
                     logConfig.consoleLevel = 4
                     logConfig.writer = writer
                     
-                    // FIXED: Highest Quality Resampling and WebRTC AEC enabled
                     medConfig.apply {
-                        ecOptions = 1         // 1 = WebRTC AEC
+                        ecOptions = 1         // WebRTC AEC
                         ecTailLen = 200
                         noVad = false
                         clockRate = 48000
-                        quality = 10          // 10 = Maximum Resampler Quality for 8kHz (G.729) upsampling
+                        quality = 10          // High quality upsampling for 8kHz
                     }
                     uaConfig.apply {
                         userAgent = "IPDial/1.0 (Android)"
@@ -204,12 +201,6 @@ object SipEngine {
                         pjmedia_srtp_use.PJMEDIA_SRTP_OPTIONAL
                     else
                         pjmedia_srtp_use.PJMEDIA_SRTP_DISABLED
-                        
-                    // Jitter Buffer Optimization for stability in low bandwidth
-                    jbInit = 40
-                    jbMinPre = 40
-                    jbMaxPre = 300
-                    jbMax = 300
                 }
 
                 natConfig.iceEnabled = false
@@ -458,7 +449,7 @@ object SipEngine {
         }
     }
 
-    // FIXED: Dynamic Codec Logic
+    // FIXED: Dynamic Codec with Exhaustive 'when' expression fallback
     private fun configureCodecs(preferred: PreferredCodec, ecEnabled: Boolean, nsEnabled: Boolean, agcEnabled: Boolean) {
         val ep = endpoint ?: return
         try {
@@ -470,6 +461,7 @@ object SipEngine {
                 PreferredCodec.G722  -> "g722"
                 PreferredCodec.G711U -> "pcmu"
                 PreferredCodec.G711A -> "pcma"
+                else                 -> "opus" // Exhaustive fallback safely handles AUTO or any other states
             }
 
             log("Configuring codecs. Preferred target keyword: $targetCodecKeyword")
@@ -519,7 +511,6 @@ object SipEngine {
             
             registeredThreads.clear()
             
-            // Revert audio mode on destroy
             audioManager.mode = AudioManager.MODE_NORMAL
             audioManager.isSpeakerphoneOn = false
         } catch (e: Throwable) { 
@@ -627,7 +618,6 @@ object SipEngine {
                 if (newState == CallState.DISCONNECTED) {
                     log("Call $currentCallId DISCONNECTED (code=${ci.lastStatusCode}, reason=${ci.lastReason})")
                     
-                    // FIXED: Revert Audio Mode and Settings on Disconnect
                     audioManager.mode = AudioManager.MODE_NORMAL
                     audioManager.isSpeakerphoneOn = false
 
@@ -694,7 +684,6 @@ object SipEngine {
                     return
                 }
 
-                // FIXED: Force AudioManager into communication mode when Media is Active
                 audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
                 audioManager.isSpeakerphoneOn = _callSession.value?.isSpeaker ?: false
 
