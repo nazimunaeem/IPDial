@@ -106,12 +106,14 @@ object SipEngine {
                     logConfig.consoleLevel = 4
                     logConfig.writer = writer
                     
+                    // FIXED: Static noise & Buffer Underrun Fix applied here
                     medConfig.apply {
-                        ecOptions = 1         // WebRTC AEC
+                        ecOptions = 1         // WebRTC AEC (Echo Cancellation)
                         ecTailLen = 200
-                        noVad = false
-                        clockRate = 48000
-                        quality = 10          // High quality upsampling for 8kHz
+                        noVad = true          // FIXED: true disables comfort noise generation
+                        clockRate = 16000     // FIXED: 16kHz is optimal for CPU load & narrow/wideband
+                        sndClockRate = 0      // FIXED: 0 uses device hardware native rate seamlessly
+                        quality = 5           // FIXED: Balanced resampling quality to prevent distortion
                     }
                     uaConfig.apply {
                         userAgent = "IPDial/1.0 (Android)"
@@ -449,7 +451,6 @@ object SipEngine {
         }
     }
 
-    // FIXED: Dynamic Codec with Exhaustive 'when' expression fallback
     private fun configureCodecs(preferred: PreferredCodec, ecEnabled: Boolean, nsEnabled: Boolean, agcEnabled: Boolean) {
         val ep = endpoint ?: return
         try {
@@ -461,7 +462,7 @@ object SipEngine {
                 PreferredCodec.G722  -> "g722"
                 PreferredCodec.G711U -> "pcmu"
                 PreferredCodec.G711A -> "pcma"
-                else                 -> "opus" // Exhaustive fallback safely handles AUTO or any other states
+                else                 -> "opus" // Exhaustive fallback
             }
 
             log("Configuring codecs. Preferred target keyword: $targetCodecKeyword")
