@@ -56,6 +56,9 @@ object SipEngine {
 
     private var recorder: AudioMediaRecorder? = null
     private var logWriter: SipLogWriter? = null
+    
+    // Volume Boost Factor
+    private const val VOLUME_BOOST_FACTOR = 2.5f
 
     private fun log(message: String, isError: Boolean = false) {
         if (isError) {
@@ -106,14 +109,13 @@ object SipEngine {
                     logConfig.consoleLevel = 4
                     logConfig.writer = writer
                     
-                    // CRITICAL FIXED: Native Audio Caching and Hardware Synchronization for Vivo/MediaTek
                     medConfig.apply {
                         ecOptions = 1         // WebRTC AEC
                         ecTailLen = 200
-                        noVad = false         // Enabled VAD to safely handle silence suppression without loops
-                        clockRate = 44100     // Universal Native rate for Android Sound card to avoid Underflows
-                        sndClockRate = 44100  // Strictly match hardware clock rate to eliminate 'Demo Recording' loops
-                        quality = 4           // Optimized resampler quality for stable performance on low-end CPUs
+                        noVad = true          // FIXED: true = VAD is completely disabled, stopping words from cutting off
+                        clockRate = 44100     // Universal Native rate for Android Sound card
+                        sndClockRate = 44100  // Strictly match hardware clock rate
+                        quality = 4           
                     }
                     uaConfig.apply {
                         userAgent = "IPDial/1.0 (Android)"
@@ -369,7 +371,8 @@ object SipEngine {
                         val mi = ci.media.get(0)
                         if (mi.type == pjmedia_type.PJMEDIA_TYPE_AUDIO) {
                             val aud = AudioMedia.typecastFromMedia(call.getMedia(mi.index))
-                            if (muted) aud.adjustTxLevel(0f) else aud.adjustTxLevel(1f)
+                            // FIXED: Restore volume to Boost Factor instead of 1.0f when unmuting
+                            if (muted) aud.adjustTxLevel(0f) else aud.adjustTxLevel(VOLUME_BOOST_FACTOR)
                         }
                     }
                     _callSession.value = session.copy(isMuted = muted)
@@ -694,6 +697,11 @@ object SipEngine {
                         if (mi.type == pjmedia_type.PJMEDIA_TYPE_AUDIO &&
                             mi.status == pjsua_call_media_status.PJSUA_CALL_MEDIA_ACTIVE) {
                             val aud = AudioMedia.typecastFromMedia(getMedia(mi.index.toLong()))
+                            
+                            // FIXED: Volume Amplification
+                            aud.adjustRxLevel(VOLUME_BOOST_FACTOR) // Boost Incoming Audio by 250%
+                            aud.adjustTxLevel(VOLUME_BOOST_FACTOR) // Boost Outgoing Mic by 250%
+
                             aud.startTransmit(endpoint?.audDevManager()?.playbackDevMedia)
                             endpoint?.audDevManager()?.captureDevMedia?.startTransmit(aud)
 
