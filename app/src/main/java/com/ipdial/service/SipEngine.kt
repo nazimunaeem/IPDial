@@ -106,14 +106,14 @@ object SipEngine {
                     logConfig.consoleLevel = 4
                     logConfig.writer = writer
                     
-                    // FIXED: Static noise & Buffer Underrun Fix applied here
+                    // CRITICAL FIXED: Native Audio Caching and Hardware Synchronization for Vivo/MediaTek
                     medConfig.apply {
-                        ecOptions = 1         // WebRTC AEC (Echo Cancellation)
+                        ecOptions = 1         // WebRTC AEC
                         ecTailLen = 200
-                        noVad = true          // FIXED: true disables comfort noise generation
-                        clockRate = 16000     // FIXED: 16kHz is optimal for CPU load & narrow/wideband
-                        sndClockRate = 0      // FIXED: 0 uses device hardware native rate seamlessly
-                        quality = 5           // FIXED: Balanced resampling quality to prevent distortion
+                        noVad = false         // Enabled VAD to safely handle silence suppression without loops
+                        clockRate = 44100     // Universal Native rate for Android Sound card to avoid Underflows
+                        sndClockRate = 44100  // Strictly match hardware clock rate to eliminate 'Demo Recording' loops
+                        quality = 4           // Optimized resampler quality for stable performance on low-end CPUs
                     }
                     uaConfig.apply {
                         userAgent = "IPDial/1.0 (Android)"
@@ -462,7 +462,7 @@ object SipEngine {
                 PreferredCodec.G722  -> "g722"
                 PreferredCodec.G711U -> "pcmu"
                 PreferredCodec.G711A -> "pcma"
-                else                 -> "opus" // Exhaustive fallback
+                else                 -> "opus"
             }
 
             log("Configuring codecs. Preferred target keyword: $targetCodecKeyword")
