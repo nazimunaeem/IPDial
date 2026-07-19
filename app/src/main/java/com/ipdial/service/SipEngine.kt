@@ -848,8 +848,12 @@ object SipEngine {
                         log("onCallDisconnected callback failed: ${e.message}", true)
                     }
 
-                    audioManager.mode = AudioManager.MODE_NORMAL
-                    audioManager.isSpeakerphoneOn = false
+                    try {
+                        audioManager.mode = AudioManager.MODE_NORMAL
+                        audioManager.isSpeakerphoneOn = false
+                    } catch (e: Throwable) {
+                        log("Failed to reset audio manager: ${e.message}", true)
+                    }
 
                     callMap.remove(currentCallId)
                     if (_callSession.value?.callId == currentCallId || _callSession.value == null) {

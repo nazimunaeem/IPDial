@@ -318,27 +318,6 @@ fun IPDialApp() {
     val vm: SipViewModel = viewModel()
     val callSession by vm.callSession.collectAsState()
     val showFullIncomingScreen by vm.showFullIncomingScreen.collectAsState()
-
-    LaunchedEffect(callSession) {
-        val session = callSession
-        Log.d("MainActivity", "callSession effect: state=${session?.state}, direction=${session?.direction}, isForeground=${AppState.isForeground}")
-        
-        if (session == null) {
-            vm.setShowFullIncomingScreen(false)
-        } else if (session.direction == CallDirection.INCOMING) {
-            // When app is in foreground and call comes in, show full screen if locked,
-            // otherwise show full screen immediately as requested for "while app is opened"
-            val km = vm.getApplication<Application>().getSystemService(KeyguardManager::class.java)
-            if (km?.isKeyguardLocked == true) {
-                vm.setShowFullIncomingScreen(true)
-            } else {
-                vm.setShowFullIncomingScreen(true)
-            }
-        } else {
-            // Outgoing calls always show full screen
-            vm.setShowFullIncomingScreen(true)
-        }
-    }
     
     val navController = rememberNavController()
     val navBackStack by navController.currentBackStackEntryAsState()

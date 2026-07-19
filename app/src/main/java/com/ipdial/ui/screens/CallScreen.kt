@@ -92,6 +92,9 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
     var showDialpad by remember { mutableStateOf(false) }
     var elapsedSeconds by remember { mutableLongStateOf(0L) }
     
+    // Observe live call session to drive the timer (snapshot session never changes)
+    val liveCallSession by vm.callSession.collectAsState()
+    
     // Check for Bluetooth devices when call is active
     LaunchedEffect(session.state) {
         if (session.state == CallState.CONFIRMED) {
@@ -104,10 +107,11 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
     val textColor = if (isFullScreenPhoto) Color.White else MaterialTheme.colorScheme.onBackground
     val subtitleColor = if (isFullScreenPhoto) Color.White.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant
 
-    // Call timer
-    LaunchedEffect(session) {
-        if (session.state == CallState.CONFIRMED) {
-            while (session.state == CallState.CONFIRMED) {
+    // Call timer — uses live session from ViewModel so it stops when remote hangs up
+    LaunchedEffect(liveCallSession) {
+        val live = liveCallSession
+        if (live != null && live.state == CallState.CONFIRMED) {
+            while (liveCallSession?.state == CallState.CONFIRMED) {
                 delay(1000)
                 elapsedSeconds++
             }

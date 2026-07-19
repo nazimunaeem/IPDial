@@ -507,15 +507,19 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     private fun observeCallSession() {
         viewModelScope.launch {
             callSession.collect { session ->
-                if (session != null && (session.state == CallState.INCOMING || session.state == CallState.CALLING)) {
-                    // Update bluetooth availability when a call starts/comes in
-                    updateBluetoothAvailability()
-                    
-                    // If we are in EARPIECE mode and Bluetooth is available, switch to it
-                    if (_audioDeviceMode.value == AudioDeviceMode.EARPIECE && _hasBluetoothDevice.value) {
-                        setAudioDevice(AudioDeviceMode.BLUETOOTH)
+                if (session != null) {
+                    _showFullIncomingScreen.value = true
+                    if (session.state == CallState.INCOMING || session.state == CallState.CALLING) {
+                        // Update bluetooth availability when a call starts/comes in
+                        updateBluetoothAvailability()
+                        
+                        // If we are in EARPIECE mode and Bluetooth is available, switch to it
+                        if (_audioDeviceMode.value == AudioDeviceMode.EARPIECE && _hasBluetoothDevice.value) {
+                            setAudioDevice(AudioDeviceMode.BLUETOOTH)
+                        }
                     }
-                } else if (session == null) {
+                } else {
+                    _showFullIncomingScreen.value = false
                     // Reset to EARPIECE when call ends
                     _audioDeviceMode.value = AudioDeviceMode.EARPIECE
                 }
