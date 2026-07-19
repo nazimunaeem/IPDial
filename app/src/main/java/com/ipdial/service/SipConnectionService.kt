@@ -101,6 +101,7 @@ class SipConnectionService : ConnectionService() {
         }
 
         connection.setInitializing()
+        connection.setRinging()
         connection.connectionCapabilities = Connection.CAPABILITY_MUTE or Connection.CAPABILITY_SUPPORT_HOLD
         
         // Linking to the incoming call. In a real app, we'd pass callId via extras.

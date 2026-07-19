@@ -278,33 +278,6 @@ fun IPDialTopBar(
                         ),
                         textAlign = TextAlign.Center
                     )
-                    
-                    if (accounts.isEmpty() && onAddAccount != null) {
-                        Spacer(Modifier.width(12.dp))
-                        Surface(
-                            onClick = onAddAccount,
-                            color = MaterialTheme.colorScheme.primary,
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Add, 
-                                    contentDescription = null, 
-                                    modifier = Modifier.size(14.dp), 
-                                    tint = MaterialTheme.colorScheme.onPrimary
-                                )
-                                Spacer(Modifier.width(4.dp))
-                                Text(
-                                    "Add Account",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onPrimary
-                                )
-                            }
-                        }
-                    }
                 }
             }
 
@@ -335,7 +308,7 @@ fun IPDialTopBar(
                             )
                             Spacer(Modifier.width(4.dp))
                             Text(
-                                "Add Account",
+                                "Setup Account",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onPrimary
                             )

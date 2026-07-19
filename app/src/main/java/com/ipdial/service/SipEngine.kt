@@ -49,6 +49,17 @@ object SipEngine {
 
     var onIncomingCall: ((CallSession) -> Unit)? = null
 
+    /**
+     * Invoked synchronously on the PJSIP thread the moment a call transitions to
+     * PJSIP_INV_STATE_DISCONNECTED (or NULL).  SipService registers this lambda to
+     * immediately stop the ringtone/vibration and dismiss the incoming-call UI without
+     * having to wait for the [callSession] StateFlow to propagate on the collector's
+     * coroutine dispatcher.
+     *
+     * @param callId the PJSIP call ID of the call that just ended
+     */
+    var onCallDisconnected: ((callId: Int) -> Unit)? = null
+
     private var recorder: AudioMediaRecorder? = null
     private var logWriter: LogWriter? = null
 
@@ -159,7 +170,7 @@ object SipEngine {
                         logConfig.writer = writer
 
                         medConfig.apply {
-                            clockRate = 16000        // High quality voice for codecs
+                            clockRate = 48000        // Native high-quality rate
                             sndClockRate = 48000     // Android hardware-native rate (prevents resampling bugs)
                             
                             ecOptions = 1            // Use driver's default EC (Hardware AEC on Android)
@@ -293,7 +304,7 @@ object SipEngine {
                         pjmedia_srtp_use.PJMEDIA_SRTP_DISABLED
                 }
 
-                natConfig.iceEnabled = false
+                natConfig.iceEnabled = true
                 natConfig.turnEnabled = false
                 natConfig.sipStunUse = pjsua_stun_use.PJSUA_STUN_USE_DEFAULT
                 // Enable contact rewriting for NAT traversal
@@ -778,6 +789,9 @@ object SipEngine {
                     log("Failed to process incoming call info: ${e.message}", true)
                     call.delete()
                     callMap.remove(prm.callId)
+                    if (_callSession.value?.callId == prm.callId) {
+                        _callSession.value = null
+                    }
                 }
             } catch (e: Throwable) {
                 log("onIncomingCall failed: ${e.message}", true)
@@ -795,6 +809,12 @@ object SipEngine {
 
                 val ci = try { info } catch (e: Throwable) {
                     log("Failed to get call info for call $currentCallId: ${e.message}", true)
+                    if (callMap.containsKey(currentCallId)) {
+                        callMap.remove(currentCallId)
+                        if (_callSession.value?.callId == currentCallId) {
+                            _callSession.value = null
+                        }
+                    }
                     return
                 }
 
@@ -810,18 +830,31 @@ object SipEngine {
                     pjsip_inv_state.PJSIP_INV_STATE_EARLY -> CallState.EARLY
                     pjsip_inv_state.PJSIP_INV_STATE_CONNECTING -> CallState.CONNECTING
                     pjsip_inv_state.PJSIP_INV_STATE_CONFIRMED -> CallState.CONFIRMED
-                    pjsip_inv_state.PJSIP_INV_STATE_DISCONNECTED -> CallState.DISCONNECTED
+                    pjsip_inv_state.PJSIP_INV_STATE_DISCONNECTED,
+                    pjsip_inv_state.PJSIP_INV_STATE_NULL -> CallState.DISCONNECTED
                     else -> CallState.IDLE
                 }
 
-                if (newState == CallState.DISCONNECTED) {
-                    log("Call $currentCallId DISCONNECTED (code=${ci.lastStatusCode}, reason=${ci.lastReason})")
+                if (newState == CallState.DISCONNECTED || newState == CallState.IDLE) {
+                    log("Call $currentCallId ending (state=$newState, code=${ci.lastStatusCode}, reason=${ci.lastReason})")
+
+                    // Notify SipService immediately so it can stop the ringtone, cancel
+                    // vibration and dismiss the incoming-call UI before the StateFlow
+                    // propagates. This handles the case where the remote side hangs up
+                    // before the call is answered.
+                    try {
+                        onCallDisconnected?.invoke(currentCallId)
+                    } catch (e: Throwable) {
+                        log("onCallDisconnected callback failed: ${e.message}", true)
+                    }
 
                     audioManager.mode = AudioManager.MODE_NORMAL
                     audioManager.isSpeakerphoneOn = false
 
                     callMap.remove(currentCallId)
-                    _callSession.value = null
+                    if (_callSession.value?.callId == currentCallId || _callSession.value == null) {
+                        _callSession.value = null
+                    }
 
                     try {
                         recorder?.delete()

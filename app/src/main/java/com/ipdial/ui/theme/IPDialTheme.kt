@@ -13,6 +13,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -96,20 +97,22 @@ private val ObsidianColors = darkColorScheme(
 )
 
 /**
- * Applies Apple-style Glassmorphism (Translucency + Border)
+ * Applies Apple-style Glassmorphism (Translucency + Blur + Border)
  */
 @Composable
 fun Modifier.glass(
     shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(16.dp),
     borderWidth: androidx.compose.ui.unit.Dp = 1.dp,
-    alpha: Float = 0.85f
+    alpha: Float = 0.65f
 ): Modifier {
     val mode = LocalGlassMode.current
     if (mode == GlassMode.None) return this
     
-    val borderColor = if (mode == GlassMode.Quartz) Color.Black.copy(alpha = 0.1f) else Color.White.copy(alpha = 0.15f)
+    val borderColor = if (mode == GlassMode.Quartz) Color.Black.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.3f)
     val bgColor = if (mode == GlassMode.Quartz) Color.White.copy(alpha = alpha) else Color(0xFF1C1C1E).copy(alpha = alpha)
 
+    // We remove the blur modifier from the element itself because it blurs children (text/icons).
+    // The glass effect is maintained via translucency, border, and the screen-wide blurred background.
     return this
         .clip(shape)
         .background(bgColor)
@@ -129,13 +132,13 @@ fun IPDialTheme(
         ThemeMode.Dark -> DarkColors
         ThemeMode.Quartz -> QuartzColors
         ThemeMode.Obsidian -> ObsidianColors
-        else -> if (systemDark) DarkColors else LightColors
+        ThemeMode.System -> if (systemDark) DarkColors else LightColors
     }
     
     val glassMode = when (themeMode) {
         ThemeMode.Quartz -> GlassMode.Quartz
         ThemeMode.Obsidian -> GlassMode.Obsidian
-        else -> GlassMode.None
+        ThemeMode.System, ThemeMode.Light, ThemeMode.Dark -> GlassMode.None
     }
     
     val scaledTypography = if (fontMultiplier != 1.0f) {
@@ -164,9 +167,9 @@ fun IPDialTheme(
                     // Redesigned vibrant whole-screen gradient background
                     val vibrancyBrush = if (glassMode == GlassMode.Obsidian) {
                         Brush.linearGradient(
-                            0f to Color(0xFF0D0D0D),
-                            0.5f to Color(0xFF1A1A1A),
-                            1f to Color(0xFF0D0D0D)
+                            0f to Color(0xFF1A0808),
+                            0.5f to Color(0xFF0D0404),
+                            1f to Color(0xFF1A0808)
                         )
                     } else {
                         Brush.linearGradient(
@@ -184,7 +187,7 @@ fun IPDialTheme(
                             .background(
                                 Brush.radialGradient(
                                     colors = if (glassMode == GlassMode.Obsidian) {
-                                        listOf(Color(0xFF34C759).copy(alpha = 0.15f), Color.Transparent)
+                                        listOf(Color(0xFFD32F2F).copy(alpha = 0.12f), Color.Transparent)
                                     } else {
                                         listOf(Color(0xFF007AFF).copy(alpha = 0.1f), Color.Transparent)
                                     },
@@ -200,7 +203,7 @@ fun IPDialTheme(
                             .background(
                                 Brush.radialGradient(
                                     colors = if (glassMode == GlassMode.Obsidian) {
-                                        listOf(Color(0xFF5856D6).copy(alpha = 0.15f), Color.Transparent)
+                                        listOf(Color(0xFF8B0000).copy(alpha = 0.12f), Color.Transparent)
                                     } else {
                                         listOf(Color(0xFFFF2D55).copy(alpha = 0.1f), Color.Transparent)
                                     },
@@ -217,7 +220,7 @@ fun IPDialTheme(
                             .background(
                                 Brush.verticalGradient(
                                     colors = if (glassMode == GlassMode.Obsidian) {
-                                        listOf(Color(0x33FFFFFF), Color.Transparent, Color(0x33000000))
+                                        listOf(Color(0x33FF6B6B), Color.Transparent, Color(0x334A0000))
                                     } else {
                                         listOf(Color(0x1A000000), Color.Transparent, Color(0x1A000000))
                                     }

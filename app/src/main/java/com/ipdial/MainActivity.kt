@@ -108,6 +108,7 @@ import com.ipdial.ui.SipViewModel
 import com.ipdial.ui.screens.AboutScreen
 import com.ipdial.ui.screens.AccountsScreen
 import com.ipdial.ui.screens.ActivityLogScreen
+import com.ipdial.ui.screens.AudioCodecScreen
 import com.ipdial.ui.screens.CallScreen
 import com.ipdial.ui.screens.ContactsScreen
 import com.ipdial.ui.screens.DialpadScreen
@@ -359,25 +360,9 @@ fun IPDialApp() {
     }
 
     // Sync pager with navController for back button and other nav logic
-    // Use settledPage to ensure we only trigger navigation when the swipe is actually finished
-    LaunchedEffect(pagerState.settledPage) {
-        val targetRoute = when (pagerState.settledPage) {
-            0 -> NavDest.Home.route
-            1 -> NavDest.Keypad.route
-            2 -> NavDest.Contacts.route
-            else -> null
-        }
-        if (targetRoute != null && currentRoute != targetRoute && 
-            (currentRoute == NavDest.Home.route || currentRoute == NavDest.Keypad.route || currentRoute == NavDest.Contacts.route)) {
-            navController.navigate(targetRoute) {
-                popUpTo(navController.graph.findStartDestination().id) { 
-                    saveState = true 
-                }
-                launchSingleTop = true
-                restoreState = true
-            }
-        }
-    }
+    // We remove the NavController navigation on swipe to avoid instantiating multiple 
+    // HorizontalPager composables at once during transitions, which causes massive lag.
+    // The bottom bar now syncs its highlight directly from pagerState.
 
     // Navigation drawer state
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
@@ -661,15 +646,23 @@ fun AppBottomBar(
     
     if (showBottomBar) {
         val isGlass = com.ipdial.ui.theme.LocalGlassMode.current != com.ipdial.ui.theme.GlassMode.None
+        val isMainScreen = currentRoute == NavDest.Home.route || currentRoute == NavDest.Keypad.route || currentRoute == NavDest.Contacts.route
+
         NavigationBar(
             tonalElevation = 0.dp,
             containerColor = if (isGlass) Color.Transparent else MaterialTheme.colorScheme.surface
         ) {
             bottomTabs.forEachIndexed { index, dest ->
+                val isSelected = if (isMainScreen) {
+                    pagerState.currentPage == index
+                } else {
+                    currentRoute == dest.route
+                }
+
                 NavigationBarItem(
-                    selected = currentRoute == dest.route,
+                    selected = isSelected,
                     onClick = {
-                        if (currentRoute == NavDest.Home.route || currentRoute == NavDest.Keypad.route || currentRoute == NavDest.Contacts.route) {
+                        if (isMainScreen) {
                             coroutineScope.launch {
                                 pagerState.animateScrollToPage(index)
                             }

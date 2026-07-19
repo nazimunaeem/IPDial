@@ -43,8 +43,8 @@ import kotlinx.coroutines.withContext
 class SipService : Service() {
 
     companion object {
-        const val NOTIF_CHANNEL_SIP = "sip_service"
-        const val NOTIF_CHANNEL_CALL = "incoming_call"
+        const val NOTIF_CHANNEL_SIP = "sip_service_v1"
+        const val NOTIF_CHANNEL_CALL = "incoming_call_v3"
         const val NOTIF_ID_SERVICE = 1001
         const val NOTIF_ID_INCOMING = 1002
 
@@ -124,17 +124,22 @@ class SipService : Service() {
                 .setPriority(NotificationCompat.PRIORITY_MAX)
                 .setCategory(NotificationCompat.CATEGORY_CALL)
                 .setFullScreenIntent(fullscreenPi, true)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                 .setStyle(NotificationCompat.CallStyle.forIncomingCall(callerPerson, declinePi, answerPi))
                 .setAutoCancel(false)
                 .setOngoing(true)
                 .build()
 
+            val intent = Intent(context, SipService::class.java).apply {
+                action = "ACTION_STOP_BANNER"
+            }
             val nm = context.getSystemService(NOTIFICATION_SERVICE) as NotificationManager
             nm.notify(NOTIF_ID_INCOMING, notif)
         }
     }
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private var bannerPushJob: kotlinx.coroutines.Job? = null
     private lateinit var audioManager: AudioManager
     private lateinit var repo: AccountRepository
     private var wakeLock: PowerManager.WakeLock? = null
@@ -200,21 +205,21 @@ class SipService : Service() {
                             withContext(Dispatchers.Main) {
                                 Log.d("SipService", "Reporting incoming call to Telecom and showing notification")
                                 TelecomHelper.reportIncomingCall(applicationContext, session.remoteUri, finalDisplayName)
-                                showIncomingCallNotification(finalDisplayName, session.callId)
-                                
-                                // FORCE start activity as a fallback for some devices where Telecom might be silent
-                                try {
-                                    val intent = Intent(applicationContext, com.ipdial.MainActivity::class.java).apply {
-                                        action = "com.ipdial.ACTION_INCOMING_CALL"
-                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                                    }
-                                    applicationContext.startActivity(intent)
-                                } catch (e: Exception) {
-                                    Log.e("SipService", "Failed to force start MainActivity", e)
-                                }
+                                startPushingBanner(finalDisplayName, session.callId)
                             }
                 }
             }
+        }
+
+        // 0b. Immediately tear down incoming-call UI when the remote side hangs up
+        //     (or the call is rejected/cancelled) before we could answer.
+        //     This fires synchronously on the PJSIP thread, so we only do fast, thread-safe
+        //     work here: cancel coroutine jobs, stop audio/vibration, cancel notification.
+        SipEngine.onCallDisconnected = { callId ->
+            Log.d("SipService", "onCallDisconnected: callId=$callId — stopping ringtone/vibration and dismissing incoming UI")
+            stopPushingBanner()
+            stopRingtone()          // also cancels vibrator internally
+            cancelIncomingNotification()
         }
 
         startServiceForeground()
@@ -233,6 +238,21 @@ class SipService : Service() {
         }
 
         observeCallState()
+    }
+
+    private fun startPushingBanner(callerName: String, callId: Int) {
+        stopPushingBanner()
+        bannerPushJob = scope.launch {
+            while (true) {
+                showIncomingCallNotificationStatic(applicationContext, callerName, callId)
+                delay(4000)
+            }
+        }
+    }
+
+    private fun stopPushingBanner() {
+        bannerPushJob?.cancel()
+        bannerPushJob = null
     }
 
     private fun registerDefaultNetworkCallback() {
@@ -300,6 +320,7 @@ class SipService : Service() {
                 val callId = intent.getIntExtra("callId", -1)
                 SipEngine.answerCall(callId)
                 routeAudioToEarpiece()
+                stopPushingBanner()
                 cancelIncomingNotification()
                 // Launch MainActivity to show active call
                 val fullIntent = Intent(this, MainActivity::class.java).apply {
@@ -314,7 +335,13 @@ class SipService : Service() {
             ACTION_DECLINE -> {
                 val callId = intent.getIntExtra("callId", -1)
                 SipEngine.hangupCall(callId)
+                stopPushingBanner()
                 cancelIncomingNotification()
+            }
+            "ACTION_STOP_BANNER" -> {
+                val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+                nm.cancel(NOTIF_ID_INCOMING)
+                stopPushingBanner()
             }
             ACTION_SET_AUDIO_DEVICE -> {
                 val mode = intent.getStringExtra("mode") ?: AudioDeviceMode.EARPIECE.name
@@ -447,31 +474,46 @@ class SipService : Service() {
     private var ringtone: Ringtone? = null
     private var mediaPlayer: android.media.MediaPlayer? = null
     private var isPlayingRingtone = false
+    private var ringtoneJob: kotlinx.coroutines.Job? = null
+
+    private var ringtoneWakeLock: PowerManager.WakeLock? = null
 
     private fun playRingtone() {
+        ringtoneJob?.cancel()
         if (isPlayingRingtone || ringtone?.isPlaying == true || mediaPlayer?.isPlaying == true) return
+        
+        // Match phone's ringer mode
+        val ringerMode = audioManager.ringerMode
+        if (ringerMode == AudioManager.RINGER_MODE_SILENT) {
+            Log.d("SipService", "Silent mode, skipping ringtone")
+            return
+        }
+
         isPlayingRingtone = true
-        scope.launch {
+        
+        // Keep CPU alive for ringtone
+        if (ringtoneWakeLock == null) {
+            val pm = getSystemService(POWER_SERVICE) as PowerManager
+            ringtoneWakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "IPDial:ringtone_wake")
+        }
+        ringtoneWakeLock?.acquire(30000L)
+
+        ringtoneJob = scope.launch {
             try {
                 val ringtoneUriStr = repo.globalRingtone.first()
                 val vibrateEnabled = repo.globalVibrate.first()
                 
                 withContext(Dispatchers.Main) {
                     // Check again on main thread to avoid races
-                    if (ringtone?.isPlaying == true || mediaPlayer?.isPlaying == true) {
+                    if (!isPlayingRingtone || ringtone?.isPlaying == true || mediaPlayer?.isPlaying == true) {
                         return@withContext
                     }
 
-                    if (ringtoneUriStr == "android.resource://$packageName/raw/ipdial_ringtone") {
-                        mediaPlayer = android.media.MediaPlayer.create(applicationContext, R.raw.ipdial_ringtone)
-                        mediaPlayer?.isLooping = true
-                        mediaPlayer?.start()
-                    } else {
+                    if (ringerMode == AudioManager.RINGER_MODE_NORMAL) {
                         val ringtoneUri = ringtoneUriStr?.let { android.net.Uri.parse(it) }
                             ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-                        
+
                         try {
-                            // Try MediaPlayer for guaranteed looping on all versions
                             val mp = android.media.MediaPlayer()
                             mp.setDataSource(applicationContext, ringtoneUri)
                             mp.setAudioAttributes(
@@ -481,7 +523,15 @@ class SipService : Service() {
                                     .build()
                             )
                             mp.isLooping = true
-                            mp.prepare()
+                            
+                            withContext(Dispatchers.IO) {
+                                mp.prepare()
+                            }
+                            
+                            if (!isPlayingRingtone) {
+                                mp.release()
+                                return@withContext
+                            }
                             mp.start()
                             mediaPlayer = mp
                         } catch (e: Exception) {
@@ -494,7 +544,7 @@ class SipService : Service() {
                         }
                     }
                     
-                    if (vibrateEnabled) {
+                    if (vibrateEnabled || ringerMode == AudioManager.RINGER_MODE_VIBRATE) {
                         vibrator?.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 1000, 1000), 0))
                     }
                 }
@@ -506,8 +556,11 @@ class SipService : Service() {
     }
 
     private fun stopRingtone() {
+        ringtoneJob?.cancel()
+        ringtoneJob = null
         isPlayingRingtone = false
         try {
+            ringtoneWakeLock?.let { if (it.isHeld) it.release() }
             ringtone?.stop()
             ringtone = null
             mediaPlayer?.stop()
@@ -564,6 +617,7 @@ class SipService : Service() {
                         }
                     }
                     stopRingtone()
+                    stopPushingBanner()   // safety net — kills banner job on any call end path
                     restoreAudio()
                     releaseWakeLock()
                     cancelIncomingNotification()
@@ -575,28 +629,29 @@ class SipService : Service() {
                     val speakerChanged = session.isSpeaker != lastSession?.isSpeaker
                     
                     lastSession = session
-                    if (audioManager.mode != AudioManager.MODE_IN_COMMUNICATION) {
-                        audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-                    }
+                    
+                    audioManager.isMicrophoneMute = false
                     
                     when (session.state) {
                         CallState.INCOMING -> {
+                            if (audioManager.mode != AudioManager.MODE_NORMAL) {
+                                audioManager.mode = AudioManager.MODE_NORMAL
+                            }
                             playRingtone()
                             acquireWakeLockForIncoming()
                             updateForegroundType(ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)
-                            // If user toggled speaker while ringing, apply it (though sound is usually just ringtone)
                             if (speakerChanged) {
                                 routeAudioToSpeaker(session.isSpeaker)
                             }
                         }
                         CallState.CONFIRMED -> {
+                            if (audioManager.mode != AudioManager.MODE_IN_COMMUNICATION) {
+                                audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+                            }
                             stopRingtone()
                             cancelIncomingNotification()
                             
-                            // Always route audio when state becomes CONFIRMED, 
-                            // or if speaker was toggled during the call
                             if (stateChanged || speakerChanged) {
-                                // Small delay to let Telecom session stabilize if just confirmed
                                 if (stateChanged) delay(300) 
                                 routeAudioToDefault()
                             }
@@ -607,6 +662,9 @@ class SipService : Service() {
                             updateForegroundType(ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)
                         }
                         CallState.CALLING, CallState.EARLY, CallState.CONNECTING -> {
+                            if (audioManager.mode != AudioManager.MODE_IN_COMMUNICATION) {
+                                audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+                            }
                             if (stateChanged || speakerChanged) {
                                 routeAudioToDefault()
                             }
@@ -702,6 +760,7 @@ class SipService : Service() {
             connection?.setAudioRoute(android.telecom.CallAudioState.ROUTE_EARPIECE)
         }
         audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+        audioManager.isMicrophoneMute = false
         @Suppress("DEPRECATION")
         audioManager.isSpeakerphoneOn = false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -722,6 +781,7 @@ class SipService : Service() {
         }
 
         audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+        audioManager.isMicrophoneMute = false
         @Suppress("DEPRECATION")
         audioManager.isSpeakerphoneOn = on
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -750,6 +810,7 @@ class SipService : Service() {
             Log.d("SipService", "Routed audio via Telecom Connection to Bluetooth")
         }
         audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+        audioManager.isMicrophoneMute = false
         @Suppress("DEPRECATION")
         audioManager.isSpeakerphoneOn = false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -872,7 +933,7 @@ class SipService : Service() {
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
 
         nm.createNotificationChannel(
-            NotificationChannel(NOTIF_CHANNEL_SIP, "SIP Service", NotificationManager.IMPORTANCE_MIN).apply {
+            NotificationChannel(NOTIF_CHANNEL_SIP, "SIP Service", NotificationManager.IMPORTANCE_LOW).apply {
                 description = "Background SIP registration"
                 setShowBadge(false)
             }
@@ -883,15 +944,9 @@ class SipService : Service() {
                 description = "Incoming VoIP call alerts"
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
                 setShowBadge(true)
-                enableVibration(true)
-                vibrationPattern = longArrayOf(0, 500, 500)
-                setSound(
-                    android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_RINGTONE),
-                    android.media.AudioAttributes.Builder()
-                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
-                        .build()
-                )
+                // We handle sound and vibration manually for better control
+                setSound(null, null)
+                enableVibration(false)
             }
         )
     }
@@ -902,7 +957,7 @@ class SipService : Service() {
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE
         )
-        return NotificationCompat.Builder(this, NOTIF_CHANNEL_SIP)
+        val notif = NotificationCompat.Builder(this, NOTIF_CHANNEL_SIP)
             .setContentTitle("IPDial")
             .setContentText("Ready to receive calls")
             .setSmallIcon(R.drawable.ic_notif_call)
@@ -910,10 +965,8 @@ class SipService : Service() {
             .setSilent(true)
             .setOngoing(true)
             .build()
-    }
-
-    private fun showIncomingCallNotification(callerName: String, callId: Int) {
-        showIncomingCallNotificationStatic(this, callerName, callId)
+        notif.flags = notif.flags or Notification.FLAG_NO_CLEAR
+        return notif
     }
 
     private fun cancelIncomingNotification() {

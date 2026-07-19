@@ -16,7 +16,7 @@ data class SipAccount(
     val regStatus: RegStatus = RegStatus.UNREGISTERED,
     val regStatusText: String = "",
     // Audio quality settings
-    val codec: PreferredCodec = PreferredCodec.G711A,
+    val codec: PreferredCodec = PreferredCodec.G711U,
     val ecEnabled: Boolean = true,   // Echo cancellation
     val nsEnabled: Boolean = true,   // Noise suppression
     val agcEnabled: Boolean = true,  // Auto gain control
@@ -28,11 +28,11 @@ data class SipAccount(
 enum class Transport { UDP, TCP, TLS }
 
 enum class PreferredCodec {
-    G729,
-    OPUS,
-    G722,
     G711U,
     G711A,
+    G722,
+    G729,
+    OPUS,
 }
 
 enum class RegStatus {
@@ -85,7 +85,7 @@ enum class CallState {
 
 enum class KeypadDesign { Grid, Rounded }
 
-enum class ThemeMode { System, Light, Dark, Glass, Obsidian, Quartz }
+enum class ThemeMode { System, Light, Dark, Obsidian, Quartz }
 
 data class CodecInfo(
     val id: String,

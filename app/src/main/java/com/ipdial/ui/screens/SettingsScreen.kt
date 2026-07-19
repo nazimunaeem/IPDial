@@ -30,6 +30,8 @@ import androidx.compose.ui.unit.dp
 import com.ipdial.data.model.*
 import com.ipdial.ui.IPDialTopBar
 import com.ipdial.ui.SipViewModel
+import com.ipdial.ui.theme.LocalGlassMode
+import com.ipdial.ui.theme.glass
 import com.ipdial.util.UpdateChecker
 import kotlinx.coroutines.launch
 
@@ -421,7 +423,6 @@ fun SettingsScreen(
                     subtitle = when(themeMode) {
                         ThemeMode.Dark -> "Dark"
                         ThemeMode.Light -> "Light"
-                        ThemeMode.Glass -> "Glass"
                         ThemeMode.Obsidian -> "Obsidian"
                         ThemeMode.Quartz -> "Quartz"
                         ThemeMode.System -> "System (${if(systemDark) "Dark" else "Light"})"
@@ -472,42 +473,86 @@ fun SettingsRow(
     trailing: @Composable (() -> Unit)? = null,
     onClick: () -> Unit
 ) {
-    Surface(
-        color = MaterialTheme.colorScheme.surface,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickableWithRipple { onClick() }
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically
+    val isGlass = LocalGlassMode.current != com.ipdial.ui.theme.GlassMode.None
+    
+    if (isGlass) {
+        Card(
+            onClick = onClick,
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surface
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 4.dp)
+                .then(if (isGlass) Modifier.glass(RoundedCornerShape(12.dp)) else Modifier)
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(24.dp)
-            )
-            Spacer(Modifier.width(16.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurface
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(24.dp)
                 )
-                if (!subtitle.isNullOrBlank()) {
+                Spacer(Modifier.width(16.dp))
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = subtitle,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        text = title,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
+                    if (!subtitle.isNullOrBlank()) {
+                        Text(
+                            text = subtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
+                trailing?.invoke()
             }
-            trailing?.invoke()
         }
-        HorizontalDivider(
-            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
-            modifier = Modifier.padding(start = 56.dp)
-        )
+    } else {
+        Surface(
+            color = MaterialTheme.colorScheme.surface,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickableWithRipple { onClick() }
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(Modifier.width(16.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    if (!subtitle.isNullOrBlank()) {
+                        Text(
+                            text = subtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                trailing?.invoke()
+            }
+            HorizontalDivider(
+                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                modifier = Modifier.padding(start = 56.dp)
+            )
+        }
     }
 }

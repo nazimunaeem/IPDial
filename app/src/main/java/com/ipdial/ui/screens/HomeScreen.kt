@@ -134,15 +134,20 @@ fun HomeScreen(
     }
 
     val grouped = remember(filteredLog, contactLookupMap) {
+        val todayStart = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val yesterdayStart = todayStart - 86400000L
+        val dateFormat = SimpleDateFormat("MMMM d, yyyy", locale)
+
         filteredLog.groupBy { entry ->
-            val cal = Calendar.getInstance().apply { timeInMillis = entry.timestampMs }
-            val today = Calendar.getInstance()
-            val yesterday = Calendar.getInstance().apply { add(Calendar.DATE, -1) }
-            
             when {
-                isSameDay(cal, today) -> "Today"
-                isSameDay(cal, yesterday) -> "Yesterday"
-                else -> SimpleDateFormat("MMMM d, yyyy", locale).format(Date(entry.timestampMs))
+                entry.timestampMs >= todayStart -> "Today"
+                entry.timestampMs >= yesterdayStart -> "Yesterday"
+                else -> dateFormat.format(Date(entry.timestampMs))
             }
         }.mapValues { (_, dayEntries) ->
             val groups = mutableListOf<LogGroup>()
