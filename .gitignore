@@ -49,3 +49,6 @@ CRASH_FIXES_*.md
 SCREEN_AND_AUDIO_FIXES_*.md
 ic.png
 ipdial_ringtone.mp3
+
+.artifacts/
+gradlew.bat

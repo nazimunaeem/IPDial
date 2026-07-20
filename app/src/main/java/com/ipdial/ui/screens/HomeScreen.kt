@@ -108,16 +108,19 @@ fun HomeScreen(
 
     val locale = LocalConfiguration.current.locales[0]
     
-    // O(1) map for contact lookup by phone numbers (exact and last 10 digits for suffix matching)
+    // O(1) map for contact lookup by phone numbers (multiple suffix lengths for cross-format matching)
     val contactLookupMap = remember(contactsState) {
+        val suffixLens = intArrayOf(10, 11, 12, 13)
         val map = mutableMapOf<String, Contact>()
         contactsState.forEach { contact ->
             contact.numbers.forEach { num ->
                 val cleaned = num.filter { it.isDigit() }
                 if (cleaned.isNotEmpty()) {
                     map[cleaned] = contact
-                    if (cleaned.length >= 10) {
-                        map[cleaned.takeLast(10)] = contact
+                    for (len in suffixLens) {
+                        if (len < cleaned.length) {
+                            map[cleaned.takeLast(len)] = contact
+                        }
                     }
                 }
             }
@@ -157,8 +160,9 @@ fun HomeScreen(
             dayEntries.forEach { entry ->
                 val cleanNumber = cleanUri(entry.remoteUri).filter { it.isDigit() }
                 val contactId = if (cleanNumber.length >= 10) {
-                    val last10 = cleanNumber.takeLast(10)
-                    contactLookupMap[last10]?.id ?: last10
+                    val match = contactLookupMap[cleanNumber]
+                        ?: (10..13).mapNotNull { l -> if (l < cleanNumber.length) contactLookupMap[cleanNumber.takeLast(l)] else null }.firstOrNull()
+                    match?.id ?: cleanNumber.takeLast(10)
                 } else {
                     cleanNumber
                 }
@@ -268,11 +272,8 @@ fun HomeScreen(
                             val cleanNumber = cleanUri(entry.remoteUri).filter { it.isDigit() }
                             val contact = remember(cleanNumber, contactLookupMap) {
                                 if (cleanNumber.isEmpty()) null
-                                else if (cleanNumber.length >= 10) {
-                                    contactLookupMap[cleanNumber.takeLast(10)]
-                                } else {
-                                    contactLookupMap[cleanNumber]
-                                }
+                                else contactLookupMap[cleanNumber]
+                                    ?: (10..13).mapNotNull { l -> if (l < cleanNumber.length) contactLookupMap[cleanNumber.takeLast(l)] else null }.firstOrNull()
                             }
                             val numberToCopy = cleanUri(entry.remoteUri).filter { it.isDigit() || it == '+' }
                              CallLogRow(
@@ -323,11 +324,8 @@ fun HomeScreen(
         val cleanNumber = cleanUri(entry.remoteUri).filter { it.isDigit() }
         val contact = remember(cleanNumber, contactLookupMap) {
             if (cleanNumber.isEmpty()) null
-            else if (cleanNumber.length >= 10) {
-                contactLookupMap[cleanNumber.takeLast(10)]
-            } else {
-                contactLookupMap[cleanNumber]
-            }
+            else contactLookupMap[cleanNumber]
+                ?: (10..13).mapNotNull { l -> if (l < cleanNumber.length) contactLookupMap[cleanNumber.takeLast(l)] else null }.firstOrNull()
         }
         CallHistoryDetailDialog(
             selectedEntry = entry,

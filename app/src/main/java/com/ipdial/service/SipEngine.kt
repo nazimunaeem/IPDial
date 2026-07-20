@@ -323,7 +323,7 @@ object SipEngine {
             val pjAcc = PjAccount(account.id)
             try {
                 // Configure codecs BEFORE creating account to ensure initial REGISTER/INVITE are small
-                configureCodecs(account.codec, account.ecEnabled, account.nsEnabled, account.agcEnabled)
+                configureCodecs(account.codec ?: PreferredCodec.G711U, account.ecEnabled, account.nsEnabled, account.agcEnabled)
                 
                 pjAcc.create(acfg)
                 accountMap[account.id] = pjAcc

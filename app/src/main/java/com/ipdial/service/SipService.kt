@@ -145,6 +145,7 @@ class SipService : Service() {
     private var deferForegroundJob: kotlinx.coroutines.Job? = null
     private lateinit var audioManager: AudioManager
     private lateinit var repo: AccountRepository
+    private lateinit var contactsRepo: com.ipdial.data.repository.ContactsRepository
     private var wakeLock: PowerManager.WakeLock? = null
     private var cpuWakeLock: PowerManager.WakeLock? = null
     private var audioFocusRequest: android.media.AudioFocusRequest? = null
@@ -166,6 +167,7 @@ class SipService : Service() {
         }
         
         repo = AccountRepository(applicationContext)
+        contactsRepo = com.ipdial.data.repository.ContactsRepository(applicationContext)
         createNotificationChannels()
         TelecomHelper.registerPhoneAccount(applicationContext)
         
@@ -199,7 +201,6 @@ class SipService : Service() {
                     
                     Log.d("SipService", "Processing incoming call from $cleanNum")
                     
-                    val contactsRepo = com.ipdial.data.repository.ContactsRepository(applicationContext)
                     val cleanedSessionDigits = cleanNum.filter { it.isDigit() }
                     
                     var matchedContact: com.ipdial.data.model.Contact? = null
@@ -273,7 +274,6 @@ class SipService : Service() {
             
             // 2. Build contact lookup index for fast number matching
             try {
-                val contactsRepo = com.ipdial.data.repository.ContactsRepository(applicationContext)
                 contactsRepo.buildNumberIndex()
                 Log.d("SipService", "Contact number index built")
             } catch (e: Exception) {
@@ -461,7 +461,7 @@ class SipService : Service() {
                                 SipEngine.makeCall(acc.id, finalUri)
                                 android.widget.Toast.makeText(
                                     applicationContext,
-                                    "Test call using ${acc.codec.name}",
+                                    "Test call using ${acc.codec?.name ?: "default"}",
                                     android.widget.Toast.LENGTH_SHORT
                                 ).show()
                             }

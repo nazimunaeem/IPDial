@@ -658,23 +658,11 @@ fun AccountSelectionDialog(
     onAccountSelected: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val shakeOffset = remember { Animatable(0f) }
-    LaunchedEffect(Unit) {
-        for (i in 1..2) {
-            shakeOffset.animateTo(12f, tween(durationMillis = 50))
-            shakeOffset.animateTo(-12f, tween(durationMillis = 50))
-            shakeOffset.animateTo(8f, tween(durationMillis = 50))
-            shakeOffset.animateTo(-8f, tween(durationMillis = 50))
-            shakeOffset.animateTo(0f, tween(durationMillis = 50))
-        }
-    }
-
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             shape = AlertDialogDefaults.shape,
             color = MaterialTheme.colorScheme.surface,
-            tonalElevation = AlertDialogDefaults.TonalElevation,
-            modifier = Modifier.offset(x = shakeOffset.value.dp)
+            tonalElevation = AlertDialogDefaults.TonalElevation
         ) {
             Column(
                 modifier = Modifier.padding(24.dp)

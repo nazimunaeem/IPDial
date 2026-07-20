@@ -22,13 +22,18 @@ class ContactsRepository(private val context: Context) {
         entities.map { it.toContact() }
     }
 
+    // Suffix lengths to store and try for cross-format matching
+    // (e.g. local "01729979896" vs international "+8801729979896")
+    private val suffixLengths = intArrayOf(10, 11, 12, 13)
+
     // Pre-computed index for O(1) contact lookup by normalized phone number
     private var normalizedNumberIndex: Map<String, Contact> = emptyMap()
     private var indexBuilt = false
 
     /**
      * Build a lookup index from normalized (digits-only) phone numbers to Contact.
-     * Call this after contacts are loaded/refreshed for fast O(1) lookups.
+     * Stores multiple suffix lengths so that local numbers (e.g. 01729979896)
+     * match international format (+8801729979896) and vice versa.
      */
     suspend fun buildNumberIndex() = withContext(Dispatchers.IO) {
         val contacts = contactDao.getAllContacts().first().map { it.toContact() }
@@ -38,7 +43,11 @@ class ContactsRepository(private val context: Context) {
                 val digits = number.filter { it.isDigit() }
                 if (digits.length >= 10) {
                     index[digits] = contact
-                    index[digits.takeLast(10)] = contact
+                    for (len in suffixLengths) {
+                        if (len < digits.length) {
+                            index[digits.takeLast(len)] = contact
+                        }
+                    }
                 }
             }
         }
@@ -47,14 +56,20 @@ class ContactsRepository(private val context: Context) {
     }
 
     /**
-     * Fast O(1) contact lookup by phone number. Returns null if not found or index not built.
+     * Fast O(1) contact lookup by phone number. Tries full digits and multiple
+     * suffix lengths to handle local vs international format differences.
      */
     fun findContactByNumber(phoneNumber: String): Contact? {
         if (!indexBuilt) return null
         val digits = phoneNumber.filter { it.isDigit() }
         if (digits.length < 10) return null
-        return normalizedNumberIndex[digits]
-            ?: if (digits.length > 10) normalizedNumberIndex[digits.takeLast(10)] else null
+        normalizedNumberIndex[digits]?.let { return it }
+        for (len in suffixLengths) {
+            if (len < digits.length) {
+                normalizedNumberIndex[digits.takeLast(len)]?.let { return it }
+            }
+        }
+        return null
     }
 
     /**
