@@ -83,25 +83,34 @@ fun AccountsScreen(vm: SipViewModel, onOpenDrawer: () -> Unit) {
                 )
             }
         },
-        floatingActionButton = {
-            FloatingActionButton(onClick = {
-                if (!isPro && accounts.size >= 1) {
-                    vm.showAdGate {
-                        editingAccount = null
-                        showEditSheet = true
-                    }
-                } else {
-                    editingAccount = null
-                    showEditSheet = true
-                }
-            }) {
-                Icon(Icons.Default.Add, "Add Account")
-            }
-        }
+        floatingActionButton = {}
     ) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding)
         ) {
+            item {
+                Button(
+                    onClick = {
+                        if (!isPro && accounts.size >= 1) {
+                            vm.showAdGate {
+                                editingAccount = null
+                                showEditSheet = true
+                            }
+                        } else {
+                            editingAccount = null
+                            showEditSheet = true
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                ) {
+                    Icon(Icons.Default.Add, null, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Add Account")
+                }
+            }
+
             // ── Donation ──────────────────────────────────────────────────
             item {
                 Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
@@ -118,6 +127,13 @@ fun AccountsScreen(vm: SipViewModel, onOpenDrawer: () -> Unit) {
                     onSetDefault = { vm.setDefaultAccount(account.id) },
                     onToggleEnabled = { vm.saveAccount(account.copy(isEnabled = !account.isEnabled)) }
                 )
+            }
+
+            // ── Custom Firebase ad banner ─────────────────────────────────
+            item {
+                Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    com.ipdial.ui.CustomAccountPageAd(vm = vm)
+                }
             }
         }
 

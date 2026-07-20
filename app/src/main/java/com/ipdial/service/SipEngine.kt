@@ -2,6 +2,8 @@ package com.ipdial.service
 
 import android.content.Context
 import android.media.AudioManager
+import android.net.ConnectivityManager
+import android.net.Network
 import android.util.Log
 import com.ipdial.data.model.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -11,6 +13,9 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import org.pjsip.pjsua2.*
 
 /**
@@ -64,7 +69,12 @@ object SipEngine {
     private var logWriter: LogWriter? = null
 
     // Volume Boost Factor (150%) — reduced to avoid clipping/distortion
-    private const val VOLUME_BOOST_FACTOR = 1.5f
+    private const val VOLUME_BOOST_FACTOR = 1.0f
+
+    // DND state — set by SipService when DND is active, checked by playRingtone
+    @Volatile private var _dndActive = false
+    fun setDndActive(active: Boolean) { _dndActive = active }
+    fun isDndActive(): Boolean = _dndActive
 
     // Per-account audio settings cached for call-time application
     private var currentEcEnabled = true
@@ -183,8 +193,6 @@ object SipEngine {
                         uaConfig.apply {
                             userAgent = "IPDial/1.0 (Android)"
                             maxCalls = 4
-                            // Use Google STUN server
-                            stunServer.add("stun.l.google.com:19302")
                         }
                     }
                     libInit(epCfg)
@@ -304,7 +312,7 @@ object SipEngine {
                         pjmedia_srtp_use.PJMEDIA_SRTP_DISABLED
                 }
 
-                natConfig.iceEnabled = true
+                natConfig.iceEnabled = false
                 natConfig.turnEnabled = false
                 natConfig.sipStunUse = pjsua_stun_use.PJSUA_STUN_USE_DEFAULT
                 // Enable contact rewriting for NAT traversal
@@ -379,6 +387,50 @@ object SipEngine {
         }
     }
 
+    fun reconnectOnNetworkChange(network: Network?, context: Context) {
+        registerCurrentThread()
+        val ep = endpoint ?: return
+
+        log("reconnectOnNetworkChange: closing transports and rebinding to network $network")
+        try { if (udpTransportId != -1) { ep.transportClose(udpTransportId); udpTransportId = -1 } } catch (e: Throwable) { log("close UDP transport failed: ${e.message}", true) }
+        try { if (tcpTransportId != -1) { ep.transportClose(tcpTransportId); tcpTransportId = -1 } } catch (e: Throwable) { log("close TCP transport failed: ${e.message}", true) }
+        try { if (tlsTransportId != -1) { ep.transportClose(tlsTransportId); tlsTransportId = -1 } } catch (e: Throwable) { log("close TLS transport failed: ${e.message}", true) }
+
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val boundToNetwork = try {
+            cm.bindProcessToNetwork(network)
+            log("Bound process to network: $network")
+            true
+        } catch (e: Throwable) {
+            log("bindProcessToNetwork failed: ${e.message}", true)
+            false
+        }
+
+        try {
+            val sipTpCfg = TransportConfig().apply { port = 0 }
+            try { udpTransportId = ep.transportCreate(pjsip_transport_type_e.PJSIP_TRANSPORT_UDP, sipTpCfg) } catch (e: Throwable) { log("recreate UDP transport failed: ${e.message}", true) }
+
+            val tcpTpCfg = TransportConfig().apply { port = 0 }
+            try { tcpTransportId = ep.transportCreate(pjsip_transport_type_e.PJSIP_TRANSPORT_TCP, tcpTpCfg) } catch (e: Throwable) { log("recreate TCP transport failed: ${e.message}", true) }
+
+            val tlsTpCfg = TransportConfig().apply {
+                tlsConfig.verifyServer = true
+                tlsConfig.verifyClient = false
+            }
+            try { tlsTransportId = ep.transportCreate(pjsip_transport_type_e.PJSIP_TRANSPORT_TLS, tlsTpCfg) } catch (e: Throwable) { log("recreate TLS transport failed: ${e.message}", true) }
+
+            log("Transports recreated: UDP=$udpTransportId, TCP=$tcpTransportId, TLS=$tlsTransportId")
+        } finally {
+            if (boundToNetwork) {
+                try { cm.bindProcessToNetwork(null) } catch (_: Throwable) {}
+                log("Released process network binding")
+            }
+        }
+
+        handleIpChange()
+        forceReconnectAll()
+    }
+
     fun handleIpChange() {
         registerCurrentThread()
         val ep = endpoint ?: return
@@ -394,6 +446,56 @@ object SipEngine {
 
     fun updateCallSessionName(name: String) {
         _callSession.value = _callSession.value?.copy(remoteDisplayName = name)
+    }
+
+    fun hasActiveCall(callId: Int): Boolean = callMap.containsKey(callId)
+
+    /**
+     * Force-null the session if it references a callId that is no longer in callMap.
+     * Called by the ViewModel watchdog to catch zombie sessions that survived past
+     * onCallState(DISCONNECTED) due to threading or exception edge-cases.
+     */
+    fun nullSessionIfStale() {
+        val session = _callSession.value ?: return
+        val inMap = callMap.containsKey(session.callId)
+        log("nullSessionIfStale: session callId=${session.callId} state=${session.state} inCallMap=$inMap callMapKeys=${callMap.keys}")
+        if (!inMap) {
+            log("nullSessionIfStale: force-nulling session for callId=${session.callId}")
+            _callSession.value = null
+            SipConnectionService.disconnectCall(session.callId)
+            return
+        }
+
+        // If session is in a non-disconnected state, verify with PJSIP directly
+        // whether the call is actually still alive. This catches the case where
+        // onCallState(DISCONNECTED) never fired for a remote BYE on a confirmed call.
+        if (session.state != CallState.DISCONNECTED && session.state != CallState.IDLE) {
+            val call = callMap[session.callId]
+            if (call != null) {
+                try {
+                    val ci = call.info
+                    if (ci != null) {
+                        val pjsipState = ci.state
+                        val isDisconnected = pjsipState == pjsip_inv_state.PJSIP_INV_STATE_DISCONNECTED ||
+                                pjsipState == pjsip_inv_state.PJSIP_INV_STATE_NULL
+                        if (isDisconnected) {
+                            log("nullSessionIfStale: PJSIP reports state=${ci.stateText} for callId=${session.callId} but onCallState never fired — force cleanup")
+                            // Run the same cleanup as onCallState disconnect block
+                            onCallDisconnected?.invoke(session.callId)
+                            callMap.remove(session.callId)
+                            _callSession.value = null
+                            SipConnectionService.disconnectCall(session.callId)
+                            try { call.delete() } catch (_: Throwable) {}
+                        }
+                    }
+                } catch (e: Throwable) {
+                    log("nullSessionIfStale: call.info() failed for callId=${session.callId}: ${e.message} — force cleanup")
+                    callMap.remove(session.callId)
+                    _callSession.value = null
+                    SipConnectionService.disconnectCall(session.callId)
+                }
+            }
+        }
     }
 
     fun makeCall(accountId: String, destination: String): Boolean {
@@ -464,14 +566,25 @@ object SipEngine {
         val call = callMap[id]
         if (call != null) {
             try {
-                val prm = CallOpParam().apply { statusCode = pjsip_status_code.PJSIP_SC_DECLINE }
+                val state = try { call.info.state } catch (_: Throwable) { null }
+                log("hangupCall: callId=$id state=$state")
+                val prm = CallOpParam()
+                // For a confirmed (active) call, send BYE with 487.
+                // For pending states (CALLING/EARLY/CONNECTING), default prm sends CANCEL.
+                if (state == pjsip_inv_state.PJSIP_INV_STATE_CONFIRMED) {
+                    prm.statusCode = pjsip_status_code.PJSIP_SC_DECLINE
+                }
                 call.hangup(prm)
             } catch (e: Throwable) {
                 log("hangupCall failed: ${e.message}", true)
             }
         } else {
-            log("Hangup failed: callId=$id not found in map")
-            _callSession.value = null
+            log("Hangup: callId=$id not in callMap — session cleanup only (SIP message may already have been sent)")
+            // The call object is gone from callMap (e.g. concurrent onCallState
+            // already removed it).  Clean up local state so the UI screens close.
+            if (_callSession.value?.callId == id) {
+                _callSession.value = null
+            }
         }
     }
 
@@ -597,7 +710,6 @@ object SipEngine {
             val codecs = ep.codecEnum2()
             val targetCodecKeyword = when (preferred) {
                 PreferredCodec.G729  -> "g729"
-                PreferredCodec.OPUS  -> "opus"
                 PreferredCodec.G722  -> "g722"
                 PreferredCodec.G711U -> "pcmu"
                 PreferredCodec.G711A -> "pcma"
@@ -610,14 +722,16 @@ object SipEngine {
                 val codecId = codec.codecId
                 val name = codecId.lowercase()
 
-                // Only enable the EXACT target codec. 
-                // We don't even add fallbacks to keep packet as small as possible.
-                // SIP servers usually support PCMA/PCMU if everything else fails.
+                // Priority logic:
+                // - Target codec gets highest priority (250)
+                // - G729 gets 160 as smart fallback (low bandwidth)
+                // - PCMA/PCMU get 150/140 as universal fallback
+                // - Everything else disabled
                 val priority: Short = when {
                     name.contains(targetCodecKeyword) -> 250
+                    name.contains("g729") && targetCodecKeyword != "g729" -> 160
                     name == "pcma/8000/1" -> 150
                     name == "pcmu/8000/1" -> 140
-                    name.contains("g729") -> 100
                     else -> 0
                 }
                 
@@ -642,12 +756,22 @@ object SipEngine {
                 val isAvailable = priority > 0.toShort()
 
                 val quality = when {
-                    name.contains("opus") -> com.ipdial.data.model.CodecQuality.Excellent
                     name.contains("g722") -> com.ipdial.data.model.CodecQuality.Excellent
                     name.contains("g729") -> com.ipdial.data.model.CodecQuality.Good
                     name.contains("pcma") || name.contains("pcmu") -> com.ipdial.data.model.CodecQuality.Fair
                     name.contains("gsm") -> com.ipdial.data.model.CodecQuality.Low
                     else -> com.ipdial.data.model.CodecQuality.Minimal
+                }
+
+                // Bandwidth and MOS estimates
+                val (bandwidth, mos) = when {
+                    name.contains("opus") -> 6 to 4.3f    // OPUS: 6–51 kbps variable
+                    name.contains("g722") -> 48 to 4.0f   // G.722: ~48–64 kbps
+                    name.contains("g729") -> 8 to 3.9f    // G.729: ~8–12 kbps
+                    name.contains("pcma") -> 64 to 4.1f   // G.711A: 64–87 kbps
+                    name.contains("pcmu") -> 64 to 4.1f   // G.711U: 64–87 kbps
+                    name.contains("gsm") -> 13 to 3.5f    // GSM: ~13 kbps
+                    else -> 0 to 0f
                 }
 
                 var clockRate = 0L
@@ -670,7 +794,9 @@ object SipEngine {
                         quality = quality,
                         clockRate = clockRate.toInt(),
                         channelCount = channelCount.toInt(),
-                        frameLength = frameLength.toInt()
+                        frameLength = frameLength.toInt(),
+                        bandwidthKbps = bandwidth,
+                        estimatedMOS = mos
                     )
                 )
             }
@@ -750,6 +876,15 @@ object SipEngine {
                 val call = PjCall(this, prm.callId)
                 callMap[prm.callId] = call
 
+                if (!accountConfigs.containsKey(accountId)) {
+                    log("Rejecting incoming call $${prm.callId} for disabled account $accountId", true)
+                    val busyPrm = CallOpParam().apply { statusCode = pjsip_status_code.PJSIP_SC_DECLINE }
+                    try { call.answer(busyPrm) } catch (_: Throwable) {}
+                    call.delete()
+                    callMap.remove(prm.callId)
+                    return
+                }
+
                 val opPrm = CallOpParam().apply { statusCode = pjsip_status_code.PJSIP_SC_RINGING }
                 try {
                     log("Answering incoming call $${prm.callId} with RINGING")
@@ -801,25 +936,31 @@ object SipEngine {
 
     class PjCall(acct: Account, callId: Int = -1) : Call(acct, callId) {
         override fun onCallState(prm: OnCallStateParam) {
+            val currentCallId = try { getId() } catch (e: Throwable) {
+                log("ONCALLSTATE ENTRY: getId() failed: ${e.message}", true)
+                _callSession.value = null
+                return
+            }
+            @Suppress("DEPRECATION")
+            val threadInfo = "${Thread.currentThread().name}[${Thread.currentThread().id}]"
+            log("ONCALLSTATE ENTRY: callId=$currentCallId thread=$threadInfo session=${_callSession.value?.callId}/${_callSession.value?.state} callMapSize=${callMap.size} callMapHasId=${callMap.containsKey(currentCallId)}")
             try {
-                val currentCallId = try { getId() } catch (e: Throwable) {
-                    log("Failed to get call ID in onCallState: ${e.message}", true)
-                    return
-                }
 
                 val ci = try { info } catch (e: Throwable) {
                     log("Failed to get call info for call $currentCallId: ${e.message}", true)
-                    if (callMap.containsKey(currentCallId)) {
-                        callMap.remove(currentCallId)
-                        if (_callSession.value?.callId == currentCallId) {
-                            _callSession.value = null
-                        }
+                    callMap.remove(currentCallId)
+                    if (_callSession.value?.callId == currentCallId) {
+                        _callSession.value = null
                     }
                     return
                 }
 
                 if (ci == null) {
                     log("Call info is null for call $currentCallId", true)
+                    callMap.remove(currentCallId)
+                    if (_callSession.value?.callId == currentCallId) {
+                        _callSession.value = null
+                    }
                     return
                 }
 
@@ -836,28 +977,28 @@ object SipEngine {
                 }
 
                 if (newState == CallState.DISCONNECTED || newState == CallState.IDLE) {
-                    log("Call $currentCallId ending (state=$newState, code=${ci.lastStatusCode}, reason=${ci.lastReason})")
+                    log("ONCALLSTATE DISCONNECT BLOCK: callId=$currentCallId state=$newState code=${ci.lastStatusCode} reason=${ci.lastReason}")
 
-                    // Notify SipService immediately so it can stop the ringtone, cancel
-                    // vibration and dismiss the incoming-call UI before the StateFlow
-                    // propagates. This handles the case where the remote side hangs up
-                    // before the call is answered.
                     try {
                         onCallDisconnected?.invoke(currentCallId)
                     } catch (e: Throwable) {
                         log("onCallDisconnected callback failed: ${e.message}", true)
                     }
 
-                    try {
-                        audioManager.mode = AudioManager.MODE_NORMAL
-                        audioManager.isSpeakerphoneOn = false
-                    } catch (e: Throwable) {
-                        log("Failed to reset audio manager: ${e.message}", true)
-                    }
-
                     callMap.remove(currentCallId)
-                    if (_callSession.value?.callId == currentCallId || _callSession.value == null) {
-                        _callSession.value = null
+                    log("ONCALLSTATE DISCONNECT: callId=$currentCallId removed from callMap, callMapSize=${callMap.size}")
+
+                    _callSession.value = null
+                    log("ONCALLSTATE DISCONNECT: callId=$currentCallId session nulled")
+
+                    // Post thread-sensitive cleanup to Main — these no longer gate the null.
+                    CoroutineScope(Dispatchers.Main).launch {
+                        try {
+                            audioManager.mode = AudioManager.MODE_NORMAL
+                            audioManager.isSpeakerphoneOn = false
+                        } catch (e: Throwable) {
+                            log("Failed to reset audio manager: ${e.message}", true)
+                        }
                     }
 
                     try {
@@ -867,15 +1008,9 @@ object SipEngine {
                         log("Failed to delete recorder on disconnect: ${e.message}", true)
                     }
 
-                    SipConnectionService.getConnection(currentCallId)?.let { conn ->
-                        try {
-                            conn.setDisconnected(android.telecom.DisconnectCause(android.telecom.DisconnectCause.REMOTE))
-                            conn.destroy()
-                            SipConnectionService.removeConnection(currentCallId)
-                        } catch (e: Throwable) {
-                            log("Failed to disconnect telecom connection: ${e.message}", true)
-                        }
-                    }
+                    // Always tear down the Telecom connection so the system dialer
+                    // and notification are dismissed even if onCallState fires late.
+                    SipConnectionService.disconnectCall(currentCallId)
 
                     val callToDelete = this
                     android.os.Handler(android.os.Looper.getMainLooper()).post {
@@ -886,7 +1021,11 @@ object SipEngine {
                         }
                     }
                 } else {
-                    _callSession.value = _callSession.value?.copy(state = newState, callId = currentCallId)
+                    log("ONCALLSTATE ELSE: callId=$currentCallId newState=$newState sessionBefore=${_callSession.value?.state}")
+                    if (_callSession.value != null) {
+                        _callSession.value = _callSession.value?.copy(state = newState, callId = currentCallId)
+                        log("ONCALLSTATE ELSE: callId=$currentCallId sessionAfter=${_callSession.value?.state}")
+                    }
 
                     SipConnectionService.getConnection(currentCallId)?.let { conn ->
                         try {
@@ -898,13 +1037,22 @@ object SipEngine {
                                 CallState.CONNECTING -> conn.setDialing()
                                 else -> {}
                             }
+                            log("ONCALLSTATE ELSE: callId=$currentCallId telecom connection updated to $newState")
                         } catch (e: Throwable) {
                             log("Failed to update telecom connection state: ${e.message}", true)
                         }
-                    }
+                    } ?: log("ONCALLSTATE ELSE: callId=$currentCallId no telecom connection found")
                 }
             } catch (e: Throwable) {
-                log("PjCall.onCallState failed: ${e.message}", true)
+                log("ONCALLSTATE EXCEPTION: callId=$currentCallId error=${e.message}", true)
+                try {
+                    if (_callSession.value != null) {
+                        log("onCallState error safety net: force-nulling callSession")
+                        _callSession.value = null
+                    }
+                } catch (f: Throwable) {
+                    log("Failed to null session in safety net: ${f.message}", true)
+                }
             }
         }
 

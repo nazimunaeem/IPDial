@@ -21,6 +21,65 @@ class SipConnectionService : ConnectionService() {
         fun removeConnection(callId: Int) {
             activeConnections.remove(callId)
         }
+
+        /**
+         * Idempotent teardown: setDisconnected + destroy + remove, but only once per callId.
+         * Safe against Telecom framework re-delivering the connection lifecycle after
+         * destroy() on a self-managed Connection.
+         */
+        fun disconnectCall(callId: Int) {
+            val conn = activeConnections[callId]
+            Log.d(TAG, "disconnectCall: callId=$callId conn=${conn != null} isDestroyed=${conn?.isDestroyed} activeConnections=${activeConnections.keys}")
+            if (conn == null) {
+                Log.d(TAG, "disconnectCall: no active connection for callId=$callId (already cleaned up or never registered)")
+                return
+            }
+            if (conn.isDestroyed) {
+                Log.d(TAG, "disconnectCall: connection for callId=$callId already marked destroyed")
+                return
+            }
+            conn.isDestroyed = true
+            activeConnections.remove(callId)
+            try {
+                conn.setDisconnected(android.telecom.DisconnectCause(android.telecom.DisconnectCause.REMOTE))
+            } catch (e: Throwable) {
+                Log.e(TAG, "disconnectCall: setDisconnected failed for callId=$callId: ${e.message}")
+            }
+            // conn.destroy() must run on the Main thread.  Calling it from
+            // the PJSIP callback thread silently fails for ACTIVE self-managed
+            // connections, leaving the Telecom framework in a state where it
+            // keeps the system in-call UI alive and may re-deliver the connection.
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                try {
+                    conn.destroy()
+                    Log.d(TAG, "disconnectCall: tore down callId=$callId (REMOTE hangup)")
+                } catch (e: Throwable) {
+                    Log.e(TAG, "disconnectCall: destroy failed for callId=$callId: ${e.message}")
+                }
+            }
+        }
+
+        fun destroyAll() {
+            Log.d(TAG, "destroyAll: tearing down ${activeConnections.size} active connection(s)")
+            for ((callId, conn) in activeConnections.toMap()) {
+                if (!conn.isDestroyed) {
+                    conn.isDestroyed = true
+                    try {
+                        conn.setDisconnected(android.telecom.DisconnectCause(android.telecom.DisconnectCause.REMOTE))
+                    } catch (e: Throwable) {
+                        Log.e(TAG, "destroyAll: setDisconnected failed for callId=$callId: ${e.message}")
+                    }
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        try {
+                            conn.destroy()
+                        } catch (e: Throwable) {
+                            Log.e(TAG, "destroyAll: destroy failed for callId=$callId: ${e.message}")
+                        }
+                    }
+                }
+            }
+            activeConnections.clear()
+        }
     }
 
     override fun onDestroy() {
@@ -95,7 +154,8 @@ class SipConnectionService : ConnectionService() {
         request?.address?.let { connection.setAddress(it, TelecomManager.PRESENTATION_ALLOWED) }
         
         // Set caller display name from extras if available
-        val name = request?.extras?.getBundle(TelecomManager.EXTRA_INCOMING_CALL_EXTRAS)?.getString("com.ipdial.EXTRA_CALLER_NAME")
+        val incomingExtras = request?.extras?.getBundle(TelecomManager.EXTRA_INCOMING_CALL_EXTRAS)
+        val name = incomingExtras?.getString("com.ipdial.EXTRA_CALLER_NAME")
         if (name != null) {
             connection.setCallerDisplayName(name, TelecomManager.PRESENTATION_ALLOWED)
         }
@@ -104,15 +164,44 @@ class SipConnectionService : ConnectionService() {
         connection.setRinging()
         connection.connectionCapabilities = Connection.CAPABILITY_MUTE or Connection.CAPABILITY_SUPPORT_HOLD
         
-        // Linking to the incoming call. In a real app, we'd pass callId via extras.
-        // For simplicity, we'll assume the most recent incoming session.
-        SipEngine.callSession.value?.let { session ->
-            connection.callId = session.callId
-            registerConnection(session.callId, connection)
-            Log.d(TAG, "Incoming Connection registered with callId=${session.callId}")
-            com.ipdial.util.SipLogger.log(TAG, "Incoming Connection registered with callId=${session.callId}")
-        } ?: run {
-            Log.w(TAG, "onCreateIncomingConnection: SipEngine.callSession is NULL")
+        // Try to get callId from extras first, fall back to session
+        val callId = incomingExtras?.getInt("com.ipdial.EXTRA_CALL_ID", -1) ?: -1
+        if (callId != -1) {
+            // Reject a re-delivered / ghost incoming connection for a call that is no
+            // longer active in SipEngine. This happens when a self-managed ACTIVE
+            // connection's destroy() re-enters the framework and it re-emits the call.
+            // If the call already ended (remote BYE / local hangup), do NOT reuse or
+            // register it — otherwise the in-app CallScreen can be resurrected.
+            if (!SipEngine.hasActiveCall(callId)) {
+                Log.w(TAG, "onCreateIncomingConnection: REJECTING ghost/late incoming for ended callId=$callId (not in SipEngine.callMap)")
+                com.ipdial.util.SipLogger.log(TAG, "onCreateIncomingConnection: rejecting ghost incoming callId=$callId (call already ended)")
+                // Return a throwaway connection that is immediately destroyed so the
+                // framework does not keep a dangling call around.
+                connection.setDisconnected(DisconnectCause(DisconnectCause.CANCELED))
+                connection.destroy()
+                return connection
+            }
+            // If a connection for this callId already exists, reuse it rather than
+            // creating a duplicate that could resurrect the UI after remote hang-up.
+            val existing = activeConnections[callId]
+            if (existing != null) {
+                Log.d(TAG, "onCreateIncomingConnection: reusing existing connection for callId=$callId")
+                return existing
+            }
+            connection.callId = callId
+            registerConnection(callId, connection)
+            Log.d(TAG, "Incoming Connection registered with callId=$callId (from extras)")
+            com.ipdial.util.SipLogger.log(TAG, "Incoming Connection registered with callId=$callId (from extras)")
+        } else {
+            // Fallback: assume the most recent incoming session
+            SipEngine.callSession.value?.let { session ->
+                connection.callId = session.callId
+                registerConnection(session.callId, connection)
+                Log.d(TAG, "Incoming Connection registered with callId=${session.callId} (from session)")
+                com.ipdial.util.SipLogger.log(TAG, "Incoming Connection registered with callId=${session.callId} (from session)")
+            } ?: run {
+                Log.w(TAG, "onCreateIncomingConnection: No callId in extras and SipEngine.callSession is NULL")
+            }
         }
         
         return connection
@@ -121,6 +210,7 @@ class SipConnectionService : ConnectionService() {
 
 class SipConnection : Connection() {
     var callId: Int = -1
+    @Volatile var isDestroyed: Boolean = false
     private val connectionScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     override fun onAnswer() {
@@ -135,6 +225,8 @@ class SipConnection : Connection() {
     override fun onDisconnect() {
         Log.d("SipConnection", "onDisconnect(id=$callId)")
         com.ipdial.util.SipLogger.log("SipConnection", "onDisconnect called for callId=$callId")
+        if (isDestroyed) return
+        isDestroyed = true
         setDisconnected(DisconnectCause(DisconnectCause.LOCAL))
         connectionScope.launch {
             SipEngine.hangupCall(callId)
@@ -149,6 +241,8 @@ class SipConnection : Connection() {
     override fun onAbort() {
         Log.d("SipConnection", "onAbort(id=$callId)")
         com.ipdial.util.SipLogger.log("SipConnection", "onAbort called for callId=$callId")
+        if (isDestroyed) return
+        isDestroyed = true
         setDisconnected(DisconnectCause(DisconnectCause.CANCELED))
         connectionScope.launch {
             SipEngine.hangupCall(callId)
@@ -181,6 +275,8 @@ class SipConnection : Connection() {
     override fun onReject() {
         Log.d("SipConnection", "onReject(id=$callId)")
         com.ipdial.util.SipLogger.log("SipConnection", "onReject called for callId=$callId")
+        if (isDestroyed) return
+        isDestroyed = true
         setDisconnected(DisconnectCause(DisconnectCause.REJECTED))
         connectionScope.launch {
             SipEngine.hangupCall(callId)

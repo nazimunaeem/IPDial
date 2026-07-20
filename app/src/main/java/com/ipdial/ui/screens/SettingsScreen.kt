@@ -1,10 +1,14 @@
 package com.ipdial.ui.screens
 
 import android.app.Activity
+import android.app.AlarmManager
+import android.app.PendingIntent
 import android.content.Intent
 import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -23,10 +27,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.font.FontWeight
-import com.ipdial.R
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.ipdial.R
 import com.ipdial.data.model.*
 import com.ipdial.ui.IPDialTopBar
 import com.ipdial.ui.SipViewModel
@@ -34,6 +38,14 @@ import com.ipdial.ui.theme.LocalGlassMode
 import com.ipdial.ui.theme.glass
 import com.ipdial.util.UpdateChecker
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+val fontSizeOptions = listOf(
+    "Small" to 0.85f,
+    "Normal" to 1.0f,
+    "Large" to 1.15f,
+    "Extra Large" to 1.3f
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -41,7 +53,9 @@ fun SettingsScreen(
     vm: SipViewModel,
     onOpenDrawer: () -> Unit,
     onNavigateToLogs: () -> Unit,
-    onNavigateToCodecs: () -> Unit
+    onNavigateToCodecs: () -> Unit,
+    onNavigateToTheme: () -> Unit = {},
+    onNavigateToIncomingCallStyle: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -51,8 +65,9 @@ fun SettingsScreen(
     val fontSizeMultiplier by vm.fontSizeMultiplier.collectAsState()
     val appIconAlias by vm.appIconAlias.collectAsState()
     val keypadDesign by vm.keypadDesign.collectAsState()
-    
+
     var showRestartDialog by remember { mutableStateOf(false) }
+    var showResetDialog by remember { mutableStateOf(false) }
 
     if (showRestartDialog) {
         AlertDialog(
@@ -60,11 +75,40 @@ fun SettingsScreen(
             title = { Text("Restart Required") },
             text = { Text("The app icon has been updated. Please restart the app or check your home screen after a few seconds to see the change.") },
             confirmButton = {
-                TextButton(onClick = { 
+                TextButton(onClick = {
                     showRestartDialog = false
-                    // Force exit to help launcher pick up change on some devices
+                    val pm = context.packageManager
+                    val intent = pm.getLaunchIntentForPackage(context.packageName)
+                    if (intent != null) {
+                        val pendingIntent = PendingIntent.getActivity(
+                            context, 0, intent,
+                            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                        )
+                        val am = context.getSystemService(Activity.ALARM_SERVICE) as AlarmManager
+                        am.set(AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + 500, pendingIntent)
+                    }
                     (context as? Activity)?.finishAffinity()
                 }) { Text("OK") }
+            }
+        )
+    }
+
+    if (showResetDialog) {
+        AlertDialog(
+            onDismissRequest = { showResetDialog = false },
+            title = { Text("Reset Settings") },
+            text = { Text("Reset theme, font size, ringtone, and display preferences to defaults? Accounts and call history are preserved.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch {
+                        vm.repo.resetSettings()
+                        android.widget.Toast.makeText(context, "Settings reset to defaults", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                    showResetDialog = false
+                }) { Text("Reset") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetDialog = false }) { Text("Cancel") }
             }
         )
     }
@@ -74,7 +118,13 @@ fun SettingsScreen(
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
             val uri = result.data?.getParcelableExtra<Uri>(RingtoneManager.EXTRA_RINGTONE_PICKED_URI)
-            scope.launch { vm.repo.setGlobalRingtone(uri?.toString()) }
+            scope.launch {
+                vm.repo.setGlobalRingtone(uri?.toString())
+                withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    val label = if (uri == null) "Silent" else "Ringtone updated"
+                    android.widget.Toast.makeText(context, label, android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
         }
     }
 
@@ -94,33 +144,6 @@ fun SettingsScreen(
     var showUpdateDialog by remember { mutableStateOf(false) }
     var showFontSizeDialog by remember { mutableStateOf(false) }
     var showAppIconDialog by remember { mutableStateOf(false) }
-    var showThemeDialog by remember { mutableStateOf(false) }
-
-    if (showThemeDialog) {
-        AlertDialog(
-            onDismissRequest = { showThemeDialog = false },
-            title = { Text("Select Theme") },
-            text = {
-                Column {
-                    ThemeMode.entries.forEach { mode ->
-                        Row(
-                            Modifier.fillMaxWidth().clickable {
-                                vm.setThemeMode(context, mode)
-                                showThemeDialog = false
-                            }.padding(vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            val themeMode by vm.themeMode.collectAsState()
-                            RadioButton(selected = themeMode == mode, onClick = null)
-                            Spacer(Modifier.width(8.dp))
-                            Text(mode.name)
-                        }
-                    }
-                }
-            },
-            confirmButton = {}
-        )
-    }
 
     if (showFontSizeDialog) {
         AlertDialog(
@@ -128,7 +151,7 @@ fun SettingsScreen(
             title = { Text("Select Font Size") },
             text = {
                 Column {
-                    listOf("Small" to 0.85f, "Normal" to 1.0f, "Large" to 1.15f, "Extra Large" to 1.3f).forEach { (label, multiplier) ->
+                    fontSizeOptions.forEach { (label, multiplier) ->
                         Row(
                             Modifier.fillMaxWidth().clickable {
                                 vm.setFontSize(context, multiplier)
@@ -162,7 +185,7 @@ fun SettingsScreen(
                         "Blue" to R.drawable.ic_phone_blue,
                         "Red" to R.drawable.ic_phone_red
                     )
-                    
+
                     icons.chunked(2).forEach { row ->
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -175,7 +198,7 @@ fun SettingsScreen(
                                         .weight(1f)
                                         .clip(RoundedCornerShape(12.dp))
                                         .background(
-                                            if (appIconAlias == alias) MaterialTheme.colorScheme.primaryContainer 
+                                            if (appIconAlias == alias) MaterialTheme.colorScheme.primaryContainer
                                             else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
                                         )
                                         .clickable {
@@ -262,7 +285,7 @@ fun SettingsScreen(
                 }
             }
 
-            item { SettingsSection("Updates") }
+            stickyHeader { SettingsSection("Updates") }
             item {
                 SettingsRow(
                     icon = Icons.Default.SystemUpdate,
@@ -287,22 +310,25 @@ fun SettingsScreen(
                 )
             }
 
-            item { SettingsSection("Audio") }
+            stickyHeader { SettingsSection("Audio") }
             item {
-                val ringtoneName = if (globalRingtone != null) {
-                    try {
-                        globalRingtone?.let { uri ->
-                            RingtoneManager.getRingtone(context, Uri.parse(uri))?.getTitle(context)
-                        } ?: "Default"
+                val ringtoneLabel = when {
+                    globalRingtone == null -> "Default"
+                    globalRingtone == "silent" -> "Silent"
+                    else -> {
+                        try {
+                            globalRingtone?.let { uri ->
+                                RingtoneManager.getRingtone(context, Uri.parse(uri))?.getTitle(context)
+                            } ?: "Default"
+                        } catch (_: Exception) { "Default" }
                     }
-                    catch (_: Exception) { "Default" }
-                } else "Default"
-                
+                }
+
                 SettingsRow(
                     icon = Icons.Default.NotificationsActive,
                     title = "Ringtone",
-                    subtitle = ringtoneName,
-                    onClick = { 
+                    subtitle = ringtoneLabel,
+                    onClick = {
                         val intent = Intent(RingtoneManager.ACTION_RINGTONE_PICKER).apply {
                             putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_RINGTONE)
                             putExtra(RingtoneManager.EXTRA_RINGTONE_TITLE, "Select Ringtone")
@@ -326,7 +352,7 @@ fun SettingsScreen(
                 )
             }
 
-            item { SettingsSection("Audio Codecs") }
+            stickyHeader { SettingsSection("Audio Codecs") }
             item {
                 SettingsRow(
                     icon = Icons.Default.Audiotrack,
@@ -338,17 +364,13 @@ fun SettingsScreen(
                 )
             }
 
-            item { SettingsSection("General") }
+            stickyHeader { SettingsSection("General") }
             item {
+                val fontSizeLabel = fontSizeOptions.find { it.second == fontSizeMultiplier }?.first ?: "Normal"
                 SettingsRow(
                     icon = Icons.Default.TextFields,
                     title = "Font Size",
-                    subtitle = when(fontSizeMultiplier) {
-                        0.85f -> "Small"
-                        1.15f -> "Large"
-                        1.3f -> "Extra Large"
-                        else -> "Normal"
-                    },
+                    subtitle = fontSizeLabel,
                     onClick = { showFontSizeDialog = true }
                 )
             }
@@ -359,10 +381,10 @@ fun SettingsScreen(
                     icon = Icons.Default.GridOn,
                     title = "Keypad Design",
                     subtitle = if (keypadDesign == KeypadDesign.Rounded) "Fully Rounded" else "Grid",
-                    trailing = { 
+                    trailing = {
                         Switch(
-                            checked = keypadDesign == KeypadDesign.Rounded, 
-                            onCheckedChange = { 
+                            checked = keypadDesign == KeypadDesign.Rounded,
+                            onCheckedChange = {
                                 if (!isPro) {
                                     vm.showAdGate {
                                         vm.setKeypadDesign(context, if (it) KeypadDesign.Rounded else KeypadDesign.Grid)
@@ -371,9 +393,9 @@ fun SettingsScreen(
                                     vm.setKeypadDesign(context, if (it) KeypadDesign.Rounded else KeypadDesign.Grid)
                                 }
                             }
-                        ) 
+                        )
                     },
-                    onClick = { 
+                    onClick = {
                         if (!isPro) {
                             vm.showAdGate {
                                 vm.setKeypadDesign(context, if (keypadDesign == KeypadDesign.Rounded) KeypadDesign.Grid else KeypadDesign.Rounded)
@@ -391,7 +413,7 @@ fun SettingsScreen(
                     icon = Icons.Default.Brush,
                     title = "Choose App Icon",
                     subtitle = appIconAlias,
-                    onClick = { 
+                    onClick = {
                         if (!isPro) {
                             vm.showAdGate {
                                 showAppIconDialog = true
@@ -405,12 +427,36 @@ fun SettingsScreen(
 
             item {
                 val callsCardsEnabled by vm.callingCardsEnabled.collectAsState()
+                val isPro by vm.isPro.collectAsState()
                 SettingsRow(
                     icon = Icons.Default.ContactPage,
-                    title = "Calling Cards",
-                    subtitle = "Enable full screen contact photo setup",
-                    trailing = { Switch(checked = callsCardsEnabled, onCheckedChange = { vm.setCallingCards(it) }) },
-                    onClick = { vm.setCallingCards(!callsCardsEnabled) }
+                    title = "Full-Screen Photo",
+                    subtitle = "Show contact photo on calls",
+                    trailing = { Switch(checked = callsCardsEnabled, onCheckedChange = {
+                        if (!isPro) vm.showAdGate { vm.setCallingCards(it) }
+                        else vm.setCallingCards(it)
+                    }) },
+                    onClick = {
+                        if (!isPro) vm.showAdGate { vm.setCallingCards(!callsCardsEnabled) }
+                        else vm.setCallingCards(!callsCardsEnabled)
+                    }
+                )
+            }
+
+            item {
+                val mode by vm.incomingCallMode.collectAsState()
+                val isPro by vm.isPro.collectAsState()
+                SettingsRow(
+                    icon = Icons.Default.Call,
+                    title = "Incoming Call Style",
+                    subtitle = if (mode == IncomingCallMode.Slider) "Slider" else "Buttons",
+                    onClick = {
+                        if (!isPro) {
+                            vm.showAdGate { onNavigateToIncomingCallStyle() }
+                        } else {
+                            onNavigateToIncomingCallStyle()
+                        }
+                    }
                 )
             }
 
@@ -425,24 +471,25 @@ fun SettingsScreen(
                         ThemeMode.Light -> "Light"
                         ThemeMode.Obsidian -> "Obsidian"
                         ThemeMode.Quartz -> "Quartz"
+                        ThemeMode.Dynamic -> "Dynamic (Wallpaper)"
                         ThemeMode.System -> "System (${if(systemDark) "Dark" else "Light"})"
                     },
-                    onClick = { showThemeDialog = true }
+                    onClick = { onNavigateToTheme() }
                 )
             }
-            
+
             item {
                 val dndEnabled by vm.dndEnabled.collectAsState()
                 SettingsRow(
                     icon = Icons.Default.DoNotDisturbOn,
                     title = "Do Not Disturb",
-                    subtitle = "Automatically decline incoming calls",
+                    subtitle = "Silence ringtone & vibration (calls still received)",
                     trailing = { Switch(checked = dndEnabled, onCheckedChange = { vm.setDnd(it) }) },
                     onClick = { vm.setDnd(!dndEnabled) }
                 )
             }
 
-            item { SettingsSection("System") }
+            stickyHeader { SettingsSection("System") }
             item {
                 SettingsRow(
                     icon = Icons.AutoMirrored.Filled.List,
@@ -451,18 +498,44 @@ fun SettingsScreen(
                     onClick = { onNavigateToLogs() }
                 )
             }
+
+            item {
+                SettingsRow(
+                    icon = Icons.Default.DeleteSweep,
+                    title = "Clear Call History",
+                    subtitle = "Remove all call log entries",
+                    onClick = {
+                        scope.launch {
+                            vm.clearCallHistory()
+                            android.widget.Toast.makeText(context, "Call history cleared", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                )
+            }
+
+            stickyHeader { SettingsSection("Advanced") }
+            item {
+                SettingsRow(
+                    icon = Icons.Default.Restore,
+                    title = "Reset Settings",
+                    subtitle = "Restore all preferences to defaults",
+                    onClick = { showResetDialog = true }
+                )
+            }
         }
     }
 }
 
 @Composable
 fun SettingsSection(title: String) {
-    Text(
-        text = title,
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(start = 16.dp, top = 20.dp, bottom = 4.dp, end = 16.dp)
-    )
+    Surface(color = MaterialTheme.colorScheme.background) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(start = 16.dp, top = 20.dp, bottom = 4.dp, end = 16.dp)
+        )
+    }
 }
 
 @Composable
@@ -474,7 +547,7 @@ fun SettingsRow(
     onClick: () -> Unit
 ) {
     val isGlass = LocalGlassMode.current != com.ipdial.ui.theme.GlassMode.None
-    
+
     if (isGlass) {
         Card(
             onClick = onClick,

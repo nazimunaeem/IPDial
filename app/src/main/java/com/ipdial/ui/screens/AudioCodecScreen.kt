@@ -1,7 +1,6 @@
 package com.ipdial.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -32,6 +31,8 @@ fun AudioCodecScreen(
 ) {
     val activeAccount by vm.activeAccount.collectAsState()
     val availableCodecs = remember { com.ipdial.service.SipEngine.getAvailableCodecs() }
+    val accounts by vm.accounts.collectAsState()
+    val enabledAccounts = remember(accounts) { accounts.filter { it.isEnabled } }
 
     Scaffold(
         topBar = {
@@ -57,7 +58,7 @@ fun AudioCodecScreen(
                 InfoCard()
             }
 
-            if (activeAccount != null) {
+            if (enabledAccounts.isNotEmpty()) {
                 item {
                     Text(
                         "Preferred Codec",
@@ -67,14 +68,31 @@ fun AudioCodecScreen(
                     )
                 }
 
-                items(PreferredCodec.entries) { codec ->
-                    CodecSelectionRow(
-                        codec = codec,
-                        isSelected = activeAccount?.codec == codec,
-                        onClick = {
-                            vm.saveAccount(activeAccount!!.copy(codec = codec))
+                if (enabledAccounts.size > 1) {
+                    items(enabledAccounts) { account ->
+                        AccountCodecSection(
+                            account = account,
+                            availableCodecs = availableCodecs,
+                            onCodecSelected = { codec ->
+                                vm.saveAccount(account.copy(codec = codec))
+                            }
+                        )
+                    }
+                } else if (activeAccount != null) {
+                    val acct = activeAccount!!
+                    items(PreferredCodec.entries) { codec ->
+                        val isEngineAvailable = availableCodecs.any { 
+                            it.name.lowercase().contains(codec.name.lowercase().replace("g711", "pcm")) && it.isAvailable 
                         }
-                    )
+                        CodecSelectionRow(
+                            codec = codec,
+                            isSelected = acct.codec == codec,
+                            isEngineAvailable = isEngineAvailable,
+                            onClick = {
+                                vm.saveAccount(acct.copy(codec = codec))
+                            }
+                        )
+                    }
                 }
             }
 
@@ -101,6 +119,39 @@ fun AudioCodecScreen(
 }
 
 @Composable
+fun AccountCodecSection(
+    account: SipAccount,
+    availableCodecs: List<CodecInfo>,
+    onCodecSelected: (PreferredCodec) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Text(
+                text = account.label.ifBlank { account.domain },
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(Modifier.height(8.dp))
+            PreferredCodec.entries.forEach { codec ->
+                val isEngineAvailable = availableCodecs.any { 
+                    it.name.lowercase().contains(codec.name.lowercase().replace("g711", "pcm")) && it.isAvailable 
+                }
+                CodecSelectionRow(
+                    codec = codec,
+                    isSelected = account.codec == codec,
+                    isEngineAvailable = isEngineAvailable,
+                    onClick = { onCodecSelected(codec) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
 fun InfoCard() {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f))
@@ -120,13 +171,17 @@ fun InfoCard() {
 fun CodecSelectionRow(
     codec: PreferredCodec,
     isSelected: Boolean,
+    isEngineAvailable: Boolean = true,
     onClick: () -> Unit
 ) {
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(12.dp),
-        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-        border = if (isSelected) null else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer 
+                else MaterialTheme.colorScheme.surface,
+        border = if (isSelected) null 
+                 else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        enabled = isEngineAvailable
     ) {
         Row(
             modifier = Modifier
@@ -138,20 +193,30 @@ fun CodecSelectionRow(
                 Text(
                     text = codec.name,
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                    color = if (isEngineAvailable) MaterialTheme.colorScheme.onSurface
+                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
                 )
                 Text(
                     text = when(codec) {
-                        PreferredCodec.G711A -> "Best compatibility (PCMA)"
-                        PreferredCodec.G711U -> "Standard (PCMU)"
-                        PreferredCodec.G729 -> "Low bandwidth / Good for 3G/4G"
-                        PreferredCodec.OPUS -> "Ultra High Definition"
-                        PreferredCodec.G722 -> "High Definition"
+                        PreferredCodec.G711A -> "Best compatibility (PCMA) · 64 kbps · MOS 4.1"
+                        PreferredCodec.G711U -> "Standard (PCMU) · 64 kbps · MOS 4.1"
+                        PreferredCodec.G729 -> "Low bandwidth · 8 kbps · MOS 3.9 · Great for 3G/4G"
+                        PreferredCodec.G722 -> "High Definition · 48 kbps · MOS 4.0"
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f) 
-                            else MaterialTheme.colorScheme.onSurfaceVariant
+                            else MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                                alpha = if (isEngineAvailable) 1f else 0.38f
+                            )
                 )
+                if (!isEngineAvailable) {
+                    Text(
+                        text = "Not available on this device",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
             }
             if (isSelected) {
                 Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary)
@@ -178,6 +243,14 @@ fun CodecInfoRow(info: CodecInfo) {
                 Text("${info.clockRate / 1000}kHz", style = MaterialTheme.typography.labelSmall)
                 Spacer(Modifier.width(12.dp))
                 Text(if (info.channelCount == 2) "Stereo" else "Mono", style = MaterialTheme.typography.labelSmall)
+                if (info.bandwidthKbps > 0) {
+                    Spacer(Modifier.width(12.dp))
+                    Text("${info.bandwidthKbps} kbps", style = MaterialTheme.typography.labelSmall)
+                }
+                if (info.estimatedMOS > 0f) {
+                    Spacer(Modifier.width(12.dp))
+                    Text("MOS %.1f".format(info.estimatedMOS), style = MaterialTheme.typography.labelSmall)
+                }
                 Spacer(Modifier.weight(1f))
                 Text(
                     text = if (info.isAvailable) "Ready" else "Disabled",

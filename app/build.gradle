@@ -124,6 +124,7 @@ dependencies {
     implementation 'com.google.firebase:firebase-analytics'
     // Firestore for points sync
     implementation 'com.google.firebase:firebase-firestore'
+    implementation 'com.google.firebase:firebase-config'
 
     // Compose BOM
     implementation platform('androidx.compose:compose-bom:2026.06.00')

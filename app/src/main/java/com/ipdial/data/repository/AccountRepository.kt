@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import com.ipdial.data.model.IncomingCallMode
 import com.ipdial.data.model.KeypadDesign
 import com.ipdial.data.model.SipAccount
 import com.ipdial.data.model.ThemeMode
@@ -31,6 +32,7 @@ class AccountRepository(private val context: Context) {
     private val fontSizeKey = stringPreferencesKey("font_size_multiplier")
     private val appIconKey = stringPreferencesKey("app_icon_alias")
     private val keypadDesignKey = stringPreferencesKey("keypad_design")
+    private val incomingCallModeKey = stringPreferencesKey("incoming_call_mode")
     private val defaultDomainKey = stringPreferencesKey("default_domain")
     private val lastDialedKey = stringPreferencesKey("last_dialed")
     private val adsEnabledKey = booleanPreferencesKey("ads_enabled")
@@ -64,8 +66,12 @@ class AccountRepository(private val context: Context) {
         prefs[appIconKey] ?: "Default"
     }
 
-    val keypadDesign: Flow<KeypadDesign> = context.dataStore.data.map { prefs -> 
-        try { KeypadDesign.valueOf(prefs[keypadDesignKey] ?: "Grid") } catch (_: Exception) { KeypadDesign.Grid }
+    val keypadDesign: Flow<KeypadDesign> = context.dataStore.data.map { prefs ->
+        try { KeypadDesign.valueOf(prefs[keypadDesignKey] ?: "Rounded") } catch (_: Exception) { KeypadDesign.Rounded }
+    }
+
+    val incomingCallMode: Flow<IncomingCallMode> = context.dataStore.data.map { prefs ->
+        try { IncomingCallMode.valueOf(prefs[incomingCallModeKey] ?: "Slider") } catch (_: Exception) { IncomingCallMode.Slider }
     }
 
     val defaultDomain: Flow<String> = context.dataStore.data.map { prefs ->
@@ -112,6 +118,7 @@ class AccountRepository(private val context: Context) {
     suspend fun setFontSizeMultiplier(multiplier: Float) = context.dataStore.edit { it[fontSizeKey] = multiplier.toString() }
     suspend fun setAppIconAlias(alias: String) = context.dataStore.edit { it[appIconKey] = alias }
     suspend fun setKeypadDesign(design: KeypadDesign) = context.dataStore.edit { it[keypadDesignKey] = design.name }
+    suspend fun setIncomingCallMode(mode: IncomingCallMode) = context.dataStore.edit { it[incomingCallModeKey] = mode.name }
     suspend fun setDefaultDomain(domain: String) = context.dataStore.edit { it[defaultDomainKey] = domain }
     suspend fun setLastDialedNumber(number: String) = context.dataStore.edit { it[lastDialedKey] = number }
     suspend fun setAdsEnabled(enabled: Boolean) = context.dataStore.edit { it[adsEnabledKey] = enabled }
@@ -124,6 +131,20 @@ class AccountRepository(private val context: Context) {
         context.dataStore.edit { prefs ->
             if (uri == null) prefs.remove(ringtoneKey)
             else prefs[ringtoneKey] = uri
+        }
+    }
+
+    suspend fun resetSettings() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(themeKey)
+            prefs.remove(fontSizeKey)
+            prefs.remove(ringtoneKey)
+            prefs.remove(vibrateKey)
+            prefs.remove(callingCardsKey)
+            prefs.remove(dndKey)
+            prefs.remove(keypadDesignKey)
+            prefs.remove(appIconKey)
+            prefs.remove(incomingCallModeKey)
         }
     }
 
@@ -165,5 +186,24 @@ class AccountRepository(private val context: Context) {
         val json = prefs[accountsKey] ?: return emptyList()
         val type = object : TypeToken<List<SipAccount>>() {}.type
         return gson.fromJson(json, type) ?: emptyList()
+    }
+
+    suspend fun exportAccountsJson(): String {
+        val accounts = context.dataStore.data.first().let { getAccountsList(it) }
+        return gson.toJson(accounts)
+    }
+
+    suspend fun importAccountsJson(json: String): Int {
+        val type = object : TypeToken<List<SipAccount>>() {}.type
+        val imported: List<SipAccount> = gson.fromJson(json, type) ?: return 0
+        context.dataStore.edit { prefs ->
+            val existing = getAccountsList(prefs).toMutableList()
+            for (acc in imported) {
+                val idx = existing.indexOfFirst { it.id == acc.id }
+                if (idx >= 0) existing[idx] = acc else existing.add(acc)
+            }
+            prefs[accountsKey] = gson.toJson(existing)
+        }
+        return imported.size
     }
 }

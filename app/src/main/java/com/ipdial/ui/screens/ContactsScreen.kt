@@ -1,26 +1,35 @@
+@file:OptIn(ExperimentalMaterial3Api::class)
 package com.ipdial.ui.screens
 
-import android.content.Intent
-import android.net.Uri
-import android.provider.ContactsContract
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.DockedSearchBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -32,73 +41,81 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
-import coil.request.ImageRequest
 import com.ipdial.data.model.Contact
 import com.ipdial.ui.AccountSelectionDialog
-import com.ipdial.ui.IPDialTopBar
+import com.ipdial.ui.ContactItem
 import com.ipdial.ui.NumberPickerDialog
 import com.ipdial.ui.SipViewModel
-import androidx.compose.ui.graphics.Color
-import androidx.compose.material3.Surface
-import androidx.compose.foundation.shape.RoundedCornerShape
-import com.ipdial.ui.theme.glass
+import com.ipdial.ui.theme.LocalGlassMode
 import kotlinx.coroutines.launch
+
+@Composable
+private fun EmptyState(message: String, icon: androidx.compose.ui.graphics.vector.ImageVector = Icons.Default.Info) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 64.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            modifier = Modifier.size(64.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+        )
+        Spacer(Modifier.height(16.dp))
+        Text(
+            text = message,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+        )
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ContactsScreen(
-    vm: SipViewModel, 
+    vm: SipViewModel,
     onOpenDrawer: () -> Unit,
     onNavigateToAccounts: () -> Unit = {}
 ) {
-    val contacts by vm.contacts.collectAsState()
+    val groupedContacts by vm.groupedContacts.collectAsState()
     val searchQuery by vm.searchQuery.collectAsState()
     val accounts by vm.accounts.collectAsState()
     val context = LocalContext.current
     var activeContactForNumberPicker by remember { mutableStateOf<Contact?>(null) }
-
-    val sortedContacts = remember(contacts) {
-        contacts.sortedBy { it.name.trim().lowercase() }
-    }
-    
-    val filteredContacts = remember(sortedContacts, searchQuery) {
-        if (searchQuery.isBlank()) sortedContacts
-        else sortedContacts.filter { 
-            it.name.contains(searchQuery, ignoreCase = true) || 
-            it.numbers.any { num -> num.contains(searchQuery) }
-        }
-    }
-
-    val alphabet = remember { ('A'..'Z').toList() }
-    val letterToFirstIndex = remember(filteredContacts) {
-        val map = mutableMapOf<Char, Int>()
-        filteredContacts.forEachIndexed { index, contact ->
-            val firstChar = contact.name.trim().firstOrNull()?.uppercaseChar() ?: '#'
-            val targetChar = if (firstChar in 'A'..'Z') firstChar else '#'
-            if (!map.containsKey(targetChar)) {
-                map[targetChar] = index
-            }
-        }
-        map
-    }
+    var searchActive by remember { mutableStateOf(false) }
 
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
+    val isGlass = LocalGlassMode.current != com.ipdial.ui.theme.GlassMode.None
+
+    // Build letter → first index map for the indexer
+    val allEntries = remember(groupedContacts) {
+        groupedContacts.entries.toList()
+    }
+    val letterToFirstIndex = remember(groupedContacts) {
+        val map = mutableMapOf<Char, Int>()
+        var idx = 0
+        for ((letter, contacts) in allEntries) {
+            map[letter] = idx
+            idx += 1 + contacts.size
+        }
+        map
+    }
+    val alphabet = remember { ('A'..'Z').toList() }
 
     Scaffold(
-        topBar = {
-            IPDialTopBar(
-                accounts = accounts, 
-                vm = vm, 
-                onOpenDrawer = onOpenDrawer,
-                onAddAccount = onNavigateToAccounts
-            )
-        },
         bottomBar = {
             com.ipdial.ui.StartIoBanner(
                 vm = vm,
@@ -107,43 +124,142 @@ fun ContactsScreen(
         }
     ) { padding ->
         Column(modifier = Modifier.padding(padding)) {
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { vm.onSearchQueryChanged(it) },
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                placeholder = { Text("Search...") },
-                leadingIcon = { Icon(Icons.Default.Search, null) },
-                shape = CircleShape
-            )
-            
-            Row(modifier = Modifier.fillMaxSize()) {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    items(filteredContacts, key = { it.id }) { contact ->
-                        ContactItem(
-                            contact = contact,
-                            onNumberClick = { num -> vm.makeCall(num) },
-                            onContactClick = {
-                                val intent = Intent(Intent.ACTION_VIEW).apply {
-                                    data = Uri.withAppendedPath(ContactsContract.Contacts.CONTENT_URI, contact.id)
-                                }
-                                context.startActivity(intent)
+            DockedSearchBar(
+                query = searchQuery,
+                onQueryChange = { vm.onSearchQueryChanged(it) },
+                onSearch = { },
+                active = searchActive,
+                onActiveChange = { searchActive = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp, vertical = 3.dp),
+                placeholder = { Text("Search contacts...") },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                trailingIcon = {
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { vm.onSearchQueryChanged("") }) {
+                            Icon(Icons.Default.Close, contentDescription = "Clear")
+                        }
+                    }
+                }
+            ) {
+                // Search suggestions dropdown — show recent contacts
+                val mostCalled by vm.mostCalledContacts.collectAsState()
+                if (mostCalled.isNotEmpty()) {
+                    Text(
+                        text = "Recent",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                    )
+                    mostCalled.take(5).forEach { contact ->
+                        ListItem(
+                            headlineContent = { Text(contact.name) },
+                            supportingContent = { Text(contact.numbers.firstOrNull() ?: "") },
+                            leadingContent = {
+                                com.ipdial.ui.ContactAvatar(
+                                    name = contact.name,
+                                    photoUri = contact.photoUri,
+                                    size = 36.dp
+                                )
+                            },
+                            modifier = Modifier.clickable {
+                                vm.onSearchQueryChanged(contact.name)
+                                searchActive = false
                             }
                         )
                     }
                 }
+            }
 
-                AlphabetIndexer(
-                    alphabet = alphabet,
-                    letterToFirstIndex = letterToFirstIndex,
-                    onLetterSelected = { _, index ->
-                        coroutineScope.launch {
-                            listState.scrollToItem(index)
+            if (groupedContacts.isEmpty()) {
+                EmptyState(
+                    message = if (searchQuery.isNotBlank()) "No contacts matching \"$searchQuery\""
+                    else "No contacts found",
+                    icon = Icons.Default.Search
+                )
+            } else {
+                Row(modifier = Modifier.fillMaxSize()) {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(vertical = 4.dp)
+                    ) {
+                        allEntries.forEach { (letter, contacts) ->
+                            item {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(
+                                            if (isGlass) Color.Transparent
+                                            else MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
+                                        )
+                                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                                ) {
+                                    Text(
+                                        text = letter.toString(),
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+
+                            itemsIndexed(contacts, key = { _, c -> c.id }) { _, contact ->
+                                ContactItem(
+                                    contact = contact,
+                                    onNumberClick = { vm.makeCall(it) },
+                                    onContactClick = {
+                                        if (contact.numbers.size > 1) {
+                                            activeContactForNumberPicker = contact
+                                        } else {
+                                            contact.numbers.firstOrNull()?.let { vm.makeCall(it) }
+                                        }
+                                    },
+                                    isGlass = isGlass
+                                )
+                            }
                         }
                     }
-                )
+
+                    // AlphabetIndexer
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .width(28.dp)
+                            .padding(end = 2.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            verticalArrangement = Arrangement.SpaceEvenly,
+                            modifier = Modifier.fillMaxHeight()
+                        ) {
+                            alphabet.forEach { letter ->
+                                val hasLetter = letterToFirstIndex.containsKey(letter)
+                                Text(
+                                    text = letter.toString(),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = if (hasLetter) FontWeight.Bold else FontWeight.Light,
+                                    color = if (hasLetter) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
+                                    modifier = Modifier
+                                        .semantics {
+                                            role = Role.Button
+                                            contentDescription = "Jump to $letter"
+                                        }
+                                        .clickable(enabled = hasLetter) {
+                                            letterToFirstIndex[letter]?.let { index ->
+                                                coroutineScope.launch {
+                                                    listState.animateScrollToItem(index)
+                                                }
+                                            }
+                                        }
+                                        .padding(vertical = 1.dp)
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -157,6 +273,7 @@ fun ContactsScreen(
     }
 
     val showAccountSelection by vm.showAccountSelectionDialog.collectAsState()
+    val balances by vm.balances.collectAsState()
     val enabledAccounts = remember(accounts) {
         accounts.filter { it.isEnabled }
     }
@@ -164,82 +281,9 @@ fun ContactsScreen(
     if (showAccountSelection && enabledAccounts.isNotEmpty()) {
         AccountSelectionDialog(
             enabledAccounts = enabledAccounts,
+            balances = balances,
             onAccountSelected = { vm.proceedWithCallAfterAccountSelection(it) },
             onDismiss = { vm.dismissAccountSelection() }
         )
-    }
-}
-
-@Composable
-fun ContactItem(contact: Contact, onNumberClick: (String) -> Unit, onContactClick: () -> Unit) {
-    val context = LocalContext.current
-    val isGlass = com.ipdial.ui.theme.LocalGlassMode.current != com.ipdial.ui.theme.GlassMode.None
-    Surface(
-        color = Color.Transparent,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 4.dp)
-            .then(if (isGlass) Modifier.glass(RoundedCornerShape(12.dp)) else Modifier)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp, horizontal = 12.dp),
-            verticalAlignment = Alignment.Top
-        ) {
-        Box(
-            modifier = Modifier
-                .padding(top = 4.dp)
-                .size(44.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primaryContainer)
-                .clickableWithRipple { onContactClick() },
-            contentAlignment = Alignment.Center
-        ) {
-            if (contact.photoUri != null) {
-                val request = remember(contact.photoUri) {
-                    ImageRequest.Builder(context)
-                        .data(contact.photoUri)
-                        .size(96, 96) // Precise downsampling for ~44dp
-                        .crossfade(true)
-                        .diskCachePolicy(coil.request.CachePolicy.ENABLED)
-                        .memoryCachePolicy(coil.request.CachePolicy.ENABLED)
-                        .build()
-                }
-                AsyncImage(
-                    model = request,
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
-                )
-            } else {
-                Text(contact.name.take(1).uppercase(), style = MaterialTheme.typography.titleMedium)
-            }
-        }
-        Column(modifier = Modifier.weight(1f).padding(horizontal = 16.dp)) {
-            Text(
-                text = contact.name,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                modifier = Modifier.clickableWithRipple { onContactClick() }
-            )
-            contact.numbers.forEach { number ->
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickableWithRipple { onNumberClick(number) }
-                        .padding(vertical = 4.dp)
-                ) {
-                    Text(
-                        text = number,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-        }
-        }
     }
 }

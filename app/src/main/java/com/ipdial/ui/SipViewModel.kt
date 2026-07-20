@@ -19,6 +19,7 @@ import com.ipdial.data.model.CallLogEntry
 import com.ipdial.data.model.CallSession
 import com.ipdial.data.model.CallState
 import com.ipdial.data.model.Contact
+import com.ipdial.data.model.IncomingCallMode
 import com.ipdial.data.model.KeypadDesign
 import com.ipdial.data.model.RegStatus
 import com.ipdial.data.model.SipAccount
@@ -98,6 +99,9 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     val keypadDesign: StateFlow<KeypadDesign> = repo.keypadDesign
         .stateIn(viewModelScope, SharingStarted.Eagerly, KeypadDesign.Grid)
 
+    val incomingCallMode: StateFlow<IncomingCallMode> = repo.incomingCallMode
+        .stateIn(viewModelScope, SharingStarted.Eagerly, IncomingCallMode.Slider)
+
     val defaultDomain: StateFlow<String> = repo.defaultDomain
         .stateIn(viewModelScope, SharingStarted.Eagerly, "103.129.202.202")
 
@@ -142,8 +146,16 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         repo.setKeypadDesign(design)
         if (!isPro.value) triggerAd(context)
     }
+    fun setIncomingCallMode(context: Context, mode: IncomingCallMode) = viewModelScope.launch {
+        repo.setIncomingCallMode(mode)
+        if (!isPro.value) triggerAd(context)
+    }
     fun setDefaultDomain(domain: String) = viewModelScope.launch { repo.setDefaultDomain(domain) }
     fun setAdsEnabled(enabled: Boolean) = viewModelScope.launch { repo.setAdsEnabled(enabled) }
+
+    suspend fun clearCallHistory() {
+        logRepo.deleteAll()
+    }
 
     fun getReferralCode(): String = deviceId.value
 
@@ -358,6 +370,21 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
+    val groupedContacts: StateFlow<Map<Char, List<Contact>>> =
+        combine(_contacts, _searchQuery) { allContacts, query ->
+            val filtered = if (query.isBlank()) allContacts
+            else allContacts.filter {
+                it.name.contains(query, ignoreCase = true) ||
+                it.numbers.any { num -> num.contains(query) }
+            }
+            filtered.sortedBy { it.name.trim().lowercase() }
+                .groupBy { contact ->
+                    val first = contact.name.trim().firstOrNull()?.uppercaseChar() ?: '#'
+                    if (first in 'A'..'Z') first else '#'
+                }
+                .toSortedMap()
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
     // Dialer state
     private val _dialString = MutableStateFlow(TextFieldValue(""))
     val dialString: StateFlow<TextFieldValue> = _dialString.asStateFlow()
@@ -389,7 +416,6 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
      private var adTimerJob: Job? = null
 
      private fun showAdBriefly(durationMs: Long = 15000L) {
-         if (isPro.value) return
          adTimerJob?.cancel()
          _showAd.value = true
          adTimerJob = viewModelScope.launch {
@@ -504,10 +530,15 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private var callTimeoutJob: Job? = null
+
     private fun observeCallSession() {
         viewModelScope.launch {
             callSession.collect { session ->
-                if (session != null) {
+                callTimeoutJob?.cancel()
+                callTimeoutJob = null
+
+                if (session != null && session.state != CallState.DISCONNECTED) {
                     _showFullIncomingScreen.value = true
                     if (session.state == CallState.INCOMING || session.state == CallState.CALLING) {
                         // Update bluetooth availability when a call starts/comes in
@@ -518,6 +549,22 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                             setAudioDevice(AudioDeviceMode.BLUETOOTH)
                         }
                     }
+
+                    // Start a timeout for outgoing calls stuck in CALLING/EARLY
+                    if (session.direction == com.ipdial.data.model.CallDirection.OUTGOING &&
+                        (session.state == CallState.CALLING || session.state == CallState.EARLY)) {
+                        callTimeoutJob = viewModelScope.launch {
+                            delay(30_000)
+                            if (callSession.value?.state == CallState.CALLING ||
+                                callSession.value?.state == CallState.EARLY) {
+                                android.util.Log.w("SipViewModel", "Call timeout: no response after 30s, hanging up")
+                                hangup()
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(getApplication(), "Call timed out", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }
+                    }
                 } else {
                     _showFullIncomingScreen.value = false
                     // Reset to EARPIECE when call ends
@@ -525,12 +572,31 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
         }
+
+        // Zombie session watchdog: periodically check if the session references a
+        // callId that is no longer in SipEngine's callMap.  This catches edge-cases
+        // where onCallState(DISCONNECTED) failed to null the session (e.g. exception
+        // in the disconnect block, or conn.destroy() threading issue causing the
+        // framework to re-enter and resurrect the session).
+        viewModelScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(2_000)
+                try {
+                    SipEngine.nullSessionIfStale()
+                } catch (_: Throwable) {}
+            }
+        }
     }
 
     fun refreshContacts() {
         viewModelScope.launch {
             contactsRepo.syncContacts()
+            contactsRepo.buildNumberIndex()
         }
+    }
+
+    fun findContactByNumber(phoneNumber: String): Contact? {
+        return contactsRepo.findContactByNumber(phoneNumber)
     }
 
     fun onSearchQueryChanged(query: String) {
@@ -538,7 +604,7 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
             delay(300)
-            refreshContacts()
+            contactsRepo.buildNumberIndex()
         }
     }
 
@@ -732,16 +798,24 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun hangup() { 
-        val id = callSession.value?.callId ?: -1
+    fun hangup() {
+        val session = callSession.value
+        val id = session?.callId ?: -1
+        android.util.Log.d("SipViewModel", "hangup() called: callId=$id, state=${session?.state}, direction=${session?.direction}")
         viewModelScope.launch(Dispatchers.IO) {
             SipEngine.hangupCall(id)
-            withContext(Dispatchers.Main) {
-                if (id != -1) {
+            // Also tear down the Telecom connection so the system dialer
+            // notification is dismissed.  Safe to call even if SipEngine
+            // already triggered onCallState → disconnectCall.
+            if (id != -1) {
+                withContext(Dispatchers.Main) {
                     com.ipdial.service.SipConnectionService.getConnection(id)?.let {
-                        it.setDisconnected(android.telecom.DisconnectCause(android.telecom.DisconnectCause.LOCAL))
-                        it.destroy()
+                        if (!it.isDestroyed) {
+                            it.setDisconnected(android.telecom.DisconnectCause(android.telecom.DisconnectCause.LOCAL))
+                            it.destroy()
+                        }
                     }
+                    com.ipdial.service.SipConnectionService.removeConnection(id)
                 }
             }
         }

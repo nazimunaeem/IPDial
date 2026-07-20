@@ -6,6 +6,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -65,40 +66,44 @@ import kotlinx.coroutines.delay
 
 @Composable
 fun CallScreen(vm: SipViewModel, session: CallSession) {
+    // Safety: if the live session is null or disconnected, bail out immediately.
+    // This handles the case where onCallState failed to propagate the state change.
+    val liveCallSession by vm.callSession.collectAsState()
+    if (liveCallSession == null || liveCallSession?.state == CallState.DISCONNECTED) return
+
     val accounts by vm.accounts.collectAsState()
     val contacts by vm.contacts.collectAsState()
     val audioDeviceMode by vm.audioDeviceMode.collectAsState()
 
-    val account = accounts.firstOrNull { it.id == session.accountId }
+    val activeSession = liveCallSession ?: session
+
+    val account = accounts.firstOrNull { it.id == activeSession.accountId }
     val simLabel = account?.displayName ?: ""
 
-    // Contact matching logic
-    val contact = remember(session.remoteUri, contacts) {
-        val cleanedSessionUriDigits = vm.cleanUri(session.remoteUri).filter { it.isDigit() }
+    // Contact matching logic using pre-computed index
+    val contact = remember(activeSession.remoteUri, contacts) {
+        val cleanedSessionUriDigits = vm.cleanUri(activeSession.remoteUri).filter { it.isDigit() }
         if (cleanedSessionUriDigits.length < 10) { // Only attempt contact match for numbers with at least 10 digits
             null
         } else {
-            contacts.find { c ->
-                c.numbers.any { n ->
-                    val cleanedContactNumberDigits = n.filter { it.isDigit() }
-                    cleanedContactNumberDigits.length >= 10 && // Contact number must also be long enough
-                    (cleanedSessionUriDigits.contains(cleanedContactNumberDigits) || cleanedContactNumberDigits.contains(cleanedSessionUriDigits))
-                }
-            }
+            vm.findContactByNumber(activeSession.remoteUri)
         }
     }
-    val displayName = contact?.name ?: vm.cleanDisplayName(session.remoteDisplayName, session.remoteUri)
+    val displayName = contact?.name ?: vm.cleanDisplayName(activeSession.remoteDisplayName, activeSession.remoteUri)
 
     var showDialpad by remember { mutableStateOf(false) }
     var elapsedSeconds by remember { mutableLongStateOf(0L) }
-    
-    // Observe live call session to drive the timer (snapshot session never changes)
-    val liveCallSession by vm.callSession.collectAsState()
+
+    val isActive = activeSession.state == CallState.CONFIRMED
     
     // Check for Bluetooth devices when call is active
-    LaunchedEffect(session.state) {
-        if (session.state == CallState.CONFIRMED) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(isActive) {
+        if (isActive) {
             vm.updateBluetoothAvailability()
+            // Haptic feedback on call connect
+            val activity = context as? android.app.Activity
+            activity?.window?.decorView?.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
         }
     }
 
@@ -108,9 +113,8 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
     val subtitleColor = if (isFullScreenPhoto) Color.White.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant
 
     // Call timer — uses live session from ViewModel so it stops when remote hangs up
-    LaunchedEffect(liveCallSession) {
-        val live = liveCallSession
-        if (live != null && live.state == CallState.CONFIRMED) {
+    LaunchedEffect(activeSession) {
+        if (isActive) {
             while (liveCallSession?.state == CallState.CONFIRMED) {
                 delay(1000)
                 elapsedSeconds++
@@ -135,7 +139,7 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
                     .fillMaxSize()
                     .background(
                         androidx.compose.ui.graphics.Brush.verticalGradient(
-                            colors = listOf(Color.Black.copy(alpha = 0.5f), Color.Transparent, Color.Black.copy(alpha = 0.8f))
+                            colors = listOf(Color.Black.copy(alpha = 0.7f), Color.Black.copy(alpha = 0.3f), Color.Black.copy(alpha = 0.9f))
                         )
                     )
             )
@@ -174,10 +178,10 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
                 maxLines = 1
             )
 
-            if (displayName != vm.cleanUri(session.remoteUri)) {
+            if (displayName != vm.cleanUri(activeSession.remoteUri)) {
                 Spacer(Modifier.height(8.dp)) // Increased from 4
                 Text(
-                    text = vm.cleanUri(session.remoteUri),
+                    text = vm.cleanUri(activeSession.remoteUri),
                     style = MaterialTheme.typography.titleMedium.copy( // Increased from bodyMedium
                         shadow = if (isFullScreenPhoto) Shadow(Color.Black, Offset(1f, 1f), 4f) else null
                     ),
@@ -187,7 +191,7 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
 
             // State label (ringing / connecting) / Duration
             Spacer(Modifier.height(16.dp)) // Increased from 8
-            if (session.state == CallState.CONFIRMED) {
+            if (isActive) {
                 Text(
                     text = formatDuration(elapsedSeconds),
                     style = MaterialTheme.typography.headlineMedium.copy( // Increased from bodyLarge
@@ -196,8 +200,17 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
                     ),
                     color = textColor
                 )
+                // Show negotiated codec
+                if (activeSession.negotiatedCodec != null) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = activeSession.negotiatedCodec!!.split("/").first().uppercase(),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = subtitleColor
+                    )
+                }
             } else {
-                PulsingStateLabel(session.state)
+                PulsingStateLabel(activeSession.state)
             }
 
             // Avatar circle
@@ -229,8 +242,8 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
                     }
                 } else {
                     CallControls(
-                        session = session,
-                        isActive = session.state == CallState.CONFIRMED,
+                        session = activeSession,
+                        isActive = isActive,
                         onKeypad = { showDialpad = true },
                         onMute = { vm.toggleMute() },
                         onSpeaker = { vm.cycleAudioDevice() },
@@ -434,14 +447,9 @@ fun InCallDialpad(vm: SipViewModel, onHide: () -> Unit) {
 
 @Composable
 fun PulsingStateLabel(state: CallState) {
-    val label = when (state) {
-        CallState.CALLING -> "Calling…"
-        CallState.INCOMING -> "Incoming"
-        CallState.EARLY -> "Ringing…"
-        CallState.CONNECTING -> "Connecting…"
-        else -> ""
-    }
-    val alpha by rememberInfiniteTransition(label = "pulse").animateFloat(
+    val infiniteTransition = rememberInfiniteTransition(label = "statePulse")
+
+    val alpha by infiniteTransition.animateFloat(
         initialValue = 1f,
         targetValue = 0.4f,
         animationSpec = infiniteRepeatable(
@@ -450,12 +458,27 @@ fun PulsingStateLabel(state: CallState) {
         ),
         label = "alpha"
     )
+
+    val label = when (state) {
+        CallState.CALLING -> "Calling"
+        CallState.INCOMING -> "Incoming"
+        CallState.EARLY -> "Ringing"
+        CallState.CONNECTING -> "Connecting"
+        else -> ""
+    }
+    
+    val color = when (state) {
+        CallState.INCOMING -> MaterialTheme.colorScheme.primary
+        CallState.CONNECTING -> MaterialTheme.colorScheme.tertiary
+        else -> Color.White
+    }
+    
     Text(
         text = label,
-        style = MaterialTheme.typography.titleLarge.copy( // Increased from bodyMedium
+        style = MaterialTheme.typography.titleLarge.copy(
             shadow = Shadow(Color.Black, Offset(1f, 1f), 4f)
         ),
-        color = Color.White.copy(alpha = alpha),
+        color = color.copy(alpha = alpha),
     )
 }
 

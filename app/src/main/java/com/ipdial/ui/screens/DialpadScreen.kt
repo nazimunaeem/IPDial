@@ -5,10 +5,12 @@ import androidx.compose.animation.*
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -85,12 +87,6 @@ fun DialpadScreen(
                 .background(MaterialTheme.colorScheme.background),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            IPDialTopBar(
-                accounts = accounts, 
-                vm = vm, 
-                onOpenDrawer = onOpenDrawer,
-                onAddAccount = onNavigateToAccounts
-            )
 
             // Suggested contacts space
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -133,14 +129,15 @@ fun DialpadScreen(
                 }
             }
 
-            // Ad above digit box
-            val isPro by vm.isPro.collectAsState()
+            // Ad above digit box (reserved height to prevent layout jump)
             val showAd by vm.showAd.collectAsState()
-            if (!isPro && showAd) {
-                com.ipdial.ui.StartIoBanner(
-                    vm = vm,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)
-                )
+            Box(Modifier.height(90.dp).fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
+                if (showAd) {
+                    com.ipdial.ui.StartIoBanner(
+                        vm = vm,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
             }
 
             // Dial display row
@@ -185,24 +182,29 @@ fun DialpadScreen(
                     }
                 }
 
-                InterceptPlatformTextInput(
-                    interceptor = { _, _ -> awaitCancellation() }
-                ) {
-                    BasicTextField(
-                        value = dialTextFieldValue,
-                        onValueChange = { vm.setDialString(it) },
-                        textStyle = MaterialTheme.typography.displayMedium.copy(
-                            fontSize = if (dialString.length > 10) 32.sp else 48.sp,
-                            fontWeight = FontWeight.Normal,
-                            color = MaterialTheme.colorScheme.onBackground,
-                            textAlign = TextAlign.Center
-                        ),
-                        modifier = Modifier.weight(1f),
-                        maxLines = 1,
-                        singleLine = true,
-                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary)
-                    )
-                }
+            InterceptPlatformTextInput(
+                interceptor = { _, _ -> awaitCancellation() }
+            ) {
+                BasicTextField(
+                    value = dialTextFieldValue,
+                    onValueChange = {
+                        vm.setDialString(it.copy(text = it.text.filter { c -> c.isDigit() || c == '+' }))
+                    },
+                    visualTransformation = PhoneNumberTransformation(),
+                    textStyle = MaterialTheme.typography.headlineMedium.copy(
+                        fontSize = 28.sp,
+                        fontWeight = FontWeight.Normal,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        textAlign = TextAlign.Center
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .horizontalScroll(rememberScrollState()),
+                    maxLines = 1,
+                    singleLine = true,
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary)
+                )
+            }
 
                 AnimatedVisibility(visible = dialString.isNotEmpty()) {
                     Box(
@@ -250,14 +252,13 @@ fun DialpadScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 48.dp) // Narrower for iOS look
+                        .padding(horizontal = 48.dp)
                 ) {
                     keys.chunked(3).forEach { row ->
                         Row(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .height(80.dp), // Fixed height regardless of font size
-                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                                .fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             row.forEach { (digit, sub, _) ->
                                 DialKeyRounded(
@@ -291,7 +292,7 @@ fun DialpadScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(60.dp) // Fixed height regardless of font size
+                                .height(52.dp)
                         ) {
                             row.forEachIndexed { colIndex, (digit, sub, _) ->
                                 DialKey(
@@ -322,7 +323,7 @@ fun DialpadScreen(
                 }
             }
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(16.dp))
 
             Box(
                 contentAlignment = Alignment.Center,
@@ -352,6 +353,7 @@ fun DialpadScreen(
     }
 
     val showAccountSelection by vm.showAccountSelectionDialog.collectAsState()
+    val balances by vm.balances.collectAsState()
     val enabledAccounts = remember(accounts) {
         accounts.filter { it.isEnabled }
     }
@@ -359,6 +361,7 @@ fun DialpadScreen(
     if (showAccountSelection && enabledAccounts.isNotEmpty()) {
         AccountSelectionDialog(
             enabledAccounts = enabledAccounts,
+            balances = balances,
             onAccountSelected = { vm.proceedWithCallAfterAccountSelection(it) },
             onDismiss = { vm.dismissAccountSelection() }
         )
@@ -385,38 +388,11 @@ fun SuggestedContactRow(contact: Contact, onNumberClick: (String) -> Unit) {
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.Top
     ) {
-        Box(
-            modifier = Modifier
-                .padding(top = 4.dp)
-                .size(40.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primaryContainer),
-            contentAlignment = Alignment.Center
-        ) {
-            if (contact.photoUri != null) {
-                val request = remember(contact.photoUri) {
-                    coil.request.ImageRequest.Builder(context)
-                        .data(contact.photoUri)
-                        .size(80, 80)
-                        .crossfade(true)
-                        .diskCachePolicy(coil.request.CachePolicy.ENABLED)
-                        .memoryCachePolicy(coil.request.CachePolicy.ENABLED)
-                        .build()
-                }
-                AsyncImage(
-                    model = request,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
-            } else {
-                Text(
-                    text = contact.name.firstOrNull()?.uppercase() ?: "?",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                )
-            }
-        }
+        com.ipdial.ui.ContactAvatar(
+            name = contact.name,
+            photoUri = contact.photoUri,
+            size = 40.dp
+        )
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -459,6 +435,7 @@ fun DialKeyRounded(
         color = if (isGlass) Color.Transparent else MaterialTheme.colorScheme.surfaceVariant,
         modifier = modifier
             .aspectRatio(1f)
+            .sizeIn(maxWidth = 72.dp, maxHeight = 72.dp)
             .padding(4.dp)
             .then(if (isGlass) Modifier.glass(CircleShape) else Modifier)
             .combinedClickable(
@@ -475,7 +452,7 @@ fun DialKeyRounded(
                     text = digit,
                     style = MaterialTheme.typography.displaySmall.copy(
                         fontWeight = FontWeight.Normal,
-                        fontSize = 32.sp
+                        fontSize = 24.sp
                     ),
                     color = MaterialTheme.colorScheme.onSurface,
                 )
@@ -503,8 +480,8 @@ fun DialKey(
 ) {
     val isGlass = com.ipdial.ui.theme.LocalGlassMode.current != com.ipdial.ui.theme.GlassMode.None
     Box(
-        modifier = modifier
-            .height(64.dp)
+            modifier = modifier
+            .height(52.dp)
             .then(if (isGlass) Modifier.glass(RoundedCornerShape(0.dp), borderWidth = 0.5.dp) else Modifier)
             .combinedClickable(
                 onClick = onClick,

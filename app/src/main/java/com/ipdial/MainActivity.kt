@@ -1,7 +1,6 @@
 package com.ipdial
 
 import android.Manifest
-import android.app.Application
 import android.app.KeyguardManager
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -115,9 +114,11 @@ import com.ipdial.ui.screens.DialpadScreen
 import com.ipdial.ui.screens.GetProScreen
 import com.ipdial.ui.screens.HomeScreen
 import com.ipdial.ui.screens.IncomingCallScreen
+import com.ipdial.ui.screens.IncomingCallSettingsScreen
 import com.ipdial.ui.screens.PrivacyPolicyScreen
 import com.ipdial.ui.screens.RecordingsScreen
 import com.ipdial.ui.screens.SettingsScreen
+import com.ipdial.ui.screens.ThemeSettingsScreen
 import com.ipdial.ui.theme.IPDialTheme
 import com.ipdial.ui.theme.glass
 import kotlinx.coroutines.launch
@@ -161,7 +162,9 @@ class MainActivity : ComponentActivity() {
         
         volumeControlStream = android.media.AudioManager.STREAM_VOICE_CALL
         
-        applyLockScreenFlags()
+        if (intent?.action == "com.ipdial.ACTION_INCOMING_CALL") {
+            applyLockScreenFlags()
+        }
         
         requestRequiredPermissions()
         com.ipdial.service.SipService.start(this)
@@ -178,16 +181,26 @@ class MainActivity : ComponentActivity() {
             val localView = LocalView.current
             LaunchedEffect(callSession) {
                 val window = (localView.context as? android.app.Activity)?.window
+                val activity = localView.context as? android.app.Activity
                 if (callSession != null) {
-                    // Screen on during active or incoming call
                     window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-                        (localView.context as? android.app.Activity)?.setTurnScreenOn(true)
-                        (localView.context as? android.app.Activity)?.setShowWhenLocked(true)
+                        activity?.setTurnScreenOn(true)
+                        activity?.setShowWhenLocked(true)
                     }
                 } else {
-                    // Allow screen to turn off after call ends
                     window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                        activity?.setTurnScreenOn(false)
+                        activity?.setShowWhenLocked(false)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        window?.clearFlags(
+                            android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                            android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                            android.view.WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
+                        )
+                    }
                 }
             }
 
@@ -196,13 +209,45 @@ class MainActivity : ComponentActivity() {
                 fontMultiplier = fontMultiplier
             ) {
                 IPDialApp()
+
+                if (showBatteryDialog.value) {
+                    AlertDialog(
+                        onDismissRequest = { showBatteryDialog.value = false },
+                        title = { Text("Battery Optimization") },
+                        text = {
+                            Text(
+                                "IPDial needs to run in the background to receive incoming calls. " +
+                                "Battery optimization may prevent calls from reaching you.\n\n" +
+                                "Please disable battery optimization for IPDial to ensure reliable call reception."
+                            )
+                        },
+                        confirmButton = {
+                            Button(onClick = {
+                                showBatteryDialog.value = false
+                                val intent = Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                    data = android.net.Uri.fromParts("package", packageName, null)
+                                }
+                                startActivity(intent)
+                            }) {
+                                Text("Open Settings")
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showBatteryDialog.value = false }) {
+                                Text("Later")
+                            }
+                        }
+                    )
+                }
             }
         }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        applyLockScreenFlags()
+        if (intent.action == "com.ipdial.ACTION_INCOMING_CALL") {
+            applyLockScreenFlags()
+        }
         handleIntent(intent)
     }
 
@@ -284,16 +329,12 @@ class MainActivity : ComponentActivity() {
         checkBatteryOptimizations()
     }
 
+    private var showBatteryDialog = mutableStateOf(false)
+
     private fun checkBatteryOptimizations() {
         val pm = getSystemService(POWER_SERVICE) as android.os.PowerManager
         if (!pm.isIgnoringBatteryOptimizations(packageName)) {
-            try {
-                // Instead of requesting, just log or guide. 
-                // Play Store forbids ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS for most apps.
-                Log.i("MainActivity", "App is not ignoring battery optimizations")
-            } catch (e: Exception) {
-                Log.e("MainActivity", "Failed to check battery optimization", e)
-            }
+            showBatteryDialog.value = true
         }
     }
 }
@@ -310,6 +351,8 @@ sealed class NavDest(val route: String, val label: String, val icon: ImageVector
     object GetPro  : NavDest("get_pro",  "IPDial Pro",   Icons.Default.CardGiftcard)
     object Privacy : NavDest("privacy",  "Privacy Policy", Icons.Default.PrivacyTip)
     object AudioCodecs : NavDest("audio_codecs", "Audio Codecs", Icons.Default.Audiotrack)
+    object ThemeSettings : NavDest("theme_settings", "Theme", Icons.Default.Settings)
+    object IncomingCallStyle : NavDest("incoming_call_style", "Incoming Call Style", Icons.Default.Call)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -364,10 +407,12 @@ fun IPDialApp() {
                         currentRoute = currentRoute,
                         onNavigate = { route ->
                             scope.launch { drawerState.close() }
-                            navController.navigate(route) {
-                                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                                launchSingleTop = true
-                                restoreState = true
+                            navController.graph?.let { graph ->
+                                navController.navigate(route) {
+                                    popUpTo(graph.findStartDestination().id) { saveState = true }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
                             }
                         }
                     )
@@ -566,9 +611,11 @@ fun AppScaffold(
                 confirmButton = {
                     Button(onClick = {
                         vm.dismissProPopup()
-                        navController.navigate(NavDest.GetPro.route) {
-                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                            launchSingleTop = true
+                        navController.graph?.let { graph ->
+                            navController.navigate(NavDest.GetPro.route) {
+                                popUpTo(graph.findStartDestination().id) { saveState = true }
+                                launchSingleTop = true
+                            }
                         }
                     }) {
                         Text("Get Pro for Free!")
@@ -621,7 +668,8 @@ fun AppBottomBar(
 
     val showBottomBar = (callSession == null || !showFullIncomingScreen) && 
                         (currentRoute == NavDest.Home.route || currentRoute == NavDest.Keypad.route || 
-                         currentRoute == NavDest.Contacts.route || currentRoute == NavDest.GetPro.route)
+                         currentRoute == NavDest.Contacts.route || currentRoute == NavDest.Settings.route || 
+                         currentRoute == NavDest.GetPro.route)
     
     if (showBottomBar) {
         val isGlass = com.ipdial.ui.theme.LocalGlassMode.current != com.ipdial.ui.theme.GlassMode.None
@@ -646,10 +694,12 @@ fun AppBottomBar(
                                 pagerState.animateScrollToPage(index)
                             }
                         } else {
-                            navController.navigate(dest.route) {
-                                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                                launchSingleTop = true
-                                restoreState = true
+                            navController.graph?.let { graph ->
+                                navController.navigate(dest.route) {
+                                    popUpTo(graph.findStartDestination().id) { saveState = true }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
                             }
                         }
                     },
@@ -673,7 +723,7 @@ fun AppMainContent(
     onShowFullIncoming: () -> Unit
 ) {
     Log.d("MainActivity", "AppMainContent: session=${callSession?.state}, showFull=$showFullIncomingScreen")
-    if (callSession != null && showFullIncomingScreen) {
+    if (callSession != null && showFullIncomingScreen && callSession.state != CallState.DISCONNECTED) {
         CallOverlay(vm, callSession)
     } else {
         Box(modifier = Modifier.fillMaxSize()) {
@@ -688,6 +738,7 @@ fun AppMainContent(
 
 @Composable
 fun CallOverlay(vm: SipViewModel, session: CallSession) {
+    if (session.state == CallState.DISCONNECTED) return
     when (session.direction) {
         CallDirection.INCOMING -> {
             if (session.state == CallState.INCOMING || session.state == CallState.EARLY) {
@@ -709,22 +760,34 @@ fun MainPagerScreen(
     pagerState: PagerState,
     onOpenDrawer: () -> Unit
 ) {
-    HorizontalPager(
-        state = pagerState,
-        modifier = Modifier.fillMaxSize(),
-        beyondViewportPageCount = 1
-    ) { page ->
-        when (page) {
-            0 -> HomeScreen(
-                vm = vm, 
-                onOpenDrawer = onOpenDrawer,
-                onNavigateToAccounts = { navController.navigate(NavDest.Accounts.route) },
-                onEditBeforeCall = { number ->
+    val accounts by vm.accounts.collectAsState()
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        com.ipdial.ui.IPDialTopBar(
+            accounts = accounts,
+            vm = vm,
+            onOpenDrawer = onOpenDrawer,
+            onAddAccount = { navController.navigate(NavDest.Accounts.route) }
+        )
+
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.weight(1f),
+            beyondViewportPageCount = 1
+        ) { page ->
+            when (page) {
+                0 -> HomeScreen(
+                    vm = vm, 
+                    onOpenDrawer = onOpenDrawer,
+                    onNavigateToAccounts = { navController.navigate(NavDest.Accounts.route) },
+                    onEditBeforeCall = { number ->
                     vm.prefillDialer(number)
-                    navController.navigate(NavDest.Keypad.route) {
-                        popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                        launchSingleTop = true
-                        restoreState = true
+                    navController.graph?.let { graph ->
+                        navController.navigate(NavDest.Keypad.route) {
+                            popUpTo(graph.findStartDestination().id) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
                     }
                 }
             )
@@ -739,6 +802,7 @@ fun MainPagerScreen(
                 onNavigateToAccounts = { navController.navigate(NavDest.Accounts.route) }
             )
         }
+    }
     }
 }
 
@@ -771,8 +835,23 @@ fun AppNavHost(
                 vm = vm, 
                 onOpenDrawer = onOpenDrawer,
                 onNavigateToLogs = { navController.navigate(NavDest.Logs.route) },
-                onNavigateToCodecs = { navController.navigate(NavDest.AudioCodecs.route) }
+                onNavigateToCodecs = { navController.navigate(NavDest.AudioCodecs.route) },
+                onNavigateToTheme = { navController.navigate(NavDest.ThemeSettings.route) },
+                onNavigateToIncomingCallStyle = { navController.navigate(NavDest.IncomingCallStyle.route) }
             ) 
+        }
+        composable(NavDest.ThemeSettings.route) {
+            ThemeSettingsScreen(
+                vm = vm,
+                onOpenDrawer = onOpenDrawer,
+                onBack = { navController.popBackStack() }
+            )
+        }
+        composable(NavDest.IncomingCallStyle.route) {
+            IncomingCallSettingsScreen(
+                vm = vm,
+                onBack = { navController.popBackStack() }
+            )
         }
         composable(NavDest.AudioCodecs.route) {
             AudioCodecScreen(
@@ -814,20 +893,8 @@ fun IncomingCallBannerOverlay(
         
         Log.d("MainActivity", "Rendering IncomingCallBannerOverlay for ${callSession.remoteUri}")
         
-        val contacts by vm.contacts.collectAsState()
-        val contact = remember(callSession.remoteUri, contacts) {
-            val cleanedSessionUriDigits = vm.cleanUri(callSession.remoteUri).filter { it.isDigit() }
-            if (cleanedSessionUriDigits.length < 10) {
-                null
-            } else {
-                contacts.find { c ->
-                    c.numbers.any { n ->
-                        val cleanedContactNumberDigits = n.filter { it.isDigit() }
-                        cleanedContactNumberDigits.length >= 10 &&
-                        (cleanedSessionUriDigits.contains(cleanedContactNumberDigits) || cleanedContactNumberDigits.contains(cleanedSessionUriDigits))
-                    }
-                }
-            }
+        val contact = remember(callSession.remoteUri) {
+            vm.findContactByNumber(callSession.remoteUri)
         }
         val displayName = contact?.name ?: callSession.remoteDisplayName.ifBlank { vm.cleanUri(callSession.remoteUri) }
 

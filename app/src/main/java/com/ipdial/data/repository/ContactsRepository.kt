@@ -22,6 +22,46 @@ class ContactsRepository(private val context: Context) {
         entities.map { it.toContact() }
     }
 
+    // Pre-computed index for O(1) contact lookup by normalized phone number
+    private var normalizedNumberIndex: Map<String, Contact> = emptyMap()
+    private var indexBuilt = false
+
+    /**
+     * Build a lookup index from normalized (digits-only) phone numbers to Contact.
+     * Call this after contacts are loaded/refreshed for fast O(1) lookups.
+     */
+    suspend fun buildNumberIndex() = withContext(Dispatchers.IO) {
+        val contacts = contactDao.getAllContacts().first().map { it.toContact() }
+        val index = mutableMapOf<String, Contact>()
+        for (contact in contacts) {
+            for (number in contact.numbers) {
+                val digits = number.filter { it.isDigit() }
+                if (digits.length >= 10) {
+                    index[digits] = contact
+                    index[digits.takeLast(10)] = contact
+                }
+            }
+        }
+        normalizedNumberIndex = index
+        indexBuilt = true
+    }
+
+    /**
+     * Fast O(1) contact lookup by phone number. Returns null if not found or index not built.
+     */
+    fun findContactByNumber(phoneNumber: String): Contact? {
+        if (!indexBuilt) return null
+        val digits = phoneNumber.filter { it.isDigit() }
+        if (digits.length < 10) return null
+        return normalizedNumberIndex[digits]
+            ?: if (digits.length > 10) normalizedNumberIndex[digits.takeLast(10)] else null
+    }
+
+    /**
+     * Check if the number index is built and ready for fast lookups.
+     */
+    fun isIndexReady(): Boolean = indexBuilt
+
     suspend fun syncContacts() = withContext(Dispatchers.IO) {
         if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_CONTACTS) 
             != android.content.pm.PackageManager.PERMISSION_GRANTED) {

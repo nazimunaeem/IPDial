@@ -16,4 +16,7 @@ interface CallLogDao {
 
     @Query("DELETE FROM call_logs WHERE id NOT IN (SELECT id FROM call_logs ORDER BY timestampMs DESC LIMIT :limit)")
     suspend fun trim(limit: Int)
+
+    @Query("DELETE FROM call_logs")
+    suspend fun deleteAll()
 }

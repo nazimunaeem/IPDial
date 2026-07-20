@@ -43,5 +43,11 @@ class IPDialApplication : Application() {
                 }
             } catch (_: Exception) {}
         }
+
+        // Fetch Remote Config for custom ads
+        com.ipdial.util.RemoteConfigHelper.init(this)
+
+        // Load ad config from Firestore (admin-managed)
+        com.ipdial.util.FirestoreAdConfig.init()
     }
 }

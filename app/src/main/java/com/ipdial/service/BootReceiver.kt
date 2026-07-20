@@ -3,6 +3,7 @@ package com.ipdial.service
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -11,8 +12,14 @@ class BootReceiver : BroadcastReceiver() {
                 "android.intent.action.QUICKBOOT_POWERON"
             )
         ) {
-            // Pass delayStartForeground=true because FGS with phoneCall type is not allowed from BOOT_COMPLETED on Android 12+
-            SipService.start(context, delayStartForeground = true)
+            try {
+                // Pass delayStartForeground=true because FGS with phoneCall type is not
+                // allowed from BOOT_COMPLETED on Android 12+ (throws
+                // BackgroundServiceStartNotAllowedException / IllegalStateException).
+                SipService.start(context, delayStartForeground = true)
+            } catch (e: Exception) {
+                Log.e("BootReceiver", "Failed to start SipService after boot", e)
+            }
         }
     }
 }

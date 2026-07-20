@@ -45,10 +45,14 @@ object TelecomHelper {
             .addSupportedUriScheme("ipdial")
             .setExtras(extras)
             
-        telecomManager.registerPhoneAccount(phoneAccountBuilder.build())
+        try {
+            telecomManager.registerPhoneAccount(phoneAccountBuilder.build())
+        } catch (e: Exception) {
+            android.util.Log.e("TelecomHelper", "Failed to register phone account (may not have permission on this user profile)", e)
+        }
     }
 
-    fun reportIncomingCall(context: Context, number: String, name: String) {
+    fun reportIncomingCall(context: Context, number: String, name: String, callId: Int = -1) {
         val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as TelecomManager
         val handle = getPhoneAccountHandle(context)
         
@@ -58,6 +62,7 @@ object TelecomHelper {
             putBoolean("android.telecom.extra.SKIP_CALL_LOGGING", true)
             val incomingExtras = Bundle().apply {
                 putString("com.ipdial.EXTRA_CALLER_NAME", name)
+                putInt("com.ipdial.EXTRA_CALL_ID", callId)
                 putBoolean("android.telecom.extra.SKIP_CALL_LOGGING", true)
             }
             putBundle(TelecomManager.EXTRA_INCOMING_CALL_EXTRAS, incomingExtras)

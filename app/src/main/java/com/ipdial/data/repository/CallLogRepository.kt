@@ -28,6 +28,10 @@ class CallLogRepository private constructor(context: Context) {
         dao.delete(CallLogEntity.fromCallLogEntry(entry))
     }
 
+    suspend fun deleteAll() {
+        dao.deleteAll()
+    }
+
     companion object {
         @Volatile
         private var INSTANCE: CallLogRepository? = null

@@ -72,6 +72,7 @@ import com.ipdial.data.model.CallLogEntry
 import com.ipdial.data.model.Contact
 import com.ipdial.data.model.SipAccount
 import com.ipdial.ui.AccountSelectionDialog
+import com.ipdial.ui.ContactItem
 import com.ipdial.ui.IPDialTopBar
 import com.ipdial.ui.NumberPickerDialog
 import com.ipdial.ui.SipViewModel
@@ -181,9 +182,8 @@ fun HomeScreen(
     Scaffold(
         contentWindowInsets = WindowInsets.systemBars.only(WindowInsetsSides.Bottom),
         bottomBar = {
-            val isPro by vm.isPro.collectAsState()
             val showAd by vm.showAd.collectAsState()
-            if (!isPro && showAd) {
+            if (showAd) {
                 com.ipdial.ui.StartIoBanner(
                     vm = vm,
                     modifier = Modifier.fillMaxWidth().padding(8.dp)
@@ -197,13 +197,6 @@ fun HomeScreen(
                 .padding(innerPadding)
                 .background(MaterialTheme.colorScheme.background)
         ) {
-            IPDialTopBar(
-                accounts = accounts, 
-                vm = vm, 
-                onOpenDrawer = onOpenDrawer,
-                onAddAccount = onNavigateToAccounts
-            )
-
             SearchBarRow(
                 query = searchQuery,
                 onQueryChange = { vm.onSearchQueryChanged(it) }
@@ -251,13 +244,11 @@ fun HomeScreen(
                                 contact = contact,
                                 onNumberClick = { num -> vm.makeCall(num) },
                                 onContactClick = {
-                                    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
-                                        data = android.net.Uri.withAppendedPath(
-                                            android.provider.ContactsContract.Contacts.CONTENT_URI, 
-                                            contact.id
-                                        )
+                                    if (contact.numbers.size > 1) {
+                                        activeContactForNumberPicker = contact
+                                    } else {
+                                        contact.numbers.firstOrNull()?.let { vm.makeCall(it) }
                                     }
-                                    context.startActivity(intent)
                                 }
                             )
                         }
@@ -314,6 +305,7 @@ fun HomeScreen(
     }
 
     val showAccountSelection by vm.showAccountSelectionDialog.collectAsState()
+    val balances by vm.balances.collectAsState()
     val enabledAccounts = remember(accounts) {
         accounts.filter { it.isEnabled }
     }
@@ -321,6 +313,7 @@ fun HomeScreen(
     if (showAccountSelection && enabledAccounts.isNotEmpty()) {
         AccountSelectionDialog(
             enabledAccounts = enabledAccounts,
+            balances = balances,
             onAccountSelected = { vm.proceedWithCallAfterAccountSelection(it) },
             onDismiss = { vm.dismissAccountSelection() }
         )
@@ -435,29 +428,13 @@ fun CallLogRow(
                 .padding(horizontal = 8.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.secondaryContainer),
-                contentAlignment = Alignment.Center
-            ) {
-                if (contact?.photoUri != null) {
-                    AsyncImage(
-                        model = contact.photoUri,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else {
-                    Text(
-                        text = (callerName.firstOrNull() ?: '?').uppercaseCharCompat(),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer
-                    )
-                }
-            }
+            com.ipdial.ui.ContactAvatar(
+                name = callerName,
+                photoUri = contact?.photoUri,
+                size = 44.dp,
+                backgroundColor = MaterialTheme.colorScheme.secondaryContainer,
+                contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+            )
 
             Spacer(Modifier.width(14.dp))
 
@@ -604,29 +581,13 @@ fun CallHistoryDetailDialog(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.secondaryContainer),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (contact?.photoUri != null) {
-                        AsyncImage(
-                            model = contact.photoUri,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    } else {
-                        Text(
-                            text = (displayName.firstOrNull() ?: '?').uppercaseCharCompat(),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer
-                        )
-                    }
-                }
+                com.ipdial.ui.ContactAvatar(
+                    name = displayName,
+                    photoUri = contact?.photoUri,
+                    size = 40.dp,
+                    backgroundColor = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                )
                 Column {
                     Text(
                         text = displayName,

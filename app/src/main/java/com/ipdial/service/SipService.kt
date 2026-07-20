@@ -44,9 +44,11 @@ class SipService : Service() {
 
     companion object {
         const val NOTIF_CHANNEL_SIP = "sip_service_v1"
-        const val NOTIF_CHANNEL_CALL = "incoming_call_v3"
+        const val NOTIF_CHANNEL_CALL = "incoming_call_v4"
+        const val NOTIF_CHANNEL_MISSED = "missed_calls_v1"
         const val NOTIF_ID_SERVICE = 1001
         const val NOTIF_ID_INCOMING = 1002
+        const val NOTIF_ID_MISSED = 1003
 
         const val ACTION_ANSWER = "com.ipdial.ANSWER"
         const val ACTION_DECLINE = "com.ipdial.DECLINE"
@@ -140,6 +142,7 @@ class SipService : Service() {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var bannerPushJob: kotlinx.coroutines.Job? = null
+    private var deferForegroundJob: kotlinx.coroutines.Job? = null
     private lateinit var audioManager: AudioManager
     private lateinit var repo: AccountRepository
     private var wakeLock: PowerManager.WakeLock? = null
@@ -169,13 +172,27 @@ class SipService : Service() {
         // 0. Set the incoming call listener as early as possible
         SipEngine.onIncomingCall = { session -> 
             Log.d("SipService", "onIncomingCall lambda triggered for callId=${session.callId}")
-            com.ipdial.util.SipLogger.log("SipService", "Incoming call received: ${session.remoteUri}")
-            scope.launch {
-                val isDnd = repo.dndEnabled.first()
-                if (isDnd) {
-                    Log.d("SipService", "DND enabled, hanging up callId=${session.callId}")
-                    SipEngine.hangupCall(session.callId)
-                } else {
+            // Guard against ghost / re-delivered calls from the Telecom framework.
+            // If SipEngine already cleared the session or removed this callId from its
+            // callMap (call ended, remote cancelled, etc.), ignore the delivery entirely.
+            val isActive = SipEngine.callSession.value != null && SipEngine.hasActiveCall(session.callId)
+            if (!isActive) {
+                Log.d("SipService", "onIncomingCall: ignoring ghost delivery for callId=${session.callId} (session=${SipEngine.callSession.value?.state}, hasActive=${SipEngine.hasActiveCall(session.callId)})")
+            }
+            if (isActive) {
+                com.ipdial.util.SipLogger.log("SipService", "Incoming call received: ${session.remoteUri}")
+                scope.launch {
+                    val accountsNow = repo.accounts.first()
+                    val callAccount = accountsNow.firstOrNull { it.id == session.accountId }
+                    if (callAccount == null || !callAccount.isEnabled) {
+                        Log.d("SipService", "Rejecting incoming call for disabled account ${session.accountId}")
+                        SipEngine.hangupCall(session.callId)
+                        return@launch
+                    }
+
+                    val isDnd = repo.dndEnabled.first()
+                    Log.d("SipService", "DND=$isDnd for callId=${session.callId}")
+
                     // Resolve contact name or clean number
                     val displayName = session.remoteDisplayName
                     val cleanNum = session.remoteUri.replace("<", "").replace(">", "").removePrefix("sip:").substringBefore("@").substringBefore(";")
@@ -183,17 +200,11 @@ class SipService : Service() {
                     Log.d("SipService", "Processing incoming call from $cleanNum")
                     
                     val contactsRepo = com.ipdial.data.repository.ContactsRepository(applicationContext)
-                    val contacts = contactsRepo.getContacts("")
                     val cleanedSessionDigits = cleanNum.filter { it.isDigit() }
                     
                     var matchedContact: com.ipdial.data.model.Contact? = null
                     if (cleanedSessionDigits.length >= 10) {
-                        matchedContact = contacts.find { c ->
-                            c.numbers.any { n ->
-                                val cleanedContactDigits = n.filter { it.isDigit() }
-                                cleanedContactDigits.length >= 10 && (cleanedSessionDigits.contains(cleanedContactDigits) || cleanedContactDigits.contains(cleanedSessionDigits))
-                            }
-                        }
+                        matchedContact = contactsRepo.findContactByNumber(cleanNum)
                     }
                     
                     val finalDisplayName = matchedContact?.name ?: cleanNum.ifBlank { displayName }
@@ -202,11 +213,38 @@ class SipService : Service() {
                     // Update session display name for logging and UI consistency
                     SipEngine.updateCallSessionName(finalDisplayName)
                     
-                            withContext(Dispatchers.Main) {
-                                Log.d("SipService", "Reporting incoming call to Telecom and showing notification")
-                                TelecomHelper.reportIncomingCall(applicationContext, session.remoteUri, finalDisplayName)
-                                startPushingBanner(finalDisplayName, session.callId)
+                    // Re-check: call may have ended while we were doing contact lookup.
+                    // If we proceed, reportIncomingCall + startPushingBanner would
+                    // resurrect the UI after onCallState already nulled the session.
+                    if (SipEngine.callSession.value?.callId != session.callId || !SipEngine.hasActiveCall(session.callId)) {
+                        Log.d("SipService", "onIncomingCall: call $${session.callId} ended during contact lookup, skipping Telecom/banner")
+                        return@launch
+                    }
+
+                    withContext(Dispatchers.Main) {
+                        // Second check after switching to Main — remote could have
+                        // hung up while the dispatcher queued this block.
+                        if (SipEngine.callSession.value?.callId != session.callId || !SipEngine.hasActiveCall(session.callId)) {
+                            Log.d("SipService", "onIncomingCall: call $${session.callId} ended before Telecom reporting, skipping")
+                            return@withContext
+                        }
+                        Log.d("SipService", "Reporting incoming call to Telecom and showing notification")
+                        TelecomHelper.reportIncomingCall(applicationContext, session.remoteUri, finalDisplayName, session.callId)
+                        startPushingBanner(finalDisplayName, session.callId)
+                        // Bring activity to front so full-screen incoming call UI appears
+                        // even when device is locked or app is in background
+                        if (!com.ipdial.AppState.isForeground) {
+                            val activityIntent = Intent(this@SipService, com.ipdial.MainActivity::class.java).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
                             }
+                            startActivity(activityIntent)
+                        }
+                    }
+                    // Store DND state on session so playRingtone can check it
+                    // Only if call is still active
+                    if (isDnd && SipEngine.callSession.value?.callId == session.callId) {
+                        SipEngine.setDndActive(true)
+                    }
                 }
             }
         }
@@ -217,12 +255,15 @@ class SipService : Service() {
         //     work here: cancel coroutine jobs, stop audio/vibration, cancel notification.
         SipEngine.onCallDisconnected = { callId ->
             Log.d("SipService", "onCallDisconnected: callId=$callId — stopping ringtone/vibration and dismissing incoming UI")
+            SipEngine.setDndActive(false)
             stopPushingBanner()
             stopRingtone()          // also cancels vibrator internally
             cancelIncomingNotification()
         }
 
-        startServiceForeground()
+        // FGS promotion is deferred to onStartCommand (which handles the
+        // delayStartForeground boot path). onCreate should not call it
+        // because we don't yet know whether this is a boot or normal start.
 
         scope.launch {
             // 1. Initialize PJSIP on Main thread to avoid native crash (pj_thread_this)
@@ -230,6 +271,15 @@ class SipService : Service() {
                 SipEngine.init(applicationContext)
             }
             
+            // 2. Build contact lookup index for fast number matching
+            try {
+                val contactsRepo = com.ipdial.data.repository.ContactsRepository(applicationContext)
+                contactsRepo.buildNumberIndex()
+                Log.d("SipService", "Contact number index built")
+            } catch (e: Exception) {
+                Log.e("SipService", "Failed to build contact number index", e)
+            }
+
             // 3. Register accounts flow
             registerAccountsFromDataStore()
 
@@ -286,9 +336,7 @@ class SipService : Service() {
                                 repo.updateRegStatus(account.id, RegStatus.REGISTERING)
                             }
                             
-                            SipEngine.handleIpChange()
-                            delay(1000)
-                            SipEngine.forceReconnectAll()
+                            SipEngine.reconnectOnNetworkChange(network, applicationContext)
                         }
                     }
                 }
@@ -312,8 +360,27 @@ class SipService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Promote to foreground immediately to satisfy system requirements for startForegroundService
-        startServiceForeground()
+        val delayFg = intent?.getBooleanExtra("delayStartForeground", false) ?: false
+
+        if (delayFg) {
+            // Boot path: can't start phoneCall FGS from background on Android 12+.
+            // Defer promotion until the app comes to the foreground.
+            Log.d("SipService", "onStartCommand with delayStartForeground — deferring FGS promotion")
+            deferForegroundJob?.cancel()
+            deferForegroundJob = scope.launch {
+                while (true) {
+                    if (com.ipdial.AppState.isForeground) {
+                        Log.d("SipService", "App is now foreground, promoting to FGS")
+                        startServiceForeground()
+                        break
+                    }
+                    delay(500)
+                }
+            }
+        } else {
+            // Normal path: promote to foreground immediately
+            startServiceForeground()
+        }
 
         when (intent?.action) {
             ACTION_ANSWER -> {
@@ -388,9 +455,15 @@ class SipService : Service() {
                             }
                             
                             Log.d("SipService", "Dialing URI: $finalUri")
+                            Log.d("SipService", "Test call codec: ${acc.codec}")
                             
                             withContext(Dispatchers.Main) {
                                 SipEngine.makeCall(acc.id, finalUri)
+                                android.widget.Toast.makeText(
+                                    applicationContext,
+                                    "Test call using ${acc.codec.name}",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
                             }
                         } else {
                             Log.e("SipService", "Test call failed: No enabled account")
@@ -482,6 +555,12 @@ class SipService : Service() {
         ringtoneJob?.cancel()
         if (isPlayingRingtone || ringtone?.isPlaying == true || mediaPlayer?.isPlaying == true) return
         
+        // Skip ringtone/vibrate if DND is active
+        if (SipEngine.isDndActive()) {
+            Log.d("SipService", "DND active, skipping ringtone and vibration")
+            return
+        }
+
         // Match phone's ringer mode
         val ringerMode = audioManager.ringerMode
         if (ringerMode == AudioManager.RINGER_MODE_SILENT) {
@@ -513,8 +592,10 @@ class SipService : Service() {
                         val ringtoneUri = ringtoneUriStr?.let { android.net.Uri.parse(it) }
                             ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
 
+                        var mp: android.media.MediaPlayer? = null
                         try {
-                            val mp = android.media.MediaPlayer()
+                            mediaPlayer?.release()
+                            mp = android.media.MediaPlayer()
                             mp.setDataSource(applicationContext, ringtoneUri)
                             mp.setAudioAttributes(
                                 android.media.AudioAttributes.Builder()
@@ -536,6 +617,7 @@ class SipService : Service() {
                             mediaPlayer = mp
                         } catch (e: Exception) {
                             Log.e("SipService", "MediaPlayer failed for ringtone, falling back to RingtoneManager", e)
+                            mp?.release()
                             ringtone = RingtoneManager.getRingtone(applicationContext, ringtoneUri)
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                                 ringtone?.isLooping = true
@@ -615,12 +697,20 @@ class SipService : Service() {
                         CoroutineScope(Dispatchers.IO).launch {
                             com.ipdial.data.repository.CallLogRepository.getInstance(applicationContext).insert(entry)
                         }
+                        // Show missed call notification
+                        if (entry.missed) {
+                            showMissedCallNotification(sessionToLog.remoteDisplayName, sessionToLog.remoteUri)
+                        }
                     }
                     stopRingtone()
                     stopPushingBanner()   // safety net — kills banner job on any call end path
                     restoreAudio()
                     releaseWakeLock()
                     cancelIncomingNotification()
+                    // Safety net: tear down any lingering Telecom connection for this
+                    // callId. disconnectCall() is idempotent (checks isDestroyed),
+                    // so this is harmless if already cleaned up by onCallState.
+                    sessionToLog?.callId?.let { SipConnectionService.disconnectCall(it) }
                     lastWasConfirmed = false
                     callStartTime = 0
                     lastSession = null
@@ -949,6 +1039,14 @@ class SipService : Service() {
                 enableVibration(false)
             }
         )
+
+        nm.createNotificationChannel(
+            NotificationChannel(NOTIF_CHANNEL_MISSED, "Missed Calls", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "Missed VoIP call alerts"
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+                setShowBadge(true)
+            }
+        )
     }
 
     private fun buildServiceNotification(): Notification {
@@ -972,6 +1070,33 @@ class SipService : Service() {
     private fun cancelIncomingNotification() {
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         nm.cancel(NOTIF_ID_INCOMING)
+    }
+
+    private fun showMissedCallNotification(callerName: String, remoteUri: String) {
+        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        val displayName = callerName.ifBlank {
+            remoteUri.removePrefix("sip:").substringBefore("@")
+        }
+
+        val tapIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val tapPi = PendingIntent.getActivity(
+            this, 0, tapIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notif = NotificationCompat.Builder(this, NOTIF_CHANNEL_MISSED)
+            .setContentTitle("Missed call")
+            .setContentText(displayName)
+            .setSmallIcon(R.drawable.ic_notif_call)
+            .setContentIntent(tapPi)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_MISSED_CALL)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .build()
+        nm.notify(NOTIF_ID_MISSED, notif)
     }
 
     override fun onDestroy() {

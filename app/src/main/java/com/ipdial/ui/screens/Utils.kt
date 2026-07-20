@@ -17,13 +17,17 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.input.OffsetMapping
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.AnnotatedString
 
 fun cleanUri(uri: String): String =
     uri.replace("<", "").replace(">", "").removePrefix("sip:")
@@ -64,6 +68,26 @@ fun Modifier.clickableNoRipple(onClick: () -> Unit): Modifier = composed {
 
 fun Char.uppercaseCharCompat(): String = this.uppercaseChar().toString()
 
+/**
+ * Format phone number for display.
+ * BD style: "01728867896" → "01728-867896"
+ * International: "+8801728867896" → "+88017-28867896"
+ * Raw digits are preserved for actual calls.
+ */
+fun formatDisplayNumber(raw: String): String {
+    if (raw.isEmpty()) return ""
+    val digits = raw.filter { it.isDigit() || it == '+' }
+    if (digits.isEmpty()) return ""
+    if (digits.startsWith("+")) {
+        val num = digits.removePrefix("+")
+        if (num.isEmpty()) return "+"
+        if (num.length <= 5) return "+$num"
+        return "+${num.substring(0, 5)}-${num.substring(5)}"
+    }
+    if (digits.length <= 5) return digits
+    return "${digits.substring(0, 5)}-${digits.substring(5)}"
+}
+
 @Composable
 fun TelegramSupportCard() {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -103,5 +127,32 @@ fun TelegramSupportCard() {
                 }
             }
         }
+    }
+}
+
+class PhoneNumberTransformation : VisualTransformation {
+    override fun filter(text: AnnotatedString): TransformedText {
+        val raw = text.text
+        val formatted = formatDisplayNumber(raw)
+        val offsetMapping = object : OffsetMapping {
+            override fun originalToTransformed(offset: Int): Int {
+                var formattedIdx = 0
+                var rawIdx = 0
+                while (rawIdx < offset && formattedIdx < formatted.length) {
+                    if (formatted[formattedIdx] != '-') rawIdx++
+                    formattedIdx++
+                }
+                return formattedIdx
+            }
+
+            override fun transformedToOriginal(offset: Int): Int {
+                var rawIdx = 0
+                for (i in 0 until offset.coerceAtMost(formatted.length)) {
+                    if (formatted[i] != '-') rawIdx++
+                }
+                return rawIdx.coerceAtMost(raw.length)
+            }
+        }
+        return TransformedText(AnnotatedString(formatted), offsetMapping)
     }
 }

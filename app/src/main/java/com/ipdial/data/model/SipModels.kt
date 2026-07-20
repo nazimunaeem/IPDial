@@ -32,7 +32,6 @@ enum class PreferredCodec {
     G711A,
     G722,
     G729,
-    OPUS,
 }
 
 enum class RegStatus {
@@ -54,7 +53,8 @@ data class CallSession(
     val isSpeaker: Boolean = false,
     val isOnHold: Boolean = false,
     val isRecording: Boolean = false,
-    val rxVolume: Float = 2.5f
+    val rxVolume: Float = 2.5f,
+    val negotiatedCodec: String? = null,
 )
 
 enum class CallDirection { INCOMING, OUTGOING }
@@ -85,7 +85,9 @@ enum class CallState {
 
 enum class KeypadDesign { Grid, Rounded }
 
-enum class ThemeMode { System, Light, Dark, Obsidian, Quartz }
+enum class IncomingCallMode { Slider, Buttons }
+
+enum class ThemeMode { System, Light, Dark, Dynamic, Obsidian, Quartz }
 
 data class CodecInfo(
     val id: String,
@@ -96,6 +98,8 @@ data class CodecInfo(
     val clockRate: Int,
     val channelCount: Int,
     val frameLength: Int,
+    val bandwidthKbps: Int = 0,
+    val estimatedMOS: Float = 0f,
 )
 
 enum class CodecQuality(val label: String, val level: Int) {
