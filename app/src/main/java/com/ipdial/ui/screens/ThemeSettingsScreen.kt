@@ -86,9 +86,10 @@ fun ThemeSettingsScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(16.dp))
-                        .then(
-                            if (selected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(16.dp))
-                            else Modifier
+                        .border(
+                            width = if (selected) 2.dp else 1.dp,
+                            color = if (selected) preview.primary else preview.primary.copy(alpha = 0.25f),
+                            shape = RoundedCornerShape(16.dp)
                         )
                         .clickable(enabled) {
                             if (enabled) vm.setThemeMode(context, ThemeMode.valueOf(preview.label))

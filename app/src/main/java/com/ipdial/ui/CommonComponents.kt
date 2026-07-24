@@ -509,8 +509,8 @@ fun IPDialTopBar(
     val isGlass = com.ipdial.ui.theme.LocalGlassMode.current != com.ipdial.ui.theme.GlassMode.None
     val containerColor = if (isGlass) Color.Transparent else MaterialTheme.colorScheme.surface
     val isPro = vm?.isPro?.collectAsState()?.value ?: false
-    val appName = if (isPro) "IPDialPro" else "IPDial"
-    val appNameColor = if (isPro) ColorPro else MaterialTheme.colorScheme.onSurface
+    val appName = if (isPro) "IPDial Pro" else "IPDial"
+    val appNameColor = MaterialTheme.colorScheme.onSurface
     val themeColor = MaterialTheme.colorScheme.primary
 
     Surface(

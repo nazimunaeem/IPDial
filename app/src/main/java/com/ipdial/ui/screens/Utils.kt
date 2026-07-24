@@ -76,8 +76,13 @@ fun Char.uppercaseCharCompat(): String = this.uppercaseChar().toString()
  */
 fun formatDisplayNumber(raw: String): String {
     if (raw.isEmpty()) return ""
-    val digits = raw.filter { it.isDigit() || it == '+' }
+    // Allow digits, +, *, and #
+    val digits = raw.filter { it.isDigit() || it == '+' || it == '*' || it == '#' }
     if (digits.isEmpty()) return ""
+    
+    // Don't apply hyphen formatting if it contains * or # (likely a special code)
+    if (digits.contains("*") || digits.contains("#")) return digits
+
     if (digits.startsWith("+")) {
         val num = digits.removePrefix("+")
         if (num.isEmpty()) return "+"

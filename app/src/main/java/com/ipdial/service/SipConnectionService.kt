@@ -26,33 +26,38 @@ class SipConnectionService : ConnectionService() {
          * Idempotent teardown: setDisconnected + destroy + remove, but only once per callId.
          * Safe against Telecom framework re-delivering the connection lifecycle after
          * destroy() on a self-managed Connection.
+         *
+         * Thread-safe: CAS on [SipConnection.isDestroyed] prevents races between
+         * onCallState (PJSIP thread) calling this and the ViewModel watchdog (coroutine
+         * thread) also calling this.
          */
-        fun disconnectCall(callId: Int) {
+        fun disconnectCall(callId: Int, causeCode: Int = DisconnectCause.REMOTE) {
             val conn = activeConnections[callId]
-            Log.d(TAG, "disconnectCall: callId=$callId conn=${conn != null} isDestroyed=${conn?.isDestroyed} activeConnections=${activeConnections.keys}")
+            Log.d(TAG, "disconnectCall: callId=$callId cause=$causeCode activeConnections=${activeConnections.keys}")
             if (conn == null) {
                 Log.d(TAG, "disconnectCall: no active connection for callId=$callId (already cleaned up or never registered)")
                 return
             }
-            if (conn.isDestroyed) {
-                Log.d(TAG, "disconnectCall: connection for callId=$callId already marked destroyed")
-                return
+            // Atomic CAS on the destroyed flag to ensure only one thread wins the
+            // race to tear down this connection.
+            synchronized(conn) {
+                if (conn.isDestroyed) {
+                    Log.d(TAG, "disconnectCall: connection for callId=$callId already marked destroyed")
+                    return
+                }
+                conn.isDestroyed = true
             }
-            conn.isDestroyed = true
             activeConnections.remove(callId)
             try {
-                conn.setDisconnected(android.telecom.DisconnectCause(android.telecom.DisconnectCause.REMOTE))
+                conn.setDisconnected(DisconnectCause(causeCode))
             } catch (e: Throwable) {
                 Log.e(TAG, "disconnectCall: setDisconnected failed for callId=$callId: ${e.message}")
             }
-            // conn.destroy() must run on the Main thread.  Calling it from
-            // the PJSIP callback thread silently fails for ACTIVE self-managed
-            // connections, leaving the Telecom framework in a state where it
-            // keeps the system in-call UI alive and may re-deliver the connection.
+            // conn.destroy() must run on the Main thread.
             android.os.Handler(android.os.Looper.getMainLooper()).post {
                 try {
                     conn.destroy()
-                    Log.d(TAG, "disconnectCall: tore down callId=$callId (REMOTE hangup)")
+                    Log.d(TAG, "disconnectCall: tore down callId=$callId (cause=$causeCode)")
                 } catch (e: Throwable) {
                     Log.e(TAG, "disconnectCall: destroy failed for callId=$callId: ${e.message}")
                 }
@@ -227,7 +232,12 @@ class SipConnection : Connection() {
         com.ipdial.util.SipLogger.log("SipConnection", "onDisconnect called for callId=$callId")
         if (isDestroyed) return
         isDestroyed = true
-        setDisconnected(DisconnectCause(DisconnectCause.LOCAL))
+        // Resolve the correct cause based on current session state so Telecom can
+        // display the right reason (e.g. "Call Ended" for confirmed, "Declined" for ringing).
+        val session = SipEngine.callSession.value
+        val causeCode = com.ipdial.service.CallHangupResolver.resolveDisconnectCause(session)
+        Log.d("SipConnection", "onDisconnect: resolvedCause=$causeCode for callId=$callId (state=${session?.state}, direction=${session?.direction})")
+        setDisconnected(DisconnectCause(causeCode))
         connectionScope.launch {
             SipEngine.hangupCall(callId)
             withContext(Dispatchers.Main) {

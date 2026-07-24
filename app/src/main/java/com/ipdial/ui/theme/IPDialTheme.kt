@@ -288,11 +288,9 @@ fun IPDialTheme(
             typography  = scaledTypography,
             shapes      = IPDialShapes
         ) {
-            key(themeMode) {
-                Box(modifier = Modifier.fillMaxSize()) {
-                    GlassBackground(mode = glassMode)
-                    content()
-                }
+            Box(modifier = Modifier.fillMaxSize()) {
+                GlassBackground(mode = glassMode)
+                content()
             }
         }
     }

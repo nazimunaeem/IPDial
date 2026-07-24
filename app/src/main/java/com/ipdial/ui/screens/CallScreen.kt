@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.ipdial.data.model.AudioDeviceMode
+import com.ipdial.data.model.CallDirection
 import com.ipdial.data.model.CallSession
 import com.ipdial.data.model.CallState
 import com.ipdial.ui.SipViewModel
@@ -66,16 +67,12 @@ import kotlinx.coroutines.delay
 
 @Composable
 fun CallScreen(vm: SipViewModel, session: CallSession) {
-    // Safety: if the live session is null or disconnected, bail out immediately.
-    // This handles the case where onCallState failed to propagate the state change.
     val liveCallSession by vm.callSession.collectAsState()
-    if (liveCallSession == null || liveCallSession?.state == CallState.DISCONNECTED) return
+    val activeSession = liveCallSession ?: session
 
     val accounts by vm.accounts.collectAsState()
     val contacts by vm.contacts.collectAsState()
     val audioDeviceMode by vm.audioDeviceMode.collectAsState()
-
-    val activeSession = liveCallSession ?: session
 
     val account = accounts.firstOrNull { it.id == activeSession.accountId }
     val simLabel = account?.displayName ?: ""
@@ -259,7 +256,7 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
-                    .padding(bottom = 48.dp)
+                    .padding(bottom = 80.dp)
                     .width(160.dp)
                     .height(56.dp)
                     .clip(RoundedCornerShape(28.dp))
@@ -470,7 +467,7 @@ fun PulsingStateLabel(state: CallState) {
     val color = when (state) {
         CallState.INCOMING -> MaterialTheme.colorScheme.primary
         CallState.CONNECTING -> MaterialTheme.colorScheme.tertiary
-        else -> Color.White
+        else -> MaterialTheme.colorScheme.onBackground
     }
     
     Text(
@@ -489,3 +486,5 @@ fun formatDuration(seconds: Long): String {
     return if (h > 0) "%02d:%02d:%02d".format(h, m, s)
     else "%02d:%02d".format(m, s)
 }
+
+

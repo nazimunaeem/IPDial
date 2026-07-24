@@ -80,63 +80,116 @@ class SipService : Service() {
             }
         }
 
-        fun showIncomingCallNotificationStatic(context: Context, callerName: String, callId: Int) {
-            Log.d("SipService", "showIncomingCallNotificationStatic: caller=$callerName, isForeground=${com.ipdial.AppState.isForeground}")
-            if (com.ipdial.AppState.isForeground) {
-                Log.d("SipService", "App is in foreground, skipping system notification (expecting in-app banner)")
+        @Volatile var activeCallStartTime: Long = 0L
+
+        fun showCallNotificationStatic(context: Context, callerName: String = "", callId: Int = -1) {
+            Log.d("SipService", "showCallNotificationStatic: caller=$callerName, isForeground=${com.ipdial.AppState.isForeground}")
+
+            val session = SipEngine.callSession.value
+            if (session == null || session.state == CallState.DISCONNECTED || session.state == CallState.IDLE) {
+                val nm = context.getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+                nm.cancel(NOTIF_ID_INCOMING)
                 return
             }
 
-            val fullscreenIntent = Intent(context, MainActivity::class.java).apply {
-                action = "com.ipdial.ACTION_INCOMING_CALL"
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            }
-            val fullscreenPi = PendingIntent.getActivity(context, 0, fullscreenIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            val targetCallId = if (callId >= 0) callId else session.callId
+            val isIncomingRinging = session.direction == CallDirection.INCOMING &&
+                    (session.state == CallState.INCOMING || session.state == CallState.EARLY)
 
-            val answerPi = PendingIntent.getService(context, 1,
-                Intent(context, SipService::class.java).apply {
-                    action = ACTION_ANSWER
-                    putExtra("callId", callId)
-                },
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-            val declinePi = PendingIntent.getService(context, 2,
-                Intent(context, SipService::class.java).apply {
-                    action = ACTION_DECLINE
-                    putExtra("callId", callId)
-                },
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
+
+
+            val displayName = callerName.ifBlank { session.remoteDisplayName }.ifBlank {
+                session.remoteUri.removePrefix("sip:").substringBefore("@")
+            }
 
             val callerPerson = androidx.core.app.Person.Builder()
-                .setName(callerName)
+                .setName(displayName)
                 .setImportant(true)
                 .build()
 
-            val answerText = android.text.SpannableString("Answer")
-            answerText.setSpan(android.text.style.ForegroundColorSpan(android.graphics.Color.parseColor("#4CAF50")), 0, answerText.length, 0)
-            val declineText = android.text.SpannableString("Decline")
-            declineText.setSpan(android.text.style.ForegroundColorSpan(android.graphics.Color.parseColor("#F44336")), 0, declineText.length, 0)
+            val fullscreenIntent = Intent(context, MainActivity::class.java).apply {
+                action = "com.ipdial.ACTION_SHOW_CALL"
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            }
+            val contentPi = PendingIntent.getActivity(
+                context, 0, fullscreenIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
 
-            val notif = NotificationCompat.Builder(context, NOTIF_CHANNEL_CALL)
-                .setContentTitle("Incoming Call")
-                .setContentText(callerName)
+            val hangupPi = PendingIntent.getService(
+                context, 2,
+                Intent(context, SipService::class.java).apply {
+                    action = ACTION_HANGUP
+                    putExtra("callId", targetCallId)
+                },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val notifBuilder = NotificationCompat.Builder(context, NOTIF_CHANNEL_CALL)
                 .setSmallIcon(R.drawable.ic_notif_call)
                 .setPriority(NotificationCompat.PRIORITY_MAX)
                 .setCategory(NotificationCompat.CATEGORY_CALL)
-                .setFullScreenIntent(fullscreenPi, true)
+                .setContentIntent(contentPi)
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-                .setStyle(NotificationCompat.CallStyle.forIncomingCall(callerPerson, declinePi, answerPi))
                 .setAutoCancel(false)
                 .setOngoing(true)
-                .build()
 
-            val intent = Intent(context, SipService::class.java).apply {
-                action = "ACTION_STOP_BANNER"
+            if (isIncomingRinging) {
+                val answerPi = PendingIntent.getService(
+                    context, 1,
+                    Intent(context, SipService::class.java).apply {
+                        action = ACTION_ANSWER
+                        putExtra("callId", targetCallId)
+                    },
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+
+                val declinePi = PendingIntent.getService(
+                    context, 2,
+                    Intent(context, SipService::class.java).apply {
+                        action = ACTION_DECLINE
+                        putExtra("callId", targetCallId)
+                    },
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+
+                notifBuilder
+                    .setContentTitle("Incoming Call")
+                    .setContentText(displayName)
+                    .setFullScreenIntent(contentPi, true)
+                    .setStyle(NotificationCompat.CallStyle.forIncomingCall(callerPerson, declinePi, answerPi))
+            } else {
+                val titleText = when (session.state) {
+                    CallState.CONFIRMED -> "Active Call"
+                    CallState.CALLING -> "Calling..."
+                    CallState.EARLY -> "Ringing..."
+                    CallState.CONNECTING -> "Connecting..."
+                    else -> "Active Call"
+                }
+
+                notifBuilder
+                    .setContentTitle(titleText)
+                    .setContentText(displayName)
+                    .setFullScreenIntent(contentPi, true)
+                    .setStyle(NotificationCompat.CallStyle.forOngoingCall(callerPerson, hangupPi))
+
+                if (session.state == CallState.CONFIRMED) {
+                    if (activeCallStartTime == 0L) {
+                        activeCallStartTime = System.currentTimeMillis()
+                    }
+                    notifBuilder
+                        .setUsesChronometer(true)
+                        .setWhen(activeCallStartTime)
+                        .setChronometerCountDown(false)
+                }
             }
+
             val nm = context.getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-            nm.notify(NOTIF_ID_INCOMING, notif)
+            nm.notify(NOTIF_ID_INCOMING, notifBuilder.build())
+        }
+
+        fun showIncomingCallNotificationStatic(context: Context, callerName: String, callId: Int) {
+            showCallNotificationStatic(context, callerName, callId)
         }
     }
 
@@ -288,6 +341,16 @@ class SipService : Service() {
         }
 
         observeCallState()
+
+        // Background watchdog for stale call sessions (remote hangup edge cases)
+        scope.launch {
+            while (true) {
+                delay(2000)
+                try {
+                    SipEngine.nullSessionIfStale()
+                } catch (_: Throwable) {}
+            }
+        }
     }
 
     private fun startPushingBanner(callerName: String, callId: Int) {
@@ -401,7 +464,10 @@ class SipService : Service() {
             }
             ACTION_DECLINE -> {
                 val callId = intent.getIntExtra("callId", -1)
+                val session = SipEngine.callSession.value
+                val cause = CallHangupResolver.resolveDisconnectCause(session)
                 SipEngine.hangupCall(callId)
+                SipConnectionService.disconnectCall(callId, cause)
                 stopPushingBanner()
                 cancelIncomingNotification()
             }
@@ -419,7 +485,15 @@ class SipService : Service() {
                     AudioDeviceMode.BLUETOOTH.name -> routeAudioToBluetooth()
                 }
             }
-            ACTION_HANGUP -> SipEngine.hangupCall()
+            ACTION_HANGUP -> {
+                val session = SipEngine.callSession.value
+                val id = session?.callId ?: -1
+                if (id != -1) {
+                    val cause = CallHangupResolver.resolveDisconnectCause(session)
+                    SipEngine.hangupCall(id)
+                    SipConnectionService.disconnectCall(id, cause)
+                }
+            }
             ACTION_STOP -> stopSelf()
             ACTION_TEST_CALL -> {
                 val number = intent.getStringExtra("number") ?: "123"
@@ -543,6 +617,7 @@ class SipService : Service() {
     private var callStartTime = 0L
 
     private var lastSession: com.ipdial.data.model.CallSession? = null
+    private var proximityWakeLock: PowerManager.WakeLock? = null
     
     private var ringtone: Ringtone? = null
     private var mediaPlayer: android.media.MediaPlayer? = null
@@ -713,6 +788,7 @@ class SipService : Service() {
                     sessionToLog?.callId?.let { SipConnectionService.disconnectCall(it) }
                     lastWasConfirmed = false
                     callStartTime = 0
+                    activeCallStartTime = 0L
                     lastSession = null
                 } else {
                     val stateChanged = session.state != lastSession?.state
@@ -729,9 +805,14 @@ class SipService : Service() {
                             }
                             playRingtone()
                             acquireWakeLockForIncoming()
+                            acquireWakeLock()
+                            acquireProximityWakeLock() // Proximity sensor active for incoming ringing
                             updateForegroundType(ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)
                             if (speakerChanged) {
                                 routeAudioToSpeaker(session.isSpeaker)
+                            }
+                            if (!com.ipdial.AppState.isForeground) {
+                                showCallNotificationStatic(applicationContext, session.remoteDisplayName, session.callId)
                             }
                         }
                         CallState.CONFIRMED -> {
@@ -739,7 +820,6 @@ class SipService : Service() {
                                 audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
                             }
                             stopRingtone()
-                            cancelIncomingNotification()
                             
                             if (stateChanged || speakerChanged) {
                                 if (stateChanged) delay(300) 
@@ -747,9 +827,17 @@ class SipService : Service() {
                             }
                             
                             acquireWakeLock()
+                            acquireProximityWakeLock() // Ensure active during confirmed call
                             lastWasConfirmed = true
-                            if (callStartTime == 0L) callStartTime = System.currentTimeMillis()
+                            if (callStartTime == 0L) {
+                                callStartTime = System.currentTimeMillis()
+                                activeCallStartTime = callStartTime
+                            }
                             updateForegroundType(ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)
+                            
+                            if (!com.ipdial.AppState.isForeground) {
+                                showCallNotificationStatic(applicationContext, session.remoteDisplayName, session.callId)
+                            }
                         }
                         CallState.CALLING, CallState.EARLY, CallState.CONNECTING -> {
                             if (audioManager.mode != AudioManager.MODE_IN_COMMUNICATION) {
@@ -758,7 +846,13 @@ class SipService : Service() {
                             if (stateChanged || speakerChanged) {
                                 routeAudioToDefault()
                             }
+                            acquireWakeLock()
+                            acquireProximityWakeLock() // Proximity active for dialing
                             updateForegroundType(ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)
+
+                            if (!com.ipdial.AppState.isForeground) {
+                                showCallNotificationStatic(applicationContext, session.remoteDisplayName, session.callId)
+                            }
                         }
                         else -> {
                             if (speakerChanged) {
@@ -977,20 +1071,9 @@ class SipService : Service() {
     }
 
     private fun acquireWakeLock() {
-        if (wakeLock?.isHeld == true) return
-        val pm = getSystemService(POWER_SERVICE) as PowerManager
-        
-        // Proximity sensor to turn off screen when near ear
-        wakeLock = pm.newWakeLock(
-            PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK,
-            "IPDial:call"
-        ).apply { 
-            setReferenceCounted(false)
-            acquire(60 * 60 * 1000L) 
-        }
-
         // Partial wake lock to keep CPU alive during call even if screen is off
         if (cpuWakeLock == null) {
+            val pm = getSystemService(POWER_SERVICE) as PowerManager
             cpuWakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "IPDial:cpu_call").apply {
                 setReferenceCounted(false)
                 acquire(60 * 60 * 1000L)
@@ -1012,11 +1095,29 @@ class SipService : Service() {
         }
     }
 
+    private fun acquireProximityWakeLock() {
+        if (proximityWakeLock?.isHeld == true) return
+        val pm = getSystemService(POWER_SERVICE) as PowerManager
+        proximityWakeLock = pm.newWakeLock(
+            PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK,
+            "IPDial:proximity_dialing"
+        ).apply {
+            setReferenceCounted(false)
+            acquire(60 * 60 * 1000L)
+        }
+    }
+
+    private fun releaseProximityWakeLock() {
+        proximityWakeLock?.let { if (it.isHeld) it.release() }
+        proximityWakeLock = null
+    }
+
     private fun releaseWakeLock() {
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
         cpuWakeLock?.let { if (it.isHeld) it.release() }
         cpuWakeLock = null
+        releaseProximityWakeLock()
     }
 
     private fun createNotificationChannels() {

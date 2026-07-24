@@ -69,27 +69,27 @@ fun DialpadScreen(
     val suggestedContacts = remember(dialString, contacts) {
         if (dialString.isBlank()) emptyList()
         else {
+            val digitsOnly = dialString.filter { it.isDigit() }
             contacts.asSequence().filter { contact ->
                 contact.name.contains(dialString, ignoreCase = true) ||
                 contact.numbers.any { it.filter { it.isDigit() }.contains(dialString) } ||
-                contact.name.lowercase().mapNotNull { T9_MAP[it] }.joinToString("").contains(dialString)
+                (digitsOnly.isNotBlank() && contact.name.lowercase().mapNotNull { T9_MAP[it] }.joinToString("").contains(digitsOnly))
             }.take(5).toList()
         }
     }
 
-    Scaffold(
-        contentWindowInsets = WindowInsets.systemBars.only(WindowInsetsSides.Bottom)
-    ) { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
                 .background(MaterialTheme.colorScheme.background),
-            horizontalAlignment = Alignment.CenterHorizontally
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Top
         ) {
-
-            // Suggested contacts space
-            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            // Suggested contacts space - fixed weight(1f) so keypad never shifts position when typing
+            Box(modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .padding(top = 4.dp)) {
                 if (dialString.isEmpty() && mostCalled.isNotEmpty()) {
                     LazyColumn(modifier = Modifier.fillMaxSize()) {
                         item {
@@ -97,13 +97,13 @@ fun DialpadScreen(
                                 text = "Most Called",
                                 style = MaterialTheme.typography.labelLarge,
                                 color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 8.dp)
+                                modifier = Modifier.padding(start = 16.dp, top = 4.dp, bottom = 4.dp)
                             )
                         }
                         itemsIndexed(mostCalled, key = { _, it -> it.id }) { _, contact ->
                             SuggestedContactRow(contact) { num ->
                                 vm.clearDial()
-                                num.filter { it.isDigit() || it == '+' }.forEach { vm.dialPad(it) }
+                                num.filter { it.isDigit() || it == '+' || it == '*' || it == '#' }.forEach { vm.dialPad(it) }
                                 vm.makeCall()
                             }
                         }
@@ -113,7 +113,7 @@ fun DialpadScreen(
                         items(suggestedContacts, key = { it.id }) { contact ->
                             SuggestedContactRow(contact) { num ->
                                 vm.clearDial()
-                                num.filter { it.isDigit() || it == '+' }.forEach { vm.dialPad(it) }
+                                num.filter { it.isDigit() || it == '+' || it == '*' || it == '#' }.forEach { vm.dialPad(it) }
                                 vm.makeCall()
                             }
                         }
@@ -129,15 +129,17 @@ fun DialpadScreen(
                 }
             }
 
-            // Ad above digit box (reserved height to prevent layout jump)
+            // Ad above digit box
             val showAd by vm.showAd.collectAsState()
-            Box(Modifier.height(90.dp).fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
-                if (showAd) {
+            if (showAd) {
+                Box(Modifier.height(90.dp).fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
                     com.ipdial.ui.StartIoBanner(
                         vm = vm,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
+            } else {
+                Spacer(Modifier.height(8.dp))
             }
 
             // Dial display row
@@ -163,7 +165,7 @@ fun DialpadScreen(
                                 onClick = {
                                     showMenu = false
                                     clipboardManager.getText()?.text?.let { text ->
-                                        text.filter { it.isDigit() || it == '+' }.forEach { vm.dialPad(it) }
+                                        text.filter { it.isDigit() || it == '+' || it == '*' || it == '#' }.forEach { vm.dialPad(it) }
                                     }
                                 }
                             )
@@ -188,7 +190,7 @@ fun DialpadScreen(
                 BasicTextField(
                     value = dialTextFieldValue,
                     onValueChange = {
-                        vm.setDialString(it.copy(text = it.text.filter { c -> c.isDigit() || c == '+' }))
+                        vm.setDialString(it.copy(text = it.text.filter { c -> c.isDigit() || c == '+' || c == '*' || c == '#' }))
                     },
                     visualTransformation = PhoneNumberTransformation(),
                     textStyle = MaterialTheme.typography.headlineMedium.copy(
@@ -252,13 +254,13 @@ fun DialpadScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 48.dp)
+                        .padding(horizontal = 40.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     keys.chunked(3).forEach { row ->
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally)
                         ) {
                             row.forEach { (digit, sub, _) ->
                                 DialKeyRounded(
@@ -323,14 +325,14 @@ fun DialpadScreen(
                 }
             }
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(8.dp))
 
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
-                    .width(160.dp)
-                    .height(56.dp)
-                    .clip(RoundedCornerShape(28.dp))
+                    .width(150.dp)
+                    .height(62.dp)
+                    .clip(CircleShape)
                     .background(ForestGreen)
                     .clickableWithRipple { 
                         if (dialString.isEmpty() && !lastDialedNumber.isNullOrEmpty()) {
@@ -348,9 +350,8 @@ fun DialpadScreen(
                 )
             }
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
         }
-    }
 
     val showAccountSelection by vm.showAccountSelectionDialog.collectAsState()
     val balances by vm.balances.collectAsState()
@@ -432,11 +433,11 @@ fun DialKeyRounded(
     val isGlass = com.ipdial.ui.theme.LocalGlassMode.current != com.ipdial.ui.theme.GlassMode.None
     Surface(
         shape = CircleShape,
-        color = if (isGlass) Color.Transparent else MaterialTheme.colorScheme.surfaceVariant,
+        color = if (isGlass) Color.Transparent else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
         modifier = modifier
             .aspectRatio(1f)
-            .sizeIn(maxWidth = 72.dp, maxHeight = 72.dp)
-            .padding(4.dp)
+            .sizeIn(maxWidth = 48.dp, maxHeight = 48.dp)
+            .padding(2.dp)
             .then(if (isGlass) Modifier.glass(CircleShape) else Modifier)
             .combinedClickable(
                 onClick = onClick,

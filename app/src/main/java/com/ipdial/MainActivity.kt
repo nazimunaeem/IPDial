@@ -63,6 +63,7 @@ import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.Scaffold
@@ -142,17 +143,21 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         AppState.isForeground = true
-        val nm = getSystemService(android.app.NotificationManager::class.java)
-        nm.cancel(com.ipdial.service.SipService.NOTIF_ID_INCOMING)
+        val session = vm.callSession.value
+        if (session != null && session.state != CallState.DISCONNECTED) {
+            applyLockScreenFlags()
+            vm.setShowFullIncomingScreen(true)
+            val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
+            nm.cancel(com.ipdial.service.SipService.NOTIF_ID_INCOMING)
+        }
     }
 
     override fun onPause() {
         super.onPause()
         AppState.isForeground = false
         val session = vm.callSession.value
-        if (session != null && session.direction == CallDirection.INCOMING && 
-            (session.state == CallState.INCOMING || session.state == CallState.EARLY)) {
-            com.ipdial.service.SipService.showIncomingCallNotificationStatic(this, session.remoteDisplayName, session.callId)
+        if (session != null && session.state != CallState.DISCONNECTED) {
+            com.ipdial.service.SipService.showCallNotificationStatic(this, session.remoteDisplayName, session.callId)
         }
     }
 
@@ -162,7 +167,7 @@ class MainActivity : ComponentActivity() {
         
         volumeControlStream = android.media.AudioManager.STREAM_VOICE_CALL
         
-        if (intent?.action == "com.ipdial.ACTION_INCOMING_CALL") {
+        if (intent?.action == "com.ipdial.ACTION_INCOMING_CALL" || intent?.action == "com.ipdial.ACTION_SHOW_CALL") {
             applyLockScreenFlags()
         }
         
@@ -245,7 +250,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        if (intent.action == "com.ipdial.ACTION_INCOMING_CALL") {
+        if (intent.action == "com.ipdial.ACTION_INCOMING_CALL" || intent.action == "com.ipdial.ACTION_SHOW_CALL") {
             applyLockScreenFlags()
         }
         handleIntent(intent)
@@ -277,7 +282,7 @@ class MainActivity : ComponentActivity() {
                 }
             } else if (i.action == "com.ipdial.TEST_HANGUP") {
                 vm.hangup()
-            } else if (i.action == "com.ipdial.ACTION_INCOMING_CALL") {
+            } else if (i.action == "com.ipdial.ACTION_INCOMING_CALL" || i.action == "com.ipdial.ACTION_SHOW_CALL") {
                 vm.setShowFullIncomingScreen(true)
             } else if (i.action == Intent.ACTION_DIAL || i.action == Intent.ACTION_VIEW || i.action == Intent.ACTION_CALL) {
                 val data = i.data
@@ -666,14 +671,14 @@ fun AppBottomBar(
     val bottomTabs = listOf(NavDest.Home, NavDest.Keypad, NavDest.Contacts)
     val coroutineScope = rememberCoroutineScope()
 
-    val showBottomBar = (callSession == null || !showFullIncomingScreen) && 
-                        (currentRoute == NavDest.Home.route || currentRoute == NavDest.Keypad.route || 
-                         currentRoute == NavDest.Contacts.route || currentRoute == NavDest.Settings.route || 
-                         currentRoute == NavDest.GetPro.route)
+    val isMainScreen = currentRoute == NavDest.Home.route || currentRoute == NavDest.Keypad.route || currentRoute == NavDest.Contacts.route
+    val hasActiveCall = callSession != null && callSession.state != CallState.DISCONNECTED
+    val showBottomBar = !hasActiveCall && (isMainScreen ||
+                        ((callSession == null || !showFullIncomingScreen) &&
+                         currentRoute == NavDest.GetPro.route))
     
     if (showBottomBar) {
         val isGlass = com.ipdial.ui.theme.LocalGlassMode.current != com.ipdial.ui.theme.GlassMode.None
-        val isMainScreen = currentRoute == NavDest.Home.route || currentRoute == NavDest.Keypad.route || currentRoute == NavDest.Contacts.route
 
         NavigationBar(
             tonalElevation = 0.dp,
@@ -703,8 +708,15 @@ fun AppBottomBar(
                             }
                         }
                     },
-                    icon = { Icon(dest.icon, dest.label) },
-                    label = { Text(dest.label) },
+                    icon = { Icon(dest.icon, dest.label, modifier = Modifier.size(20.dp)) },
+                    label = { Text(dest.label, style = MaterialTheme.typography.labelSmall) },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = MaterialTheme.colorScheme.primary,
+                        selectedTextColor = MaterialTheme.colorScheme.primary,
+                        indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    ),
                 )
             }
         }
@@ -723,16 +735,15 @@ fun AppMainContent(
     onShowFullIncoming: () -> Unit
 ) {
     Log.d("MainActivity", "AppMainContent: session=${callSession?.state}, showFull=$showFullIncomingScreen")
-    if (callSession != null && showFullIncomingScreen && callSession.state != CallState.DISCONNECTED) {
-        CallOverlay(vm, callSession)
+    
+    // Logic: Always show CallOverlay if there is an active call (incoming OR outgoing)
+    // regardless of showFullIncomingScreen flag, as long as it's not disconnected.
+    val hasActiveCall = callSession != null && callSession.state != CallState.DISCONNECTED
+    
+    if (hasActiveCall) {
+        CallOverlay(vm, callSession!!)
     } else {
-        Box(modifier = Modifier.fillMaxSize()) {
-            AppNavHost(vm, navController, pagerState, innerPadding, onOpenDrawer)
-            
-            Box(Modifier.fillMaxWidth().align(Alignment.TopCenter)) {
-                IncomingCallBannerOverlay(vm, callSession, onShowFullIncoming)
-            }
-        }
+        AppNavHost(vm, navController, pagerState, innerPadding, onOpenDrawer)
     }
 }
 
@@ -881,117 +892,4 @@ fun AppNavHost(
     }
 }
 
-@Composable
-fun IncomingCallBannerOverlay(
-    vm: SipViewModel,
-    callSession: CallSession?,
-    onShowFullIncoming: () -> Unit
-) {
-    if (callSession != null && 
-        callSession.direction == CallDirection.INCOMING &&
-        (callSession.state == CallState.INCOMING || callSession.state == CallState.EARLY)) {
-        
-        Log.d("MainActivity", "Rendering IncomingCallBannerOverlay for ${callSession.remoteUri}")
-        
-        val contact = remember(callSession.remoteUri) {
-            vm.findContactByNumber(callSession.remoteUri)
-        }
-        val displayName = contact?.name ?: callSession.remoteDisplayName.ifBlank { vm.cleanUri(callSession.remoteUri) }
 
-        IncomingCallBanner(
-            displayName = displayName,
-            onAnswer = { vm.answerCall() },
-            onDecline = { vm.hangup() },
-            onClick = onShowFullIncoming
-        )
-    }
-}
-
-@Composable
-fun IncomingCallBanner(
-    displayName: String,
-    onAnswer: () -> Unit,
-    onDecline: () -> Unit,
-    onClick: () -> Unit
-) {
-    val isGlass = com.ipdial.ui.theme.LocalGlassMode.current != com.ipdial.ui.theme.GlassMode.None
-    Surface(
-        onClick = onClick,
-        color = Color.Transparent,
-        shape = RoundedCornerShape(24.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 8.dp)
-            .statusBarsPadding()
-            .then(if (isGlass) Modifier.glass(RoundedCornerShape(24.dp)) else Modifier)
-            .shadow(if (isGlass) 0.dp else 12.dp, RoundedCornerShape(24.dp))
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(42.dp)
-                    .clip(CircleShape)
-                    .background(Color.Gray.copy(alpha = 0.2f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Call,
-                    contentDescription = null,
-                    tint = Color.DarkGray,
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-            Spacer(Modifier.width(16.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Incoming Call",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    text = displayName,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            Spacer(Modifier.width(8.dp))
-            IconButton(
-                onClick = onDecline,
-                colors = IconButtonDefaults.iconButtonColors(
-                    containerColor = com.ipdial.ui.theme.EndRed,
-                    contentColor = Color.White
-                ),
-                modifier = Modifier.size(44.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.CallEnd,
-                    contentDescription = "Decline",
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-            Spacer(Modifier.width(12.dp))
-            IconButton(
-                onClick = onAnswer,
-                colors = IconButtonDefaults.iconButtonColors(
-                    containerColor = com.ipdial.ui.theme.ForestGreen,
-                    contentColor = Color.White
-                ),
-                modifier = Modifier.size(44.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Call,
-                    contentDescription = "Answer",
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-        }
-    }
-}

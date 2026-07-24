@@ -183,117 +183,116 @@ fun HomeScreen(
         }.toList().sortedByDescending { it.second.firstOrNull()?.mainEntry?.timestampMs ?: 0L }
     }
 
-    Scaffold(
-        contentWindowInsets = WindowInsets.systemBars.only(WindowInsetsSides.Bottom),
-        bottomBar = {
-            val showAd by vm.showAd.collectAsState()
-            if (showAd) {
-                com.ipdial.ui.StartIoBanner(
-                    vm = vm,
-                    modifier = Modifier.fillMaxWidth().padding(8.dp)
-                )
-            }
+    val showAd by vm.showAd.collectAsState()
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
+        SearchBarRow(
+            query = searchQuery,
+            onQueryChange = { vm.onSearchQueryChanged(it) }
+        )
+
+        val historyListState = rememberLazyListState()
+
+        val showSearchContactsInHistory = remember(searchQuery, filteredLog) {
+            searchQuery.isNotBlank() && filteredLog.isEmpty()
         }
-    ) { innerPadding ->
-        Column(
+
+        val searchContacts = remember(contactsState, searchQuery, showSearchContactsInHistory) {
+            if (!showSearchContactsInHistory) emptyList()
+            else contactsState.filter {
+                it.name.contains(searchQuery, ignoreCase = true) ||
+                        it.numbers.any { num -> num.contains(searchQuery) }
+            }.sortedBy { it.name.trim().lowercase() }
+        }
+
+        LazyColumn(
+            state = historyListState,
             modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .background(MaterialTheme.colorScheme.background)
+                .fillMaxWidth()
+                .weight(1f),
+            contentPadding = PaddingValues(bottom = 12.dp)
         ) {
-            SearchBarRow(
-                query = searchQuery,
-                onQueryChange = { vm.onSearchQueryChanged(it) }
-            )
-
-            val historyListState = rememberLazyListState()
-            
-            val showSearchContactsInHistory = remember(searchQuery, filteredLog) {
-                searchQuery.isNotBlank() && filteredLog.isEmpty()
-            }
-            
-            val searchContacts = remember(contactsState, searchQuery, showSearchContactsInHistory) {
-                if (!showSearchContactsInHistory) emptyList()
-                else contactsState.filter {
-                    it.name.contains(searchQuery, ignoreCase = true) ||
-                            it.numbers.any { num -> num.contains(searchQuery) }
-                }.sortedBy { it.name.trim().lowercase() }
-            }
-
-            LazyColumn(
-                state = historyListState,
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = 80.dp)
-            ) {
-                if (grouped.isEmpty() && searchQuery.isBlank()) {
-                    item { EmptyLogPrompt() }
-                } else if (showSearchContactsInHistory) {
-                    if (searchContacts.isEmpty()) {
-                        item {
-                            Box(Modifier.fillMaxWidth().padding(top = 40.dp), contentAlignment = Alignment.Center) {
-                                Text("No matches found", color = MaterialTheme.colorScheme.outline)
-                            }
-                        }
-                    } else {
-                        item {
-                            Text(
-                                text = "Contacts",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp)
-                            )
-                        }
-                        items(searchContacts, key = { "search_" + it.id }) { contact ->
-                            ContactItem(
-                                contact = contact,
-                                onNumberClick = { num -> vm.makeCall(num) },
-                                onContactClick = {
-                                    if (contact.numbers.size > 1) {
-                                        activeContactForNumberPicker = contact
-                                    } else {
-                                        contact.numbers.firstOrNull()?.let { vm.makeCall(it) }
-                                    }
-                                }
-                            )
+            if (grouped.isEmpty() && searchQuery.isBlank()) {
+                item { EmptyLogPrompt() }
+            } else if (showSearchContactsInHistory) {
+                if (searchContacts.isEmpty()) {
+                    item {
+                        Box(Modifier.fillMaxWidth().padding(top = 40.dp), contentAlignment = Alignment.Center) {
+                            Text("No matches found", color = MaterialTheme.colorScheme.outline)
                         }
                     }
                 } else {
-                    grouped.forEach { (label, entries) ->
-                        item {
-                            Text(
-                                text = label,
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp)
-                            )
-                        }
-                        items(entries, key = { it.mainEntry.id }) { group ->
-                            val entry = group.mainEntry
-                            val cleanNumber = cleanUri(entry.remoteUri).filter { it.isDigit() }
-                            val contact = remember(cleanNumber, contactLookupMap) {
-                                if (cleanNumber.isEmpty()) null
-                                else contactLookupMap[cleanNumber]
-                                    ?: (10..13).mapNotNull { l -> if (l < cleanNumber.length) contactLookupMap[cleanNumber.takeLast(l)] else null }.firstOrNull()
+                    item {
+                        Text(
+                            text = "Contacts",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp)
+                        )
+                    }
+                    items(searchContacts, key = { "search_" + it.id }) { contact ->
+                        ContactItem(
+                            contact = contact,
+                            onNumberClick = { num -> vm.makeCall(num) },
+                            onContactClick = {
+                                if (contact.numbers.size > 1) {
+                                    activeContactForNumberPicker = contact
+                                } else {
+                                    contact.numbers.firstOrNull()?.let { vm.makeCall(it) }
+                                }
                             }
-                            val numberToCopy = cleanUri(entry.remoteUri).filter { it.isDigit() || it == '+' }
-                             CallLogRow(
-                                 entry   = entry,
-                                 count   = group.count,
-                                 account = accounts.firstOrNull { it.id == entry.accountId },
-                                 contact = contact,
-                                 onClick = { activeHistoryEntryForDetail = entry },
-                                 onCall  = { vm.callBack(entry) },
-                                 onCopy = {
-                                     clipboardManager.setText(AnnotatedString(numberToCopy))
-                                     Toast.makeText(context, "Number copied", Toast.LENGTH_SHORT).show()
-                                 },
-                                 onEdit = { onEditBeforeCall(numberToCopy) },
-                                 onDelete = { vm.deleteCallLog(entry) }
-                             )
+                        )
+                    }
+                }
+            } else {
+                grouped.forEach { (label, entries) ->
+                    item {
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp)
+                        )
+                    }
+                    items(entries, key = { it.mainEntry.id }) { group ->
+                        val entry = group.mainEntry
+                        val cleanNumber = cleanUri(entry.remoteUri).filter { it.isDigit() }
+                        val contact = remember(cleanNumber, contactLookupMap) {
+                            if (cleanNumber.isEmpty()) null
+                            else contactLookupMap[cleanNumber]
+                                ?: (10..13).mapNotNull { l -> if (l < cleanNumber.length) contactLookupMap[cleanNumber.takeLast(l)] else null }.firstOrNull()
                         }
+                        val numberToCopy = cleanUri(entry.remoteUri).filter { it.isDigit() || it == '+' }
+                         CallLogRow(
+                             entry   = entry,
+                             count   = group.count,
+                             account = accounts.firstOrNull { it.id == entry.accountId },
+                             contact = contact,
+                             onClick = { activeHistoryEntryForDetail = entry },
+                             onCall  = { vm.callBack(entry) },
+                             onCopy = {
+                                 clipboardManager.setText(AnnotatedString(numberToCopy))
+                                 Toast.makeText(context, "Number copied", Toast.LENGTH_SHORT).show()
+                             },
+                             onEdit = { onEditBeforeCall(numberToCopy) },
+                             onDelete = { vm.deleteCallLog(entry) }
+                         )
                     }
                 }
             }
+        }
+
+        if (showAd) {
+            com.ipdial.ui.StartIoBanner(
+                vm = vm,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp)
+            )
         }
     }
 
@@ -340,7 +339,8 @@ fun HomeScreen(
 @Composable
 fun SearchBarRow(
     query: String,
-    onQueryChange: (String) -> Unit
+    onQueryChange: (String) -> Unit,
+    placeholder: String = "Search history"
 ) {
     val isGlass = com.ipdial.ui.theme.LocalGlassMode.current != com.ipdial.ui.theme.GlassMode.None
     Surface(
@@ -363,21 +363,29 @@ fun SearchBarRow(
             androidx.compose.foundation.text.BasicTextField(
                 value = query,
                 onValueChange = onQueryChange,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier
+                    .weight(1f)
+                    .height(44.dp)
+                    .fillMaxWidth(),
                 singleLine = true,
                 textStyle = MaterialTheme.typography.bodyLarge.copy(
                     color = MaterialTheme.colorScheme.onSurface
                 ),
                 cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
                 decorationBox = { innerTextField ->
-                    if (query.isEmpty()) {
-                        Text(
-                            "Search history",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        if (query.isEmpty()) {
+                            Text(
+                                placeholder,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        innerTextField()
                     }
-                    innerTextField()
                 }
             )
             if (query.isNotEmpty()) {

@@ -115,62 +115,16 @@ fun ContactsScreen(
     }
     val alphabet = remember { ('A'..'Z').toList() }
 
-    Scaffold(
-        bottomBar = {
-            com.ipdial.ui.StartIoBanner(
-                vm = vm,
-                modifier = Modifier.fillMaxWidth().padding(8.dp)
-            )
-        }
-    ) { padding ->
-        Column(modifier = Modifier.padding(padding)) {
-            DockedSearchBar(
-                query = searchQuery,
-                onQueryChange = { vm.onSearchQueryChanged(it) },
-                onSearch = { },
-                active = searchActive,
-                onActiveChange = { searchActive = it },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 10.dp, vertical = 3.dp),
-                placeholder = { Text("Search contacts...") },
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                trailingIcon = {
-                    if (searchQuery.isNotEmpty()) {
-                        IconButton(onClick = { vm.onSearchQueryChanged("") }) {
-                            Icon(Icons.Default.Close, contentDescription = "Clear")
-                        }
-                    }
-                }
-            ) {
-                // Search suggestions dropdown — show recent contacts
-                val mostCalled by vm.mostCalledContacts.collectAsState()
-                if (mostCalled.isNotEmpty()) {
-                    Text(
-                        text = "Recent",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                    )
-                    mostCalled.take(5).forEach { contact ->
-                        ListItem(
-                            headlineContent = { Text(contact.name) },
-                            supportingContent = { Text(contact.numbers.firstOrNull() ?: "") },
-                            leadingContent = {
-                                com.ipdial.ui.ContactAvatar(
-                                    name = contact.name,
-                                    photoUri = contact.photoUri,
-                                    size = 36.dp
-                                )
-                            },
-                            modifier = Modifier.clickable {
-                                vm.onSearchQueryChanged(contact.name)
-                                searchActive = false
-                            }
-                        )
-                    }
-                }
-            }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
+        SearchBarRow(
+            query = searchQuery,
+            onQueryChange = { vm.onSearchQueryChanged(it) },
+            placeholder = "Search contacts..."
+        )
 
             if (groupedContacts.isEmpty()) {
                 EmptyState(
@@ -262,7 +216,6 @@ fun ContactsScreen(
                 }
             }
         }
-    }
 
     activeContactForNumberPicker?.let { contact ->
         NumberPickerDialog(

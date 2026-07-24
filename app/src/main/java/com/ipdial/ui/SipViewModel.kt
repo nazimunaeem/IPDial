@@ -15,6 +15,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.gson.Gson
 import com.ipdial.data.model.AudioDeviceMode
+import com.ipdial.data.model.CallDirection
 import com.ipdial.data.model.CallLogEntry
 import com.ipdial.data.model.CallSession
 import com.ipdial.data.model.CallState
@@ -554,10 +555,10 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                     if (session.direction == com.ipdial.data.model.CallDirection.OUTGOING &&
                         (session.state == CallState.CALLING || session.state == CallState.EARLY)) {
                         callTimeoutJob = viewModelScope.launch {
-                            delay(30_000)
+                            delay(60_000)
                             if (callSession.value?.state == CallState.CALLING ||
                                 callSession.value?.state == CallState.EARLY) {
-                                android.util.Log.w("SipViewModel", "Call timeout: no response after 30s, hanging up")
+                                android.util.Log.w("SipViewModel", "Call timeout: no response after 60s, hanging up")
                                 hangup()
                                 withContext(Dispatchers.Main) {
                                     Toast.makeText(getApplication(), "Call timed out", Toast.LENGTH_SHORT).show()
@@ -802,20 +803,17 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         val session = callSession.value
         val id = session?.callId ?: -1
         android.util.Log.d("SipViewModel", "hangup() called: callId=$id, state=${session?.state}, direction=${session?.direction}")
+
+        val causeCode = com.ipdial.service.CallHangupResolver.resolveDisconnectCause(session)
+
         viewModelScope.launch(Dispatchers.IO) {
             SipEngine.hangupCall(id)
+
             // Also tear down the Telecom connection so the system dialer
-            // notification is dismissed.  Safe to call even if SipEngine
-            // already triggered onCallState → disconnectCall.
+            // notification is dismissed.
             if (id != -1) {
                 withContext(Dispatchers.Main) {
-                    com.ipdial.service.SipConnectionService.getConnection(id)?.let {
-                        if (!it.isDestroyed) {
-                            it.setDisconnected(android.telecom.DisconnectCause(android.telecom.DisconnectCause.LOCAL))
-                            it.destroy()
-                        }
-                    }
-                    com.ipdial.service.SipConnectionService.removeConnection(id)
+                    com.ipdial.service.SipConnectionService.disconnectCall(id, causeCode)
                 }
             }
         }
@@ -995,6 +993,8 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                 }
 
                 val conn = url.openConnection() as java.net.HttpURLConnection
+                conn.connectTimeout = 8000
+                conn.readTimeout = 8000
                 conn.requestMethod = "POST"
                 conn.setRequestProperty("Content-Type", "application/json")
                 conn.doOutput = true
