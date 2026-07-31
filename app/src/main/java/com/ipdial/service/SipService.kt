@@ -1012,9 +1012,6 @@ class SipService : Service() {
         audioManager.isMicrophoneMute = false
         @Suppress("DEPRECATION")
         audioManager.isSpeakerphoneOn = false
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            audioManager.clearCommunicationDevice()
-        }
     }
 
     fun routeAudioToSpeaker(on: Boolean) {
@@ -1031,23 +1028,14 @@ class SipService : Service() {
 
         audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
         audioManager.isMicrophoneMute = false
+        // A3/Q3: do NOT touch AudioManager.setCommunicationDevice() here. Directly
+        // forcing the BUILTIN_SPEAKER via setCommunicationDevice() fights the PJSIP
+        // media bridge (onCallMediaState) and, on many devices, switches capture to
+        // the far-field mic — killing mouthpiece pickup. Route solely via the Telecom
+        // Connection.setAudioRoute() above; isSpeakerphoneOn remains as the pre-S
+        // legacy fallback.
         @Suppress("DEPRECATION")
         audioManager.isSpeakerphoneOn = on
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (on) {
-                val devices = audioManager.availableCommunicationDevices
-                val speakerDevice = devices.find { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
-                if (speakerDevice != null) {
-                    val res = audioManager.setCommunicationDevice(speakerDevice)
-                    Log.d("SipService", "setCommunicationDevice speaker: $res")
-                } else {
-                    Log.e("SipService", "Built-in speaker device not found")
-                }
-            } else {
-                audioManager.clearCommunicationDevice()
-                Log.d("SipService", "clearCommunicationDevice")
-            }
-        }
     }
 
     private fun routeAudioToBluetooth() {
@@ -1062,19 +1050,7 @@ class SipService : Service() {
         audioManager.isMicrophoneMute = false
         @Suppress("DEPRECATION")
         audioManager.isSpeakerphoneOn = false
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val devices = audioManager.availableCommunicationDevices
-            val btDevice = devices.find {
-                it.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
-                        it.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP
-            }
-            if (btDevice != null) {
-                val res = audioManager.setCommunicationDevice(btDevice)
-                Log.d("SipService", "setCommunicationDevice Bluetooth: $res")
-            } else {
-                Log.e("SipService", "Bluetooth device not found in available devices")
-            }
-        } else {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
             @Suppress("DEPRECATION")
             audioManager.startBluetoothSco()
             @Suppress("DEPRECATION")

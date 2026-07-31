@@ -473,6 +473,17 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         observeCallSession()
+        // A2: apply the audio route only after Telecom confirms it (SCO established
+        // for Bluetooth). This keeps the UI in sync with the real audio path instead
+        // of optimistically switching on headset presence.
+        viewModelScope.launch {
+            com.ipdial.service.SipEngine.confirmedAudioRoute.collect { route ->
+                if (route != null && _audioDeviceMode.value != route) {
+                    android.util.Log.d("SipViewModel", "Confirmed audio route from Telecom: $route")
+                    _audioDeviceMode.value = route
+                }
+            }
+        }
         val connectivityManager = app.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         
         // Initial check for internet connectivity
@@ -554,15 +565,18 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                 callTimeoutJob = null
 
                 if (session != null && session.state != CallState.DISCONNECTED) {
-                    _showFullIncomingScreen.value = true
+                    // R3: only force the full-screen overlay (and hide the bottom
+                    // bar / swallow navigation) for incoming calls that are still
+                    // ringing. Outgoing calls keep the banner and normal navigation.
+                    _showFullIncomingScreen.value =
+                        session.direction == com.ipdial.data.model.CallDirection.INCOMING &&
+                        (session.state == CallState.INCOMING || session.state == CallState.EARLY)
                     if (session.state == CallState.INCOMING || session.state == CallState.CALLING) {
-                        // Update bluetooth availability when a call starts/comes in
+                        // Update bluetooth availability when a call starts/comes in.
+                        // A2: do NOT auto-switch to Bluetooth here — the SCO link may
+                        // not be established yet. The confirmed route is applied from
+                        // Telecom's onCallAudioStateChanged (SipEngine.confirmedAudioRoute).
                         updateBluetoothAvailability()
-                        
-                        // If we are in EARPIECE mode and Bluetooth is available, switch to it
-                        if (_audioDeviceMode.value == AudioDeviceMode.EARPIECE && _hasBluetoothDevice.value) {
-                            setAudioDevice(AudioDeviceMode.BLUETOOTH)
-                        }
                     }
 
                     // Start a timeout for outgoing calls stuck in CALLING/EARLY

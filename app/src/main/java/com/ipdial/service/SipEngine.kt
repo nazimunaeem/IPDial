@@ -54,6 +54,17 @@ object SipEngine {
     private val _callSession = MutableStateFlow<CallSession?>(null)
     val callSession: StateFlow<CallSession?> = _callSession.asStateFlow()
 
+    // A2: the audio route as CONFIRMED by Telecom via onCallAudioStateChanged.
+    // This only fires once the framework has actually switched the route
+    // (i.e. the Bluetooth SCO link is established), so it is the reliable signal
+    // for "Bluetooth audio is live" instead of assuming it from device presence.
+    private val _confirmedAudioRoute = MutableStateFlow<AudioDeviceMode?>(null)
+    val confirmedAudioRoute: StateFlow<AudioDeviceMode?> = _confirmedAudioRoute.asStateFlow()
+
+    fun setConfirmedAudioRoute(route: AudioDeviceMode) {
+        _confirmedAudioRoute.value = route
+    }
+
     private val _registrationEvents = MutableSharedFlow<Pair<String, RegStatus>>(
         replay = 1,
         onBufferOverflow = BufferOverflow.DROP_OLDEST
@@ -1136,6 +1147,10 @@ object SipEngine {
                     // also stash the info here for SipService to consume on session == null.
                     pendingDisconnectInfo = ci.lastStatusCode to (ci.lastReason ?: "")
                     _callSession.value = null
+
+                    // A2: reset the confirmed route so a stale value (e.g. SPEAKER from
+                    // the previous call) does not leak into the next call or app launch.
+                    _confirmedAudioRoute.value = null
 
                     // Post thread-sensitive cleanup to Main — these no longer gate the null.
                     CoroutineScope(Dispatchers.Main).launch {
