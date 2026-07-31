@@ -157,7 +157,15 @@ class SipService : Service() {
                     .setContentTitle("Incoming Call")
                     .setContentText(displayName)
                     .setFullScreenIntent(contentPi, true)
-                    .setStyle(NotificationCompat.CallStyle.forIncomingCall(callerPerson, declinePi, answerPi))
+                // CallStyle can throw IllegalStateException on API 26-29 (and some OEMs).
+                // Use a plain notification there as a safe fallback.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    try {
+                        notifBuilder.setStyle(NotificationCompat.CallStyle.forIncomingCall(callerPerson, declinePi, answerPi))
+                    } catch (e: Exception) {
+                        Log.e("SipService", "CallStyle incoming failed, using plain notification", e)
+                    }
+                }
             } else {
                 val titleText = when (session.state) {
                     CallState.CONFIRMED -> "Active Call"
@@ -171,7 +179,13 @@ class SipService : Service() {
                     .setContentTitle(titleText)
                     .setContentText(displayName)
                     .setFullScreenIntent(contentPi, true)
-                    .setStyle(NotificationCompat.CallStyle.forOngoingCall(callerPerson, hangupPi))
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    try {
+                        notifBuilder.setStyle(NotificationCompat.CallStyle.forOngoingCall(callerPerson, hangupPi))
+                    } catch (e: Exception) {
+                        Log.e("SipService", "CallStyle ongoing failed, using plain notification", e)
+                    }
+                }
 
                 if (session.state == CallState.CONFIRMED) {
                     if (activeCallStartTime == 0L) {
