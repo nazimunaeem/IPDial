@@ -24,6 +24,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material3.DockedSearchBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -31,6 +33,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -95,16 +98,30 @@ fun ContactsScreen(
     val context = LocalContext.current
     var activeContactForNumberPicker by remember { mutableStateOf<Contact?>(null) }
     var searchActive by remember { mutableStateOf(false) }
+    var favoritesOnly by remember { mutableStateOf(false) }
+
+    // Filter main's grouped (already search-filtered) contacts down to
+    // favorites when the Favorites tab is selected.
+    val visibleEntries: List<Pair<Char, List<Contact>>> = remember(groupedContacts, favoritesOnly) {
+        if (!favoritesOnly) {
+            groupedContacts.map { it.key to it.value }
+        } else {
+            groupedContacts.mapNotNull { (letter, contacts) ->
+                val favs = contacts.filter { it.isFavorite }
+                if (favs.isEmpty()) null else letter to favs
+            }
+        }
+    }
+
 
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     val isGlass = LocalGlassMode.current != com.ipdial.ui.theme.GlassMode.None
 
-    // Build letter → first index map for the indexer
-    val allEntries = remember(groupedContacts) {
-        groupedContacts.entries.toList()
-    }
-    val letterToFirstIndex = remember(groupedContacts) {
+    // Build letter → first index map for the indexer (over the visible entries
+    // so the index stays in sync with the All/Favorites filter).
+    val allEntries = remember(visibleEntries) { visibleEntries }
+    val letterToFirstIndex = remember(visibleEntries) {
         val map = mutableMapOf<Char, Int>()
         var idx = 0
         for ((letter, contacts) in allEntries) {
@@ -126,9 +143,28 @@ fun ContactsScreen(
             placeholder = "Search contacts..."
         )
 
-            if (groupedContacts.isEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                FavoriteFilterTab(
+                    label = "All",
+                    selected = !favoritesOnly,
+                    onClick = { favoritesOnly = false }
+                )
+                FavoriteFilterTab(
+                    label = "Favorites",
+                    selected = favoritesOnly,
+                    onClick = { favoritesOnly = true }
+                )
+            }
+
+            if (visibleEntries.isEmpty()) {
                 EmptyState(
                     message = if (searchQuery.isNotBlank()) "No contacts matching \"$searchQuery\""
+                    else if (favoritesOnly) "No favorite contacts"
                     else "No contacts found",
                     icon = Icons.Default.Search
                 )
@@ -170,6 +206,7 @@ fun ContactsScreen(
                                             contact.numbers.firstOrNull()?.let { vm.makeCall(it) }
                                         }
                                     },
+                                    onToggleFavorite = { vm.toggleContactFavorite(it) },
                                     isGlass = isGlass
                                 )
                             }
@@ -238,5 +275,41 @@ fun ContactsScreen(
             onAccountSelected = { vm.proceedWithCallAfterAccountSelection(it) },
             onDismiss = { vm.dismissAccountSelection() }
         )
+    }
+}
+
+@Composable
+private fun FavoriteFilterTab(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
+        color = if (selected) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.surfaceVariant,
+        modifier = Modifier.clickableWithRipple { onClick() }
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            if (label == "Favorites") {
+                Icon(
+                    imageVector = Icons.Default.Star,
+                    contentDescription = null,
+                    tint = if (selected) MaterialTheme.colorScheme.onPrimary
+                           else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                color = if (selected) MaterialTheme.colorScheme.onPrimary
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }

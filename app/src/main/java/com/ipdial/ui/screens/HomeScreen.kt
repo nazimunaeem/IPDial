@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -35,6 +36,7 @@ import androidx.compose.material.icons.automirrored.filled.CallReceived
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -64,6 +66,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
@@ -102,6 +105,7 @@ fun HomeScreen(
     val callLog   by vm.callLog.collectAsState()
     val searchQuery by vm.searchQuery.collectAsState()
     val contactsState by vm.contacts.collectAsState()
+    val favorites by vm.favoriteContacts.collectAsState()
     
     var activeContactForNumberPicker by remember { mutableStateOf<Contact?>(null) }
     var activeHistoryEntryForDetail by remember { mutableStateOf<CallLogEntry?>(null) }
@@ -216,14 +220,37 @@ fun HomeScreen(
                 .weight(1f),
             contentPadding = PaddingValues(bottom = 12.dp)
         ) {
-            if (grouped.isEmpty() && searchQuery.isBlank()) {
+            if (searchQuery.isBlank() && favorites.isNotEmpty()) {
+                item {
+                    Text(
+                        text = "Favorites",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp)
+                    )
+                }
+                item {
+                    FavoriteContactsRow(
+                        favorites = favorites,
+                        onCall = { contact ->
+                            if (contact.numbers.size == 1) {
+                                vm.makeCall(contact.numbers.first())
+                            } else {
+                                activeContactForNumberPicker = contact
+                            }
+                        },
+                        onRemove = { vm.toggleContactFavorite(it) }
+                    )
+                }
+            }
+
+            if (grouped.isEmpty() && searchQuery.isBlank() && favorites.isEmpty()) {
                 item { EmptyLogPrompt() }
             } else if (showSearchContactsInHistory) {
                 if (searchContacts.isEmpty()) {
                     item {
                         Box(Modifier.fillMaxWidth().padding(top = 40.dp), contentAlignment = Alignment.Center) {
-                            Text("No matches found", color = MaterialTheme.colorScheme.outline)
-                        }
+                            Text("No matches found", color = MaterialTheme.colorScheme.outline)                        }
                     }
                 } else {
                     item {
@@ -244,7 +271,8 @@ fun HomeScreen(
                                 } else {
                                     contact.numbers.firstOrNull()?.let { vm.makeCall(it) }
                                 }
-                            }
+                            },
+                            onToggleFavorite = { vm.toggleContactFavorite(it) }
                         )
                     }
                 }
@@ -394,6 +422,92 @@ fun SearchBarRow(
                 }
             }
         }
+    }
+}
+
+@Composable
+fun FavoriteContactsRow(
+    favorites: List<Contact>,
+    onCall: (Contact) -> Unit,
+    onRemove: (Contact) -> Unit
+) {
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        items(favorites, key = { it.id }) { contact ->
+            FavoriteContactChip(
+                contact = contact,
+                onCall = { onCall(contact) },
+                onRemove = { onRemove(contact) }
+            )
+        }
+    }
+}
+
+@Composable
+fun FavoriteContactChip(
+    contact: Contact,
+    onCall: () -> Unit,
+    onRemove: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.width(68.dp)
+    ) {
+        Box(
+            modifier = Modifier.size(56.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primaryContainer)
+                    .clickableWithRipple { onCall() },
+                contentAlignment = Alignment.Center
+            ) {
+                if (contact.photoUri != null) {
+                    AsyncImage(
+                        model = contact.photoUri,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Text(
+                        text = contact.name.take(1).uppercase(),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surface,
+                shadowElevation = 2.dp,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .size(22.dp)
+                    .clickableNoRipple { onRemove() }
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Default.Star,
+                        contentDescription = "Remove from favorites",
+                        tint = Color(0xFFFFC107),
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+            }
+        }
+        Text(
+            text = contact.name,
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
+        )
     }
 }
 

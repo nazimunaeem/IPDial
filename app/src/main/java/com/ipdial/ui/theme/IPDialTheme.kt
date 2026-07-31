@@ -16,7 +16,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.isUnspecified
 import com.ipdial.data.model.ThemeMode
 
 enum class GlassMode { None, Obsidian, Quartz }
@@ -220,48 +223,25 @@ fun IPDialTheme(
         else -> GlassMode.None
     }
 
-    val scaledTypography = if (clampedFont != 1.0f) {
+    val multiplier = if (clampedFont.isFinite() && clampedFont > 0f) clampedFont else 1.0f
+
+    val scaledTypography = if (multiplier != 1.0f) {
         Typography(
-            displayLarge = IPDialTypography.displayLarge.copy(
-                fontSize = IPDialTypography.displayLarge.fontSize * clampedFont,
-                lineHeight = IPDialTypography.displayLarge.lineHeight * clampedFont
-            ),
-            displayMedium = IPDialTypography.displayMedium.copy(
-                fontSize = IPDialTypography.displayMedium.fontSize * clampedFont,
-                lineHeight = IPDialTypography.displayMedium.lineHeight * clampedFont
-            ),
-            headlineLarge = IPDialTypography.headlineLarge.copy(
-                fontSize = IPDialTypography.headlineLarge.fontSize * clampedFont,
-                lineHeight = IPDialTypography.headlineLarge.lineHeight * clampedFont
-            ),
-            headlineMedium = IPDialTypography.headlineMedium.copy(
-                fontSize = IPDialTypography.headlineMedium.fontSize * clampedFont,
-                lineHeight = IPDialTypography.headlineMedium.lineHeight * clampedFont
-            ),
-            titleLarge = IPDialTypography.titleLarge.copy(
-                fontSize = IPDialTypography.titleLarge.fontSize * clampedFont,
-                lineHeight = IPDialTypography.titleLarge.lineHeight * clampedFont
-            ),
-            titleMedium = IPDialTypography.titleMedium.copy(
-                fontSize = IPDialTypography.titleMedium.fontSize * clampedFont,
-                lineHeight = IPDialTypography.titleMedium.lineHeight * clampedFont
-            ),
-            bodyLarge = IPDialTypography.bodyLarge.copy(
-                fontSize = IPDialTypography.bodyLarge.fontSize * clampedFont,
-                lineHeight = IPDialTypography.bodyLarge.lineHeight * clampedFont
-            ),
-            bodyMedium = IPDialTypography.bodyMedium.copy(
-                fontSize = IPDialTypography.bodyMedium.fontSize * clampedFont,
-                lineHeight = IPDialTypography.bodyMedium.lineHeight * clampedFont
-            ),
-            labelLarge = IPDialTypography.labelLarge.copy(
-                fontSize = IPDialTypography.labelLarge.fontSize * clampedFont,
-                lineHeight = IPDialTypography.labelLarge.lineHeight * clampedFont
-            ),
-            labelMedium = IPDialTypography.labelMedium.copy(
-                fontSize = IPDialTypography.labelMedium.fontSize * clampedFont,
-                lineHeight = IPDialTypography.labelMedium.lineHeight * clampedFont
-            ),
+            displayLarge = scaleTextStyle(IPDialTypography.displayLarge, multiplier),
+            displayMedium = scaleTextStyle(IPDialTypography.displayMedium, multiplier),
+            displaySmall = scaleTextStyle(IPDialTypography.displaySmall, multiplier),
+            headlineLarge = scaleTextStyle(IPDialTypography.headlineLarge, multiplier),
+            headlineMedium = scaleTextStyle(IPDialTypography.headlineMedium, multiplier),
+            headlineSmall = scaleTextStyle(IPDialTypography.headlineSmall, multiplier),
+            titleLarge = scaleTextStyle(IPDialTypography.titleLarge, multiplier),
+            titleMedium = scaleTextStyle(IPDialTypography.titleMedium, multiplier),
+            titleSmall = scaleTextStyle(IPDialTypography.titleSmall, multiplier),
+            bodyLarge = scaleTextStyle(IPDialTypography.bodyLarge, multiplier),
+            bodyMedium = scaleTextStyle(IPDialTypography.bodyMedium, multiplier),
+            bodySmall = scaleTextStyle(IPDialTypography.bodySmall, multiplier),
+            labelLarge = scaleTextStyle(IPDialTypography.labelLarge, multiplier),
+            labelMedium = scaleTextStyle(IPDialTypography.labelMedium, multiplier),
+            labelSmall = scaleTextStyle(IPDialTypography.labelSmall, multiplier),
         )
     } else IPDialTypography
 
@@ -294,4 +274,10 @@ fun IPDialTheme(
             }
         }
     }
+}
+
+private fun scaleTextStyle(style: TextStyle, multiplier: Float): TextStyle {
+    val fontSize: TextUnit = style.fontSize
+    return if (fontSize.isUnspecified) style
+    else style.copy(fontSize = fontSize * multiplier)
 }

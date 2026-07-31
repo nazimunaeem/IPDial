@@ -618,6 +618,7 @@ class SipService : Service() {
 
     private var lastSession: com.ipdial.data.model.CallSession? = null
     private var proximityWakeLock: PowerManager.WakeLock? = null
+    private var autoRecordedCallId = -1
     
     private var ringtone: Ringtone? = null
     private var mediaPlayer: android.media.MediaPlayer? = null
@@ -790,6 +791,7 @@ class SipService : Service() {
                     callStartTime = 0
                     activeCallStartTime = 0L
                     lastSession = null
+                    autoRecordedCallId = -1
                 } else {
                     val stateChanged = session.state != lastSession?.state
                     val speakerChanged = session.isSpeaker != lastSession?.isSpeaker
@@ -834,7 +836,8 @@ class SipService : Service() {
                                 activeCallStartTime = callStartTime
                             }
                             updateForegroundType(ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)
-                            
+                            autoStartRecordingIfEnabled(session)
+
                             if (!com.ipdial.AppState.isForeground) {
                                 showCallNotificationStatic(applicationContext, session.remoteDisplayName, session.callId)
                             }
@@ -862,6 +865,25 @@ class SipService : Service() {
                     }
                 }
             }
+        }
+    }
+
+    private suspend fun autoStartRecordingIfEnabled(session: com.ipdial.data.model.CallSession) {
+        try {
+            if (autoRecordedCallId == session.callId) return
+            if (session.isRecording) return
+
+            val proExpiration = repo.proExpiration.first()
+            if (proExpiration <= System.currentTimeMillis()) return // Not Pro
+
+            val enabled = repo.autoRecordEnabled.first()
+            if (!enabled) return
+
+            autoRecordedCallId = session.callId
+            Log.d("SipService", "Auto-recording call ${session.callId}")
+            RecordingManager.startRecording(applicationContext, session)
+        } catch (e: Exception) {
+            Log.e("SipService", "Auto-record failed: ${e.message}", e)
         }
     }
 

@@ -127,6 +127,9 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     val recordingCounter: StateFlow<Int> = repo.recordingCounter
         .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
 
+    val autoRecordEnabled: StateFlow<Boolean> = repo.autoRecordEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
     fun setThemeMode(context: Context, mode: ThemeMode) = viewModelScope.launch { 
         repo.setThemeMode(mode)
         if (!isPro.value) triggerAd(context)
@@ -156,6 +159,14 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
 
     suspend fun clearCallHistory() {
         logRepo.deleteAll()
+    }
+
+    fun setAutoRecord(context: Context, enabled: Boolean) {
+        if (!isPro.value) {
+            showProPopup()
+            return
+        }
+        viewModelScope.launch { repo.setAutoRecordEnabled(enabled) }
     }
 
     fun getReferralCode(): String = deviceId.value
@@ -367,6 +378,9 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     // Contacts state
     private val _contacts = MutableStateFlow<List<Contact>>(emptyList())
     val contacts: StateFlow<List<Contact>> = _contacts.asStateFlow()
+
+    val favoriteContacts: StateFlow<List<Contact>> = contactsRepo.favoriteContacts
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
@@ -601,6 +615,8 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun onSearchQueryChanged(query: String) {
+        // Filtering is done locally from the cached contact list;
+        // no need to hit the contacts provider on every keystroke.
         _searchQuery.value = query
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
@@ -894,23 +910,9 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     fun toggleRecording() {
         val session = callSession.value ?: return
         if (session.isRecording) {
-            SipEngine.stopRecording()
+            com.ipdial.service.RecordingManager.stopRecording()
         } else {
-            // Priority: Internal storage as requested
-            val baseDir = getApplication<Application>().getExternalFilesDir(android.os.Environment.DIRECTORY_MUSIC)
-            val folder = java.io.File(baseDir, "IPDialRecordings")
-            try {
-                if (!folder.exists()) folder.mkdirs()
-                val sdf = java.text.SimpleDateFormat("yyyyMMddHHmmss", java.util.Locale.US)
-                val dateStr = sdf.format(java.util.Date())
-                val num = session.remoteUri.replace("<", "").replace(">", "").removePrefix("sip:").substringBefore("@").substringBefore(";")
-                val cleanNum = num.filter { it.isLetterOrDigit() || it == '+' }
-                val recFile = java.io.File(folder, "IPDial_${cleanNum}_${dateStr}.wav")
-                // Using PJSIP internal WAV recorder (AAC natively locked by SIP mic)
-                SipEngine.startRecording(recFile.absolutePath)
-            } catch (e: Exception) {
-                android.util.Log.e("SipViewModel", "Recording failed", e)
-            }
+            com.ipdial.service.RecordingManager.startRecording(getApplication(), session)
         }
     }
 

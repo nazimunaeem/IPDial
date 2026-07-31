@@ -40,6 +40,7 @@ class AccountRepository(private val context: Context) {
     private val proPointsKey = androidx.datastore.preferences.core.intPreferencesKey("pro_points")
     private val proExpirationKey = androidx.datastore.preferences.core.longPreferencesKey("pro_expiration")
     private val recordingCounterKey = androidx.datastore.preferences.core.intPreferencesKey("recording_counter")
+    private val autoRecordKey = booleanPreferencesKey("auto_record_enabled")
 
     val accounts: Flow<List<SipAccount>> = context.dataStore.data.map { prefs ->
         val json = prefs[accountsKey] ?: return@map emptyList()
@@ -83,6 +84,7 @@ class AccountRepository(private val context: Context) {
     val adsEnabled: Flow<Boolean> = context.dataStore.data.map { it[adsEnabledKey] ?: true }
 
     val deviceId: Flow<String?> = context.dataStore.data.map { it[deviceIdKey] }
+    val autoRecordEnabled: Flow<Boolean> = context.dataStore.data.map { it[autoRecordKey] ?: false }
 
     val proPoints: Flow<Int> = context.dataStore.data.map { it[proPointsKey] ?: 3 }
     val proExpiration: Flow<Long> = context.dataStore.data.map { it[proExpirationKey] ?: 0L }
@@ -126,6 +128,7 @@ class AccountRepository(private val context: Context) {
     suspend fun setProPoints(points: Int) = context.dataStore.edit { it[proPointsKey] = points }
     suspend fun setProExpiration(expiration: Long) = context.dataStore.edit { it[proExpirationKey] = expiration }
     suspend fun setRecordingCounter(counter: Int) = context.dataStore.edit { it[recordingCounterKey] = counter }
+    suspend fun setAutoRecordEnabled(enabled: Boolean) = context.dataStore.edit { it[autoRecordKey] = enabled }
 
     suspend fun setGlobalRingtone(uri: String?) {
         context.dataStore.edit { prefs ->
