@@ -462,6 +462,7 @@ class SipService : Service() {
         when (intent?.action) {
             ACTION_ANSWER -> {
                 val callId = intent.getIntExtra("callId", -1)
+                stopRingtone()
                 SipEngine.answerCall(callId)
                 routeAudioToEarpiece()
                 stopPushingBanner()
@@ -478,6 +479,7 @@ class SipService : Service() {
             }
             ACTION_DECLINE -> {
                 val callId = intent.getIntExtra("callId", -1)
+                stopRingtone()
                 val session = SipEngine.callSession.value
                 val cause = CallHangupResolver.resolveDisconnectCause(session)
                 SipEngine.hangupCall(callId)
@@ -774,6 +776,13 @@ class SipService : Service() {
                     val sessionToLog = lastSession
                     if (sessionToLog != null) {
                         val duration = if (callStartTime > 0) (System.currentTimeMillis() - callStartTime) / 1000 else 0L
+                        // D5: pull the final SIP disconnect code/reason from SipEngine's
+                        // side-channel (StateFlow conflates the DISCONNECTED value for
+                        // slow collectors, so we cannot rely on the session alone).
+                        val pendingDisconnect = SipEngine.consumeDisconnectInfo()
+                        val disconnectCode = sessionToLog.disconnectCode ?: pendingDisconnect?.first
+                        val disconnectReason = sessionToLog.disconnectReason ?: pendingDisconnect?.second
+                        Log.d("SipService", "Call ended: code=$disconnectCode reason=$disconnectReason (via session=${sessionToLog.disconnectCode}/${sessionToLog.disconnectReason}, sideChannel=${pendingDisconnect})")
                         val entry = com.ipdial.data.model.CallLogEntry(
                             accountId = sessionToLog.accountId,
                             remoteUri = sessionToLog.remoteUri,
@@ -781,8 +790,28 @@ class SipService : Service() {
                             direction = sessionToLog.direction,
                             timestampMs = System.currentTimeMillis(),
                             durationSeconds = duration,
-                            missed = !lastWasConfirmed && sessionToLog.direction == CallDirection.INCOMING
+                            missed = !lastWasConfirmed && sessionToLog.direction == CallDirection.INCOMING,
+                            disconnectCode = disconnectCode,
+                            disconnectReason = disconnectReason
                         )
+                        // D5: surface busy/no-answer/rejected as a toast so the user knows why.
+                        if (disconnectCode != null && disconnectCode >= 300) {
+                            val reasonText = buildString {
+                                when (disconnectCode) {
+                                    480 -> append("No Answer")
+                                    486 -> append("Line Busy")
+                                    487 -> append("Request Terminated")
+                                    603 -> append("Call Declined")
+                                    else -> append("Call Failed ($disconnectCode)")
+                                }
+                                if (!disconnectReason.isNullOrBlank() && disconnectCode != 480 && disconnectCode != 487) {
+                                    append(" — ").append(disconnectReason)
+                                }
+                            }
+                            withContext(Dispatchers.Main) {
+                                android.widget.Toast.makeText(applicationContext, reasonText, android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        }
                         // Use a separate scope to ensure insertion completes
                         CoroutineScope(Dispatchers.IO).launch {
                             com.ipdial.data.repository.CallLogRepository.getInstance(applicationContext).insert(entry)

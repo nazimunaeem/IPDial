@@ -14,7 +14,9 @@ data class CallLogEntity(
     val direction: CallDirection,
     val missed: Boolean,
     val timestampMs: Long,
-    val durationSeconds: Long
+    val durationSeconds: Long,
+    val disconnectCode: Int?,
+    val disconnectReason: String?
 ) {
     fun toCallLogEntry(): CallLogEntry = CallLogEntry(
         id = id,
@@ -24,7 +26,9 @@ data class CallLogEntity(
         direction = direction,
         missed = missed,
         timestampMs = timestampMs,
-        durationSeconds = durationSeconds
+        durationSeconds = durationSeconds,
+        disconnectCode = disconnectCode,
+        disconnectReason = disconnectReason
     )
 
     companion object {
@@ -36,7 +40,9 @@ data class CallLogEntity(
             direction = entry.direction,
             missed = entry.missed,
             timestampMs = entry.timestampMs,
-            durationSeconds = entry.durationSeconds
+            durationSeconds = entry.durationSeconds,
+            disconnectCode = entry.disconnectCode,
+            disconnectReason = entry.disconnectReason
         )
     }
 }

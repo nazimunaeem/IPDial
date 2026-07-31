@@ -55,6 +55,8 @@ data class CallSession(
     val isRecording: Boolean = false,
     val rxVolume: Float = 2.5f,
     val negotiatedCodec: String? = null,
+    val disconnectCode: Int? = null,
+    val disconnectReason: String? = null,
 )
 
 enum class CallDirection { INCOMING, OUTGOING }
@@ -71,6 +73,8 @@ data class CallLogEntry(
     val missed: Boolean = false,
     val timestampMs: Long = System.currentTimeMillis(),
     val durationSeconds: Long = 0L,
+    val disconnectCode: Int? = null,
+    val disconnectReason: String? = null,
 )
 
 enum class CallState {

@@ -721,8 +721,14 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
          }
 
          if (account.regStatus != RegStatus.REGISTERED) {
-             Toast.makeText(getApplication(), "Account is not registered", Toast.LENGTH_SHORT).show()
-             return
+             // D3: stale registration status (e.g. right after reboot or a network
+             // change) used to hard-block calls. Instead of blocking, trigger a
+             // re-register and attempt the call — SIP failure codes are the real
+             // source of truth. The 120s keep-alive in SipService will catch up.
+             android.util.Log.w("SipViewModel", "Account ${account.id} not REGISTERED (${account.regStatus}) — attempting call anyway after re-register")
+             viewModelScope.launch {
+                 com.ipdial.service.SipEngine.reconnectAccount(account.id)
+             }
          }
 
          if (!_isConnected.value) {
@@ -789,6 +795,24 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                         withContext(Dispatchers.Main) {
                             Toast.makeText(getApplication(), "Call not sent", Toast.LENGTH_SHORT).show()
                         }
+                    }
+                }
+            } else {
+                // D1: Telecom accepted the request, but sometimes the framework never
+                // invokes onCreateOutgoingConnection (OEM bug / missing permission),
+                // leaving the UI stuck on "Calling…" forever. Start a watchdog: if no
+                // session with a real callId appears within 5 seconds, abort the call.
+                viewModelScope.launch {
+                    delay(5_000)
+                    val session = SipEngine.callSession.value
+                    if (session == null || session.callId == -1) {
+                        android.util.Log.w("SipViewModel", "D1 watchdog: no call session appeared 5s after Telecom placeCall — aborting")
+                        // The Telecom connection path never registered a call. Tear
+                        // down any connection the framework may have created, then
+                        // clear state so the UI returns to normal.
+                        com.ipdial.service.SipConnectionService.destroyAll()
+                        SipEngine.consumeDisconnectInfo()
+                        Toast.makeText(getApplication(), "Call Not Sent", Toast.LENGTH_SHORT).show()
                     }
                 }
             }
