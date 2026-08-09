@@ -762,7 +762,7 @@ fun CallHistoryDetailDialog(
                                     },
                                     contentDescription = null,
                                     tint = when {
-                                        entry.missed -> MaterialTheme.error
+                                        entry.missed -> MaterialTheme.colorScheme.error
                                         else         -> MaterialTheme.colorScheme.onSurfaceVariant
                                     },
                                     modifier = Modifier.size(16.dp)

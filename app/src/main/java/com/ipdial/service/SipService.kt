@@ -515,7 +515,7 @@ class SipService : Service() {
 
             autoRecordedCallId = session.callId
             Log.d("SipService", "Auto-recording call ${session.callId}")
-            com.ipdial.util.RecordingManager.startRecording(applicationContext, session)
+            RecordingManager.startRecording(applicationContext, session)
         } catch (e: Exception) {
             Log.e("SipService", "Auto-record failed: ${e.message}", e)
         }
