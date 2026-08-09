@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -64,6 +65,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
@@ -102,6 +104,7 @@ fun HomeScreen(
     val callLog   by vm.callLog.collectAsState()
     val searchQuery by vm.searchQuery.collectAsState()
     val contactsState by vm.contacts.collectAsState()
+    val favoriteContacts by vm.favoriteContacts.collectAsState()
     
     var activeContactForNumberPicker by remember { mutableStateOf<Contact?>(null) }
     var activeHistoryEntryForDetail by remember { mutableStateOf<CallLogEntry?>(null) }
@@ -159,10 +162,10 @@ fun HomeScreen(
             
             dayEntries.forEach { entry ->
                 val cleanNumber = cleanUri(entry.remoteUri).filter { it.isDigit() }
-                val contactId = if (cleanNumber.length >= 10) {
+                val contactId = if (cleanNumber.length >= 3) {
                     val match = contactLookupMap[cleanNumber]
                         ?: (10..13).mapNotNull { l -> if (l < cleanNumber.length) contactLookupMap[cleanNumber.takeLast(l)] else null }.firstOrNull()
-                    match?.id ?: cleanNumber.takeLast(10)
+                    match?.id ?: cleanNumber.takeLast(maxOf(3, minOf(10, cleanNumber.length)))
                 } else {
                     cleanNumber
                 }
@@ -194,6 +197,19 @@ fun HomeScreen(
             query = searchQuery,
             onQueryChange = { vm.onSearchQueryChanged(it) }
         )
+
+        if (favoriteContacts.isNotEmpty()) {
+            FavoriteContactsRow(
+                favorites = favoriteContacts,
+                onContactClick = { contact ->
+                    if (contact.numbers.size > 1) {
+                        activeContactForNumberPicker = contact
+                    } else {
+                        contact.numbers.firstOrNull()?.let { vm.makeCall(it) }
+                    }
+                }
+            )
+        }
 
         val historyListState = rememberLazyListState()
 
@@ -333,6 +349,55 @@ fun HomeScreen(
             onCall = { vm.callBack(entry) },
             onDismiss = { activeHistoryEntryForDetail = null }
         )
+    }
+}
+
+@Composable
+fun FavoriteContactsRow(
+    favorites: List<Contact>,
+    onContactClick: (Contact) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp)
+    ) {
+        Text(
+            text = "Favorites",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(start = 16.dp, bottom = 8.dp)
+        )
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            items(favorites, key = { it.id }) { contact ->
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .width(64.dp)
+                        .clickableWithRipple { onContactClick(contact) }
+                ) {
+                    com.ipdial.ui.ContactAvatar(
+                        name = contact.name,
+                        photoUri = contact.photoUri,
+                        size = 56.dp,
+                        backgroundColor = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = contact.name.substringBefore(" "),
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+        }
     }
 }
 

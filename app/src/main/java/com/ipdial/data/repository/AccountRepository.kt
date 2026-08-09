@@ -40,11 +40,13 @@ class AccountRepository(private val context: Context) {
     private val proPointsKey = androidx.datastore.preferences.core.intPreferencesKey("pro_points")
     private val proExpirationKey = androidx.datastore.preferences.core.longPreferencesKey("pro_expiration")
     private val recordingCounterKey = androidx.datastore.preferences.core.intPreferencesKey("recording_counter")
+    private val batteryNoticeShownKey = booleanPreferencesKey("battery_notice_shown")
 
     val accounts: Flow<List<SipAccount>> = context.dataStore.data.map { prefs ->
         val json = prefs[accountsKey] ?: return@map emptyList()
         val type = object : TypeToken<List<SipAccount>>() {}.type
-        gson.fromJson(json, type) ?: emptyList()
+        val list: List<SipAccount> = gson.fromJson(json, type) ?: emptyList()
+        list.map { unsecureAccount(it) }
     }
 
     val globalRingtone: Flow<String?> = context.dataStore.data.map { prefs ->
@@ -87,6 +89,7 @@ class AccountRepository(private val context: Context) {
     val proPoints: Flow<Int> = context.dataStore.data.map { it[proPointsKey] ?: 3 }
     val proExpiration: Flow<Long> = context.dataStore.data.map { it[proExpirationKey] ?: 0L }
     val recordingCounter: Flow<Int> = context.dataStore.data.map { it[recordingCounterKey] ?: 0 }
+    val batteryNoticeShown: Flow<Boolean> = context.dataStore.data.map { it[batteryNoticeShownKey] ?: false }
 
     suspend fun getOrCreateDeviceId(): String {
         val current = context.dataStore.data.map { it[deviceIdKey] }.first()
@@ -126,6 +129,7 @@ class AccountRepository(private val context: Context) {
     suspend fun setProPoints(points: Int) = context.dataStore.edit { it[proPointsKey] = points }
     suspend fun setProExpiration(expiration: Long) = context.dataStore.edit { it[proExpirationKey] = expiration }
     suspend fun setRecordingCounter(counter: Int) = context.dataStore.edit { it[recordingCounterKey] = counter }
+    suspend fun setBatteryNoticeShown(shown: Boolean) = context.dataStore.edit { it[batteryNoticeShownKey] = shown }
 
     suspend fun setGlobalRingtone(uri: String?) {
         context.dataStore.edit { prefs ->
@@ -148,19 +152,131 @@ class AccountRepository(private val context: Context) {
         }
     }
 
+    private object CryptoHelper {
+        private const val KEY_ALIAS = "ipdial_sip_crypto_key"
+        private const val ANDROID_KEY_STORE = "AndroidKeyStore"
+        private const val TRANSFORMATION = "AES/GCM/NoPadding"
+
+        private fun getSecretKey(): java.security.Key? {
+            return try {
+                val keyStore = java.security.KeyStore.getInstance(ANDROID_KEY_STORE).apply { load(null) }
+                if (!keyStore.containsAlias(KEY_ALIAS)) {
+                    val keyGenerator = javax.crypto.KeyGenerator.getInstance(
+                        android.security.keystore.KeyProperties.KEY_ALGORITHM_AES,
+                        ANDROID_KEY_STORE
+                    )
+                    val spec = android.security.keystore.KeyGenParameterSpec.Builder(
+                        KEY_ALIAS,
+                        android.security.keystore.KeyProperties.PURPOSE_ENCRYPT or android.security.keystore.KeyProperties.PURPOSE_DECRYPT
+                    )
+                        .setBlockModes(android.security.keystore.KeyProperties.BLOCK_MODE_GCM)
+                        .setEncryptionPaddings(android.security.keystore.KeyProperties.ENCRYPTION_PADDING_NONE)
+                        .build()
+                    keyGenerator.init(spec)
+                    keyGenerator.generateKey()
+                }
+                keyStore.getKey(KEY_ALIAS, null)
+            } catch (e: Throwable) {
+                android.util.Log.e("CryptoHelper", "getSecretKey failed", e)
+                null
+            }
+        }
+
+        fun encrypt(plaintext: String): String {
+            if (plaintext.isEmpty()) return ""
+            return try {
+                val key = getSecretKey() ?: return plaintext
+                val cipher = javax.crypto.Cipher.getInstance(TRANSFORMATION)
+                cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, key)
+                val iv = cipher.iv
+                val ciphertext = cipher.doFinal(plaintext.toByteArray(Charsets.UTF_8))
+                val ivBase64 = android.util.Base64.encodeToString(iv, android.util.Base64.NO_WRAP)
+                val cipherBase64 = android.util.Base64.encodeToString(ciphertext, android.util.Base64.NO_WRAP)
+                "AES:$ivBase64:$cipherBase64"
+            } catch (e: Throwable) {
+                android.util.Log.e("CryptoHelper", "Encryption failed", e)
+                plaintext
+            }
+        }
+
+        fun decrypt(encrypted: String): String {
+            if (!encrypted.startsWith("AES:")) return encrypted
+            return try {
+                val parts = encrypted.split(":")
+                if (parts.size != 3) return encrypted
+                val iv = android.util.Base64.decode(parts[1], android.util.Base64.NO_WRAP)
+                val ciphertext = android.util.Base64.decode(parts[2], android.util.Base64.NO_WRAP)
+                
+                val key = getSecretKey() ?: return ""
+                val cipher = javax.crypto.Cipher.getInstance(TRANSFORMATION)
+                val spec = javax.crypto.spec.GCMParameterSpec(128, iv)
+                cipher.init(javax.crypto.Cipher.DECRYPT_MODE, key, spec)
+                String(cipher.doFinal(ciphertext), Charsets.UTF_8)
+            } catch (e: Throwable) {
+                android.util.Log.e("CryptoHelper", "Decryption failed", e)
+                ""
+            }
+        }
+    }
+
+    private fun encryptPassword(password: String): String {
+        if (password.isEmpty() || password.startsWith("AES:")) return password
+        // Migrate from old Base64 if needed, but here we just encrypt as new
+        val plain = if (password.startsWith("ENC:")) {
+            decryptOldPassword(password)
+        } else {
+            password
+        }
+        return CryptoHelper.encrypt(plain)
+    }
+
+    private fun decryptOldPassword(password: String): String {
+        return try {
+            val raw = password.removePrefix("ENC:")
+            String(android.util.Base64.decode(raw, android.util.Base64.NO_WRAP), Charsets.UTF_8)
+        } catch (_: Throwable) {
+            password
+        }
+    }
+
+    private fun decryptPassword(password: String): String {
+        if (password.startsWith("AES:")) {
+            return CryptoHelper.decrypt(password)
+        }
+        if (password.startsWith("ENC:")) {
+            return decryptOldPassword(password)
+        }
+        return password
+    }
+
+    private fun secureAccount(acc: SipAccount): SipAccount = acc.copy(password = encryptPassword(acc.password))
+    private fun unsecureAccount(acc: SipAccount): SipAccount = acc.copy(password = decryptPassword(acc.password))
+
+    private fun getAccountsList(prefs: Preferences): List<SipAccount> {
+        val json = prefs[accountsKey] ?: return emptyList()
+        val type = object : TypeToken<List<SipAccount>>() {}.type
+        val list: List<SipAccount> = gson.fromJson(json, type) ?: emptyList()
+        return list.map { unsecureAccount(it) }
+    }
+
+    private fun saveAccountsList(prefs: androidx.datastore.preferences.core.MutablePreferences, accountsList: List<SipAccount>) {
+        val secured = accountsList.map { secureAccount(it) }
+        prefs[accountsKey] = gson.toJson(secured)
+    }
+
     suspend fun saveAccount(account: SipAccount) {
         context.dataStore.edit { prefs ->
             val current = getAccountsList(prefs).toMutableList()
             val idx = current.indexOfFirst { it.id == account.id }
             if (idx >= 0) current[idx] = account else current.add(account)
-            prefs[accountsKey] = gson.toJson(current)
+            saveAccountsList(prefs, current)
         }
     }
 
     suspend fun deleteAccount(accountId: String) {
         context.dataStore.edit { prefs ->
             val current = getAccountsList(prefs).filter { it.id != accountId }
-            prefs[accountsKey] = gson.toJson(current)
+            saveAccountsList(prefs, current)
         }
     }
 
@@ -169,7 +285,7 @@ class AccountRepository(private val context: Context) {
             val current = getAccountsList(prefs).map { acc ->
                 acc.copy(isDefault = acc.id == accountId)
             }
-            prefs[accountsKey] = gson.toJson(current)
+            saveAccountsList(prefs, current)
         }
     }
 
@@ -178,14 +294,8 @@ class AccountRepository(private val context: Context) {
             val current = getAccountsList(prefs).map { acc ->
                 if (acc.id == accountId) acc.copy(regStatus = status, regStatusText = text) else acc
             }
-            prefs[accountsKey] = gson.toJson(current)
+            saveAccountsList(prefs, current)
         }
-    }
-
-    private fun getAccountsList(prefs: Preferences): List<SipAccount> {
-        val json = prefs[accountsKey] ?: return emptyList()
-        val type = object : TypeToken<List<SipAccount>>() {}.type
-        return gson.fromJson(json, type) ?: emptyList()
     }
 
     suspend fun exportAccountsJson(): String {
@@ -202,7 +312,7 @@ class AccountRepository(private val context: Context) {
                 val idx = existing.indexOfFirst { it.id == acc.id }
                 if (idx >= 0) existing[idx] = acc else existing.add(acc)
             }
-            prefs[accountsKey] = gson.toJson(existing)
+            saveAccountsList(prefs, existing)
         }
         return imported.size
     }

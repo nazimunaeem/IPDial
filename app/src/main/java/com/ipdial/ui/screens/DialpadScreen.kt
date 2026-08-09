@@ -254,13 +254,13 @@ fun DialpadScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 40.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                        .padding(horizontal = 64.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     keys.chunked(3).forEach { row ->
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally)
+                            horizontalArrangement = Arrangement.Center
                         ) {
                             row.forEach { (digit, sub, _) ->
                                 DialKeyRounded(
@@ -431,39 +431,44 @@ fun DialKeyRounded(
     modifier: Modifier = Modifier
 ) {
     val isGlass = com.ipdial.ui.theme.LocalGlassMode.current != com.ipdial.ui.theme.GlassMode.None
-    Surface(
-        shape = CircleShape,
-        color = if (isGlass) Color.Transparent else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
-        modifier = modifier
-            .aspectRatio(1f)
-            .sizeIn(maxWidth = 48.dp, maxHeight = 48.dp)
-            .padding(2.dp)
-            .then(if (isGlass) Modifier.glass(CircleShape) else Modifier)
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = onLongClick
-            )
+    Box(
+        modifier = modifier.height(64.dp),
+        contentAlignment = Alignment.Center
     ) {
-        Box(contentAlignment = Alignment.Center) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-            ) {
-                Text(
-                    text = digit,
-                    style = MaterialTheme.typography.displaySmall.copy(
-                        fontWeight = FontWeight.Normal,
-                        fontSize = 24.sp
-                    ),
-                    color = MaterialTheme.colorScheme.onSurface,
+        Surface(
+            shape = CircleShape,
+            color = if (isGlass) Color.Transparent else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+            modifier = Modifier
+                .size(64.dp)
+                .then(if (isGlass) Modifier.glass(CircleShape) else Modifier)
+                .combinedClickable(
+                    onClick = onClick,
+                    onLongClick = onLongClick
                 )
-                if (subLabel.isNotBlank() && digit.any { it.isDigit() }) {
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
                     Text(
-                        text = subLabel,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.9f),
-                        fontSize = 10.sp
+                        text = digit,
+                        style = MaterialTheme.typography.displaySmall.copy(
+                            fontWeight = FontWeight.Normal,
+                            fontSize = 32.sp
+                        ),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        lineHeight = 32.sp
                     )
+                    if (subLabel.isNotBlank() && digit.any { it.isDigit() }) {
+                        Text(
+                            text = subLabel,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.9f),
+                            fontSize = 12.sp,
+                            lineHeight = 12.sp
+                        )
+                    }
                 }
             }
         }

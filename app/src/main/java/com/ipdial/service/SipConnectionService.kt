@@ -10,7 +10,7 @@ class SipConnectionService : ConnectionService() {
 
     companion object {
         private const val TAG = "SipConnectionService"
-        private val activeConnections = mutableMapOf<Int, SipConnection>()
+        private val activeConnections = java.util.concurrent.ConcurrentHashMap<Int, SipConnection>()
 
         fun getConnection(callId: Int): SipConnection? = activeConnections[callId]
         
@@ -269,7 +269,7 @@ class SipConnection : Connection() {
         com.ipdial.util.SipLogger.log("SipConnection", "onHold called for callId=$callId")
         setOnHold()
         connectionScope.launch {
-            SipEngine.holdCall(true)
+            SipAudioController.holdCall(true)
         }
     }
 
@@ -278,7 +278,7 @@ class SipConnection : Connection() {
         com.ipdial.util.SipLogger.log("SipConnection", "onUnhold called for callId=$callId")
         setActive()
         connectionScope.launch {
-            SipEngine.holdCall(false)
+            SipAudioController.holdCall(false)
         }
     }
 

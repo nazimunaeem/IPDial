@@ -29,6 +29,7 @@ import com.ipdial.data.model.Transport
 import com.ipdial.data.repository.AccountRepository
 import com.ipdial.data.repository.CallLogRepository
 import com.ipdial.data.repository.ContactsRepository
+import com.ipdial.service.SipAudioController
 import com.ipdial.service.SipEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -120,9 +121,17 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         
     val proExpiration: StateFlow<Long> = repo.proExpiration
         .stateIn(viewModelScope, SharingStarted.Eagerly, 0L)
-        
-    val isPro: StateFlow<Boolean> = proExpiration.map { it > System.currentTimeMillis() }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    private val _timeTicker = kotlinx.coroutines.flow.flow {
+        while (true) {
+            emit(System.currentTimeMillis())
+            delay(30_000)
+        }
+    }
+
+    val isPro: StateFlow<Boolean> = combine(proExpiration, _timeTicker) { exp, now ->
+        exp > now
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
         
     val recordingCounter: StateFlow<Int> = repo.recordingCounter
         .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
@@ -153,6 +162,7 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     }
     fun setDefaultDomain(domain: String) = viewModelScope.launch { repo.setDefaultDomain(domain) }
     fun setAdsEnabled(enabled: Boolean) = viewModelScope.launch { repo.setAdsEnabled(enabled) }
+    fun setBatteryNoticeShown(shown: Boolean) = viewModelScope.launch { repo.setBatteryNoticeShown(shown) }
 
     suspend fun clearCallHistory() {
         logRepo.deleteAll()
@@ -425,6 +435,10 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
          }
      }
 
+    val favoriteContacts: StateFlow<List<Contact>> = _contacts.map { list ->
+        list.filter { it.isFavorite }.sortedBy { it.name.lowercase() }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     val mostCalledContacts: StateFlow<List<Contact>> = combine(callLog, contacts) { logs, allContacts ->
         val frequencyMap = logs.groupingBy { 
             cleanUri(it.remoteUri)
@@ -434,14 +448,16 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
             .sortedByDescending { it.value }
             .mapNotNull { entry ->
                 val cleanedCallLogNumber = entry.key.filter { it.isDigit() }
-                if (cleanedCallLogNumber.length < 10) { // Only consider matching if the call log number is long enough
+                if (cleanedCallLogNumber.length < 3) { // Ignore extremely short/empty numbers
                     null
                 } else {
                     allContacts.find { contact ->
                         contact.numbers.any { num ->
                             val cleanedContactNumber = num.filter { it.isDigit() }
-                            cleanedContactNumber.length >= 10 && // Contact number must also be long enough
-                            (cleanedCallLogNumber.contains(cleanedContactNumber) || cleanedContactNumber.contains(cleanedCallLogNumber))
+                            cleanedContactNumber.length >= 3 &&
+                            (cleanedCallLogNumber == cleanedContactNumber ||
+                             (cleanedCallLogNumber.length >= 7 && cleanedContactNumber.length >= 7 &&
+                              (cleanedCallLogNumber.contains(cleanedContactNumber) || cleanedContactNumber.contains(cleanedCallLogNumber))))
                         }
                     }
                 }
@@ -519,7 +535,9 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         try {
             firestoreSync = FirestorePointsSync(repo)
             firestoreSync?.startListening()
-        } catch (_: Exception) {}
+        } catch (e: Throwable) {
+            android.util.Log.e("SipViewModel", "FirestorePointsSync init failed", e)
+        }
 
         // Clear keypad after call ends
         viewModelScope.launch {
@@ -621,7 +639,7 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         val newSelection = selection.start + 1
         _dialString.value = TextFieldValue(text = newText, selection = TextRange(newSelection))
         if (callSession.value?.state == CallState.CONFIRMED) {
-            SipEngine.sendDtmf(char)
+            SipAudioController.sendDtmf(char)
         }
     }
 
@@ -818,13 +836,13 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
     }
-     fun toggleMute() { SipEngine.setMute(!(callSession.value?.isMuted ?: false)) }
-     fun toggleSpeaker() { SipEngine.setSpeaker(!(callSession.value?.isSpeaker ?: false)) }
-     fun toggleHold() { SipEngine.holdCall(!(callSession.value?.isOnHold ?: false)) }
+     fun toggleMute() { SipAudioController.setMute(!(callSession.value?.isMuted ?: false)) }
+     fun toggleSpeaker() { SipAudioController.setSpeaker(!(callSession.value?.isSpeaker ?: false)) }
+     fun toggleHold() { SipAudioController.holdCall(!(callSession.value?.isOnHold ?: false)) }
 
      fun setCallVolume(factor: Float) {
          _callVolume.value = factor
-         SipEngine.setCallVolume(factor)
+         SipAudioController.setCallVolume(factor)
      }
 
      fun setShowFullIncomingScreen(show: Boolean) {
@@ -852,7 +870,7 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
 
      fun setAudioDevice(mode: AudioDeviceMode) {
          // Keep SipEngine's state in sync for UI and routing logic
-         com.ipdial.service.SipEngine.setSpeaker(mode == AudioDeviceMode.SPEAKER)
+         com.ipdial.service.SipAudioController.setSpeaker(mode == AudioDeviceMode.SPEAKER)
          
          viewModelScope.launch {
              try {
@@ -894,7 +912,7 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     fun toggleRecording() {
         val session = callSession.value ?: return
         if (session.isRecording) {
-            SipEngine.stopRecording()
+            SipAudioController.stopRecording()
         } else {
             // Priority: Internal storage as requested
             val baseDir = getApplication<Application>().getExternalFilesDir(android.os.Environment.DIRECTORY_MUSIC)
@@ -907,7 +925,7 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                 val cleanNum = num.filter { it.isLetterOrDigit() || it == '+' }
                 val recFile = java.io.File(folder, "IPDial_${cleanNum}_${dateStr}.wav")
                 // Using PJSIP internal WAV recorder (AAC natively locked by SIP mic)
-                SipEngine.startRecording(recFile.absolutePath)
+                SipAudioController.startRecording(recFile.absolutePath)
             } catch (e: Exception) {
                 android.util.Log.e("SipViewModel", "Recording failed", e)
             }
@@ -993,6 +1011,11 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                 }
 
                 val conn = url.openConnection() as java.net.HttpURLConnection
+                if (conn is javax.net.ssl.HttpsURLConnection && (host == "103.170.231.10" || host == "103.129.202.202")) {
+                    conn.hostnameVerifier = javax.net.ssl.HostnameVerifier { hostname, _ ->
+                        hostname == "103.170.231.10" || hostname == "103.129.202.202"
+                    }
+                }
                 conn.connectTimeout = 8000
                 conn.readTimeout = 8000
                 conn.requestMethod = "POST"

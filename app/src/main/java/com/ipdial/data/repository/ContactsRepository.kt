@@ -41,11 +41,13 @@ class ContactsRepository(private val context: Context) {
         for (contact in contacts) {
             for (number in contact.numbers) {
                 val digits = number.filter { it.isDigit() }
-                if (digits.length >= 10) {
+                if (digits.length >= 3) {
                     index[digits] = contact
-                    for (len in suffixLengths) {
-                        if (len < digits.length) {
-                            index[digits.takeLast(len)] = contact
+                    if (digits.length >= 10) {
+                        for (len in suffixLengths) {
+                            if (len < digits.length) {
+                                index[digits.takeLast(len)] = contact
+                            }
                         }
                     }
                 }
@@ -62,11 +64,13 @@ class ContactsRepository(private val context: Context) {
     fun findContactByNumber(phoneNumber: String): Contact? {
         if (!indexBuilt) return null
         val digits = phoneNumber.filter { it.isDigit() }
-        if (digits.length < 10) return null
+        if (digits.length < 3) return null
         normalizedNumberIndex[digits]?.let { return it }
-        for (len in suffixLengths) {
-            if (len < digits.length) {
-                normalizedNumberIndex[digits.takeLast(len)]?.let { return it }
+        if (digits.length >= 10) {
+            for (len in suffixLengths) {
+                if (len < digits.length) {
+                    normalizedNumberIndex[digits.takeLast(len)]?.let { return it }
+                }
             }
         }
         return null

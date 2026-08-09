@@ -12,6 +12,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -148,7 +151,7 @@ class MainActivity : ComponentActivity() {
             applyLockScreenFlags()
             vm.setShowFullIncomingScreen(true)
             val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
-            nm.cancel(com.ipdial.service.SipService.NOTIF_ID_INCOMING)
+            nm.cancel(com.ipdial.service.NOTIF_ID_INCOMING)
         }
     }
 
@@ -157,7 +160,7 @@ class MainActivity : ComponentActivity() {
         AppState.isForeground = false
         val session = vm.callSession.value
         if (session != null && session.state != CallState.DISCONNECTED) {
-            com.ipdial.service.SipService.showCallNotificationStatic(this, session.remoteDisplayName, session.callId)
+            com.ipdial.service.showCallNotificationStatic(this, session.remoteDisplayName, session.callId)
         }
     }
 
@@ -331,7 +334,12 @@ class MainActivity : ComponentActivity() {
         }
         if (missing.isNotEmpty()) permissionsLauncher.launch(missing.toTypedArray())
 
-        checkBatteryOptimizations()
+        lifecycleScope.launch {
+            val shown = vm.repo.batteryNoticeShown.first()
+            if (!shown) {
+                checkBatteryOptimizations()
+            }
+        }
     }
 
     private var showBatteryDialog = mutableStateOf(false)
@@ -340,6 +348,9 @@ class MainActivity : ComponentActivity() {
         val pm = getSystemService(POWER_SERVICE) as android.os.PowerManager
         if (!pm.isIgnoringBatteryOptimizations(packageName)) {
             showBatteryDialog.value = true
+        }
+        lifecycleScope.launch {
+            vm.setBatteryNoticeShown(true)
         }
     }
 }

@@ -16,22 +16,32 @@ class IPDialApplication : Application() {
         // Load PJSIP library on Main thread to ensure proper registration
         try {
             System.loadLibrary("pjsua2")
-        } catch (e: Exception) {
-            android.util.Log.e("IPDialApp", "Failed to load pjsua2", e)
+        } catch (e: Throwable) {
+            android.util.Log.e("IPDialApp", "Failed to load pjsua2: ${e.message}", e)
         }
 
         // Initialize Start.io SDK
-        StartAppSDK.init(this, "205857982", true)
-        // Enable test ads to verify integration
-        StartAppSDK.setTestAdsEnabled(false)
-        // Disable splash screen ads if desired
-        StartAppAd.disableSplash()
+        try {
+            StartAppSDK.init(this, "205857982", true)
+            StartAppSDK.setTestAdsEnabled(false)
+            StartAppAd.disableSplash()
+        } catch (e: Throwable) {
+            android.util.Log.e("IPDialApp", "Failed to init StartApp SDK: ${e.message}", e)
+        }
 
         // Register phone account for Telecom integration
-        com.ipdial.service.TelecomHelper.registerPhoneAccount(this)
+        try {
+            com.ipdial.service.TelecomHelper.registerPhoneAccount(this)
+        } catch (e: Throwable) {
+            android.util.Log.e("IPDialApp", "Failed to register phone account: ${e.message}", e)
+        }
 
         // Emergency check for disabled launcher activity
-        com.ipdial.util.AppIconHelper.forceEnableMainActivity(this)
+        try {
+            com.ipdial.util.AppIconHelper.forceEnableMainActivity(this)
+        } catch (e: Throwable) {
+            android.util.Log.e("IPDialApp", "Failed to force enable MainActivity: ${e.message}", e)
+        }
 
         // Sync icon alias on startup
         CoroutineScope(Dispatchers.Main).launch {
@@ -41,13 +51,23 @@ class IPDialApplication : Application() {
                 if (currentAlias != "Default") {
                     com.ipdial.util.AppIconHelper.setAppIcon(this@IPDialApplication, currentAlias)
                 }
-            } catch (_: Exception) {}
+            } catch (e: Throwable) {
+                android.util.Log.w("IPDialApp", "Failed to sync icon alias: ${e.message}")
+            }
         }
 
         // Fetch Remote Config for custom ads
-        com.ipdial.util.RemoteConfigHelper.init(this)
+        try {
+            com.ipdial.util.RemoteConfigHelper.init(this)
+        } catch (e: Throwable) {
+            android.util.Log.e("IPDialApp", "RemoteConfig init failed", e)
+        }
 
         // Load ad config from Firestore (admin-managed)
-        com.ipdial.util.FirestoreAdConfig.init()
+        try {
+            com.ipdial.util.FirestoreAdConfig.init()
+        } catch (e: Throwable) {
+            android.util.Log.e("IPDialApp", "FirestoreAdConfig init failed", e)
+        }
     }
 }
