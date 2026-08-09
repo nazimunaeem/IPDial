@@ -21,7 +21,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -303,7 +302,7 @@ class SipService : Service() {
 
     private fun registerAccountsFromDataStore() {
         scope.launch {
-            repo.accounts.collectLatest { accounts ->
+            repo.accounts.collect { accounts ->
                 accounts.forEach { account ->
                     if (account.isEnabled) {
                         val active = activeConfigs[account.id]
@@ -404,8 +403,8 @@ class SipService : Service() {
                                 android.widget.Toast.makeText(applicationContext, reasonText, android.widget.Toast.LENGTH_SHORT).show()
                             }
                         }
-                        // Use a separate scope to ensure insertion completes
-                        CoroutineScope(Dispatchers.IO).launch {
+                        // Use the service scope so the write is tied to the service lifecycle
+                        scope.launch(Dispatchers.IO) {
                             com.ipdial.data.repository.CallLogRepository.getInstance(applicationContext).insert(entry)
                         }
                         if (entry.missed) {

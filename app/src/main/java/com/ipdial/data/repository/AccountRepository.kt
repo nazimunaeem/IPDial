@@ -206,17 +206,23 @@ class AccountRepository(private val context: Context) {
             if (!encrypted.startsWith("AES:")) return encrypted
             return try {
                 val parts = encrypted.split(":")
-                if (parts.size != 3) return encrypted
+                if (parts.size != 3) {
+                    android.util.Log.e("CryptoHelper", "Invalid AES format: parts=${parts.size}")
+                    return ""
+                }
                 val iv = android.util.Base64.decode(parts[1], android.util.Base64.NO_WRAP)
                 val ciphertext = android.util.Base64.decode(parts[2], android.util.Base64.NO_WRAP)
                 
-                val key = getSecretKey() ?: return ""
+                val key = getSecretKey() ?: run {
+                    android.util.Log.e("CryptoHelper", "KeyStore key is null during decryption")
+                    return ""
+                }
                 val cipher = javax.crypto.Cipher.getInstance(TRANSFORMATION)
                 val spec = javax.crypto.spec.GCMParameterSpec(128, iv)
                 cipher.init(javax.crypto.Cipher.DECRYPT_MODE, key, spec)
                 String(cipher.doFinal(ciphertext), Charsets.UTF_8)
             } catch (e: Throwable) {
-                android.util.Log.e("CryptoHelper", "Decryption failed", e)
+                android.util.Log.e("CryptoHelper", "Decryption failed: ${e.message}", e)
                 ""
             }
         }
@@ -243,13 +249,17 @@ class AccountRepository(private val context: Context) {
     }
 
     private fun decryptPassword(password: String): String {
-        if (password.startsWith("AES:")) {
-            return CryptoHelper.decrypt(password)
+        val decrypted = if (password.startsWith("AES:")) {
+            CryptoHelper.decrypt(password)
+        } else if (password.startsWith("ENC:")) {
+            decryptOldPassword(password)
+        } else {
+            password
         }
-        if (password.startsWith("ENC:")) {
-            return decryptOldPassword(password)
+        if (password.isNotEmpty() && decrypted.isEmpty()) {
+            android.util.Log.e("AccountRepository", "CRITICAL: Password decryption resulted in empty string!")
         }
-        return password
+        return decrypted
     }
 
     private fun secureAccount(acc: SipAccount): SipAccount = acc.copy(password = encryptPassword(acc.password))

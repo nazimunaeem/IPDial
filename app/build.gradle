@@ -1,6 +1,5 @@
 plugins {
     id 'com.android.application'
-    id 'org.jetbrains.kotlin.android'
     id 'org.jetbrains.kotlin.plugin.compose'
     id 'com.google.devtools.ksp'
     id 'com.google.gms.google-services'
@@ -79,14 +78,6 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-        freeCompilerArgs += [
-            "-opt-in=androidx.compose.ui.platform.ExperimentalPlatformTextInputApi",
-            "-opt-in=androidx.compose.ui.ExperimentalComposeUiApi"
-        ]
-    }
-
     buildFeatures {
         compose true
     }
@@ -111,9 +102,15 @@ android {
                 '/META-INF/*.kotlin_module'
             ]
         }
-        jniLibs {
-            useLegacyPackaging = true
-        }
+    }
+}
+
+kotlin {
+    compilerOptions {
+        freeCompilerArgs.addAll([
+            "-opt-in=androidx.compose.ui.platform.ExperimentalPlatformTextInputApi",
+            "-opt-in=androidx.compose.ui.ExperimentalComposeUiApi"
+        ])
     }
 }
 

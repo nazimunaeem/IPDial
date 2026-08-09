@@ -26,7 +26,9 @@ class SipTransportManager {
         } catch (e: Exception) { log("Failed to create TCP transport: ${e.message}", true) }
 
         val tlsTpCfg = TransportConfig()
-        tlsTpCfg.tlsConfig.verifyServer = true
+        // Disable strict TLS verification by default for better compatibility 
+        // with common IP-based SIP providers.
+        tlsTpCfg.tlsConfig.verifyServer = false
         tlsTpCfg.tlsConfig.verifyClient = false
         try {
             tlsTransportId = ep.transportCreate(pjsip_transport_type_e.PJSIP_TRANSPORT_TLS, tlsTpCfg)

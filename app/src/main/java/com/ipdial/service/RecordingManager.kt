@@ -38,7 +38,7 @@ object RecordingManager {
     fun startRecording(context: Context, session: CallSession) {
         try {
             val recFile = nextRecordingFile(context, session)
-            SipEngine.startRecording(recFile.absolutePath)
+            SipAudioController.startRecording(recFile.absolutePath)
         } catch (e: Exception) {
             android.util.Log.e("RecordingManager", "Failed to start recording: ${e.message}", e)
         }
@@ -46,7 +46,7 @@ object RecordingManager {
 
     fun stopRecording() {
         try {
-            SipEngine.stopRecording()
+            SipAudioController.stopRecording()
         } catch (e: Exception) {
             android.util.Log.e("RecordingManager", "Failed to stop recording: ${e.message}", e)
         }

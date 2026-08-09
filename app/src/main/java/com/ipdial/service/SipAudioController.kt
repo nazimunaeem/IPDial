@@ -65,41 +65,13 @@ object SipAudioController {
     }
 
     fun startRecording(filePath: String) {
-        SipEngine.registerCurrentThreadEx()
-        try {
-            SipEngine.recorder?.delete()
-            SipEngine.recorder = AudioMediaRecorder()
-            SipEngine.recorder?.createRecorder(filePath)
-
-            SipEngine._callSession.value?.let { session ->
-                SipEngine.callMap[session.callId]?.let { call ->
-                    val ci = call.info
-                    for (i in 0 until ci.media.size.toInt()) {
-                        val mi = ci.media.get(i)
-                        if (mi.type == pjmedia_type.PJMEDIA_TYPE_AUDIO &&
-                            mi.status == pjsua_call_media_status.PJSUA_CALL_MEDIA_ACTIVE) {
-                            val aud = AudioMedia.typecastFromMedia(call.getMedia(mi.index.toLong()))
-                            aud.startTransmit(SipEngine.recorder)
-                            SipEngine.endpoint?.audDevManager()?.captureDevMedia?.startTransmit(SipEngine.recorder)
-                        }
-                    }
-                }
-                SipEngine._callSession.value = session.copy(isRecording = true)
-            }
-        } catch (e: Throwable) {
-            Log.e(TAG, "startRecording failed: ${e.message}")
-        }
+        SipEngine.startRecording(filePath)
+        SipEngine._callSession.value = SipEngine._callSession.value?.copy(isRecording = true)
     }
 
     fun stopRecording() {
-        SipEngine.registerCurrentThreadEx()
-        try {
-            SipEngine.recorder?.let { it.delete() }
-            SipEngine.recorder = null
-            SipEngine._callSession.value = SipEngine._callSession.value?.copy(isRecording = false)
-        } catch (e: Throwable) {
-            SipEngine.logEx("stopRecording failed: ${e.message}", true)
-        }
+        SipEngine.stopRecording()
+        SipEngine._callSession.value = SipEngine._callSession.value?.copy(isRecording = false)
     }
 
     fun sendDtmf(digit: Char) {

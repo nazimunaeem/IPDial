@@ -15,7 +15,6 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.gson.Gson
 import com.ipdial.data.model.AudioDeviceMode
-import com.ipdial.data.model.CallDirection
 import com.ipdial.data.model.CallLogEntry
 import com.ipdial.data.model.CallSession
 import com.ipdial.data.model.CallState
@@ -29,6 +28,7 @@ import com.ipdial.data.model.Transport
 import com.ipdial.data.repository.AccountRepository
 import com.ipdial.data.repository.CallLogRepository
 import com.ipdial.data.repository.ContactsRepository
+import com.ipdial.data.repository.FirestorePointsSync
 import com.ipdial.service.SipAudioController
 import com.ipdial.service.SipEngine
 import kotlinx.coroutines.Dispatchers
@@ -45,7 +45,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import com.ipdial.data.repository.FirestorePointsSync
 import kotlinx.coroutines.withContext
 
 class SipViewModel(app: Application) : AndroidViewModel(app) {
@@ -136,6 +135,9 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     val recordingCounter: StateFlow<Int> = repo.recordingCounter
         .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
 
+    val autoRecordEnabled: StateFlow<Boolean> = repo.autoRecordEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
     fun setThemeMode(context: Context, mode: ThemeMode) = viewModelScope.launch { 
         repo.setThemeMode(mode)
         if (!isPro.value) triggerAd(context)
@@ -163,6 +165,10 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     fun setDefaultDomain(domain: String) = viewModelScope.launch { repo.setDefaultDomain(domain) }
     fun setAdsEnabled(enabled: Boolean) = viewModelScope.launch { repo.setAdsEnabled(enabled) }
     fun setBatteryNoticeShown(shown: Boolean) = viewModelScope.launch { repo.setBatteryNoticeShown(shown) }
+    fun setAutoRecord(context: Context, enabled: Boolean) = viewModelScope.launch { 
+        repo.setAutoRecordEnabled(enabled)
+        if (enabled && !isPro.value) triggerAd(context)
+    }
 
     suspend fun clearCallHistory() {
         logRepo.deleteAll()

@@ -96,13 +96,20 @@ object SipEngine {
         val threadId = @Suppress("DEPRECATION") Thread.currentThread().id
         if (registeredThreads.contains(threadId)) return
         try {
-            if (!ep.libIsThreadRegistered()) {
-                val threadName = Thread.currentThread().name ?: "SipEngineThread"
-                ep.libRegisterThread(threadName)
-            }
+            // Some older PJSIP wrappers don't have libIsThreadRegistered().
+            // libRegisterThread is usually safe to call multiple times or 
+            // handles already-registered threads internally.
+            val threadName = Thread.currentThread().name ?: "SipEngineThread"
+            ep.libRegisterThread(threadName)
             registeredThreads.add(threadId)
         } catch (e: Throwable) {
-            logEx("Failed to register thread: ${e.message}", true)
+            // Only log if it's not a "Thread already registered" type error
+            val msg = e.message ?: ""
+            if (!msg.contains("already registered", ignoreCase = true)) {
+                logEx("Thread registration info: $msg", false)
+            }
+            // Still mark as registered to avoid repeated attempts if it failed for this reason
+            registeredThreads.add(threadId)
         }
     }
 
@@ -250,6 +257,11 @@ object SipEngine {
 
     fun addAccount(account: SipAccount) {
         registerCurrentThread()
+        logEx("addAccount: id=${account.id} user=${account.username} passLen=${account.password.length}")
+        val ep = endpoint ?: run {
+            logEx("addAccount failed: endpoint is null. PJSIP might not be initialized.", true)
+            return
+        }
         try {
             val existingConfig = accountConfigs[account.id]
             if (existingConfig != null) {
@@ -459,6 +471,58 @@ object SipEngine {
             log("handleIpChange completed successfully")
         } catch (e: Throwable) {
             log("handleIpChange failed: ${e.message}", true)
+        }
+    }
+
+    fun startRecording(filePath: String) {
+        registerCurrentThread()
+        if (recorder != null) {
+            log("startRecording: already recording, stopping first.")
+            stopRecording()
+        }
+
+        try {
+            val rec = AudioMediaRecorder()
+            rec.createRecorder(filePath)
+            recorder = rec
+            log("startRecording: recorder created for $filePath")
+
+            // If a call is already active and confirmed, connect its media now.
+            // (New calls will connect in onCallMediaState).
+            callMap.values.forEach { call ->
+                try {
+                    val ci = call.info
+                    for (i in 0 until ci.media.size.toInt()) {
+                        val mi = ci.media.get(i)
+                        if (mi.type == pjmedia_type.PJMEDIA_TYPE_AUDIO &&
+                            mi.status == pjsua_call_media_status.PJSUA_CALL_MEDIA_ACTIVE) {
+                            val aud = AudioMedia.typecastFromMedia(call.getMedia(mi.index.toLong()))
+                            aud.startTransmit(rec)
+                            endpoint?.audDevManager()?.captureDevMedia?.startTransmit(rec)
+                            log("startRecording: connected active call ${ci.id} media to recorder")
+                        }
+                    }
+                } catch (e: Throwable) {
+                    log("startRecording: failed to connect call media: ${e.message}", true)
+                }
+            }
+        } catch (e: Throwable) {
+            log("startRecording failed: ${e.message}", true)
+            recorder = null
+        }
+    }
+
+    fun stopRecording() {
+        registerCurrentThread()
+        recorder?.let {
+            try {
+                it.delete()
+                log("stopRecording: recorder stopped and deleted")
+            } catch (e: Throwable) {
+                log("stopRecording failed: ${e.message}", true)
+            } finally {
+                recorder = null
+            }
         }
     }
 
