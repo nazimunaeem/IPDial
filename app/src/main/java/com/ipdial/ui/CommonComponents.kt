@@ -136,6 +136,7 @@ fun ContactItem(
     contact: Contact,
     onNumberClick: (String) -> Unit,
     onContactClick: () -> Unit,
+    onToggleFavorite: ((Contact) -> Unit)? = null,
     modifier: Modifier = Modifier,
     isGlass: Boolean = false
 ) {
@@ -173,7 +174,21 @@ fun ContactItem(
                 onClick = onContactClick
             )
         },
-        trailingContent = if (isFav) {
+        trailingContent = if (onToggleFavorite != null) {
+            {
+                IconButton(
+                    onClick = { onToggleFavorite(contact) },
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Star,
+                        contentDescription = if (isFav) "Remove from favorites" else "Add to favorites",
+                        tint = if (isFav) Color(0xFFFFC107) else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            }
+        } else if (isFav) {
             {
                 Icon(
                     Icons.Default.Star,

@@ -36,6 +36,7 @@ import androidx.compose.material.icons.automirrored.filled.CallReceived
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -198,19 +199,6 @@ fun HomeScreen(
             onQueryChange = { vm.onSearchQueryChanged(it) }
         )
 
-        if (favoriteContacts.isNotEmpty()) {
-            FavoriteContactsRow(
-                favorites = favoriteContacts,
-                onContactClick = { contact ->
-                    if (contact.numbers.size > 1) {
-                        activeContactForNumberPicker = contact
-                    } else {
-                        contact.numbers.firstOrNull()?.let { vm.makeCall(it) }
-                    }
-                }
-            )
-        }
-
         val historyListState = rememberLazyListState()
 
         val showSearchContactsInHistory = remember(searchQuery, filteredLog) {
@@ -232,14 +220,37 @@ fun HomeScreen(
                 .weight(1f),
             contentPadding = PaddingValues(bottom = 12.dp)
         ) {
-            if (grouped.isEmpty() && searchQuery.isBlank()) {
+            if (searchQuery.isBlank() && favoriteContacts.isNotEmpty()) {
+                item {
+                    Text(
+                        text = "Favorites",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp)
+                    )
+                }
+                item {
+                    FavoriteContactsRow(
+                        favorites = favoriteContacts,
+                        onCall = { contact ->
+                            if (contact.numbers.size == 1) {
+                                vm.makeCall(contact.numbers.first())
+                            } else {
+                                activeContactForNumberPicker = contact
+                            }
+                        },
+                        onRemove = { vm.toggleContactFavorite(it) }
+                    )
+                }
+            }
+
+            if (grouped.isEmpty() && searchQuery.isBlank() && favoriteContacts.isEmpty()) {
                 item { EmptyLogPrompt() }
             } else if (showSearchContactsInHistory) {
                 if (searchContacts.isEmpty()) {
                     item {
                         Box(Modifier.fillMaxWidth().padding(top = 40.dp), contentAlignment = Alignment.Center) {
-                            Text("No matches found", color = MaterialTheme.colorScheme.outline)
-                        }
+                            Text("No matches found", color = MaterialTheme.colorScheme.outline)                        }
                     }
                 } else {
                     item {
@@ -260,7 +271,8 @@ fun HomeScreen(
                                 } else {
                                     contact.numbers.firstOrNull()?.let { vm.makeCall(it) }
                                 }
-                            }
+                            },
+                            onToggleFavorite = { vm.toggleContactFavorite(it) }
                         )
                     }
                 }
@@ -353,55 +365,6 @@ fun HomeScreen(
 }
 
 @Composable
-fun FavoriteContactsRow(
-    favorites: List<Contact>,
-    onContactClick: (Contact) -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp)
-    ) {
-        Text(
-            text = "Favorites",
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(start = 16.dp, bottom = 8.dp)
-        )
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            items(favorites, key = { it.id }) { contact ->
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier
-                        .width(64.dp)
-                        .clickableWithRipple { onContactClick(contact) }
-                ) {
-                    com.ipdial.ui.ContactAvatar(
-                        name = contact.name,
-                        photoUri = contact.photoUri,
-                        size = 56.dp,
-                        backgroundColor = MaterialTheme.colorScheme.secondaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = contact.name.substringBefore(" "),
-                        style = MaterialTheme.typography.labelSmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Center,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
 fun SearchBarRow(
     query: String,
     onQueryChange: (String) -> Unit,
@@ -459,6 +422,92 @@ fun SearchBarRow(
                 }
             }
         }
+    }
+}
+
+@Composable
+fun FavoriteContactsRow(
+    favorites: List<Contact>,
+    onCall: (Contact) -> Unit,
+    onRemove: (Contact) -> Unit
+) {
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        items(favorites, key = { it.id }) { contact ->
+            FavoriteContactChip(
+                contact = contact,
+                onCall = { onCall(contact) },
+                onRemove = { onRemove(contact) }
+            )
+        }
+    }
+}
+
+@Composable
+fun FavoriteContactChip(
+    contact: Contact,
+    onCall: () -> Unit,
+    onRemove: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.width(68.dp)
+    ) {
+        Box(
+            modifier = Modifier.size(56.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primaryContainer)
+                    .clickableWithRipple { onCall() },
+                contentAlignment = Alignment.Center
+            ) {
+                if (contact.photoUri != null) {
+                    AsyncImage(
+                        model = contact.photoUri,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Text(
+                        text = contact.name.take(1).uppercase(),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surface,
+                shadowElevation = 2.dp,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .size(22.dp)
+                    .clickableNoRipple { onRemove() }
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Default.Star,
+                        contentDescription = "Remove from favorites",
+                        tint = Color(0xFFFFC107),
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+            }
+        }
+        Text(
+            text = contact.name,
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
+        )
     }
 }
 
@@ -713,7 +762,7 @@ fun CallHistoryDetailDialog(
                                     },
                                     contentDescription = null,
                                     tint = when {
-                                        entry.missed -> MaterialTheme.colorScheme.error
+                                        entry.missed -> MaterialTheme.error
                                         else         -> MaterialTheme.colorScheme.onSurfaceVariant
                                     },
                                     modifier = Modifier.size(16.dp)

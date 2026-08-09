@@ -22,6 +22,10 @@ class ContactsRepository(private val context: Context) {
         entities.map { it.toContact() }
     }
 
+    val favoriteContacts: Flow<List<Contact>> = contactDao.getFavoriteContacts().map { entities ->
+        entities.map { it.toContact() }
+    }
+
     // Suffix lengths to store and try for cross-format matching
     // (e.g. local "01729979896" vs international "+8801729979896")
     private val suffixLengths = intArrayOf(10, 11, 12, 13)
@@ -80,13 +84,18 @@ class ContactsRepository(private val context: Context) {
      * Check if the number index is built and ready for fast lookups.
      */
     fun isIndexReady(): Boolean = indexBuilt
-
     suspend fun syncContacts() = withContext(Dispatchers.IO) {
-        if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_CONTACTS) 
+        if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_CONTACTS)
             != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             return@withContext
         }
-        
+
+        // Favorites are stored locally (Room) and are the source of truth.
+        // Preserve them across refreshes so they never get lost on sync.
+        val existingFavorites = contactDao.getFavoriteIds().toHashSet()
+        val cachedEntities = contactDao.getContactsOnce().associateBy { it.id }
+        val isFirstSync = cachedEntities.isEmpty()
+
         val contactsMap = mutableMapOf<String, Contact>()
         try {
             val contentResolver: ContentResolver = context.contentResolver
@@ -118,7 +127,10 @@ class ContactsRepository(private val context: Context) {
                     val name = it.getString(nameIndex) ?: "Unknown"
                     val number = it.getString(numberIndex) ?: ""
                     val photoUriStr = it.getString(photoIndex)
-                    val isFavorite = it.getInt(starredIndex) == 1
+                    // Local flag wins once cached; only seed from the device's
+                    // STARRED flag on the very first sync.
+                    val isFavorite = id in existingFavorites ||
+                        (isFirstSync && it.getInt(starredIndex) == 1)
 
                     val existingContact = contactsMap[id]
                     if (existingContact != null) {
@@ -137,38 +149,61 @@ class ContactsRepository(private val context: Context) {
                     }
                 }
             }
-            
-            val entities = contactsMap.values.map { ContactEntity.fromContact(it) }
+
+            val providerIds = contactsMap.keys
+
+            // Favorites that no longer exist in the device provider are kept
+            // cached locally so the user doesn't lose their favorites.
+            val orphanedFavorites = existingFavorites
+                .filterNot { it in providerIds }
+                .mapNotNull { cachedEntities[it] }
+                .filter { it.isFavorite }
+
+            val entities = (contactsMap.values.map { ContactEntity.fromContact(it) } + orphanedFavorites)
+                .distinctBy { it.id }
             contactDao.refreshContacts(entities)
-            
+
         } catch (e: Exception) {
             android.util.Log.e("ContactsRepo", "Failed to sync contacts: ${e.message}")
         }
     }
 
     suspend fun getContacts(query: String? = null): List<Contact> = withContext(Dispatchers.IO) {
-        val entities = if (query.isNullOrBlank()) {
+        // Read from the local cache (Room) instead of querying the provider,
+        // to avoid loading from the contacts provider on every call/search.
+        var entities = if (query.isNullOrBlank()) {
             contactDao.getAllContacts().first()
         } else {
             contactDao.searchContacts("%$query%").first()
+        }
+        if (entities.isEmpty() && query.isNullOrBlank()) {
+            // Cold cache — populate once from the provider so lookups
+            // (e.g. incoming call name resolution) still work on first run.
+            syncContacts()
+            entities = contactDao.getAllContacts().first()
         }
         entities.map { it.toContact() }
     }
 
     suspend fun toggleFavorite(contactId: String, isFavorite: Boolean) = withContext(Dispatchers.IO) {
+        // Local DB is the source of truth so favorites survive refreshes.
+        contactDao.updateFavorite(contactId, isFavorite)
+        // Best-effort mirror to the device contacts provider (WRITE_CONTACTS).
         try {
-            val values = android.content.ContentValues().apply {
-                put(ContactsContract.Contacts.STARRED, if (isFavorite) 1 else 0)
+            if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.WRITE_CONTACTS)
+                == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                val values = android.content.ContentValues().apply {
+                    put(ContactsContract.Contacts.STARRED, if (isFavorite) 1 else 0)
+                }
+                context.contentResolver.update(
+                    ContactsContract.Contacts.CONTENT_URI,
+                    values,
+                    ContactsContract.Contacts._ID + " = ?",
+                    arrayOf(contactId)
+                )
             }
-            context.contentResolver.update(
-                ContactsContract.Contacts.CONTENT_URI,
-                values,
-                ContactsContract.Contacts._ID + " = ?",
-                arrayOf(contactId)
-            )
-            contactDao.updateFavorite(contactId, isFavorite)
         } catch (e: Exception) {
-            android.util.Log.e("ContactsRepo", "Failed to toggle favorite: ${e.message}")
+            android.util.Log.e("ContactsRepo", "Failed to mirror favorite to device: ${e.message}")
         }
     }
 }

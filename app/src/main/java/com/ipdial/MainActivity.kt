@@ -264,7 +264,11 @@ class MainActivity : ComponentActivity() {
             setShowWhenLocked(true)
             setTurnScreenOn(true)
             val km = getSystemService(KEYGUARD_SERVICE) as KeyguardManager
-            km.requestDismissKeyguard(this, null)
+            try {
+                km.requestDismissKeyguard(this, null)
+            } catch (e: Exception) {
+                Log.e("MainActivity", "requestDismissKeyguard failed", e)
+            }
         } else {
             @Suppress("DEPRECATION")
             window.addFlags(

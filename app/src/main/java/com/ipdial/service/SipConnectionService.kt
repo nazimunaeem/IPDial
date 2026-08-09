@@ -301,5 +301,18 @@ class SipConnection : Connection() {
     @Deprecated("Deprecated in Java", ReplaceWith("onCallAudioStateChanged(state)"))
     override fun onCallAudioStateChanged(state: CallAudioState?) {
         Log.d("SipConnection", "onCallAudioStateChanged: $state")
+        // A2: this fires only when Telecom has actually switched the audio route
+        // (e.g. the BT SCO link is established), so reflect the confirmed route
+        // in the UI instead of assuming Bluetooth works just because a headset is
+        // paired. The ViewModel collects confirmedAudioRoute to sync its mode.
+        if (state == null) return
+        val route = state.route
+        val mode = when {
+            route and CallAudioState.ROUTE_BLUETOOTH != 0 -> com.ipdial.data.model.AudioDeviceMode.BLUETOOTH
+            route and CallAudioState.ROUTE_SPEAKER != 0 -> com.ipdial.data.model.AudioDeviceMode.SPEAKER
+            else -> com.ipdial.data.model.AudioDeviceMode.EARPIECE
+        }
+        Log.d("SipConnection", "onCallAudioStateChanged: confirmed route -> $mode")
+        SipEngine.setConfirmedAudioRoute(mode)
     }
 }

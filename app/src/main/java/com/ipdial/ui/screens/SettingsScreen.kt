@@ -489,6 +489,25 @@ fun SettingsScreen(
                 )
             }
 
+            item { SettingsSection("Recording") }
+            item {
+                val isPro by vm.isPro.collectAsState()
+                val autoRecordEnabled by vm.autoRecordEnabled.collectAsState()
+                SettingsRow(
+                    icon = Icons.Default.RadioButtonChecked,
+                    title = "Auto Record Calls",
+                    subtitle = if (isPro) "Automatically record every call" else "Pro feature — upgrade to enable",
+                    trailing = {
+                        Switch(
+                            checked = autoRecordEnabled,
+                            onCheckedChange = { vm.setAutoRecord(context, it) },
+                            enabled = isPro
+                        )
+                    },
+                    onClick = { vm.setAutoRecord(context, !autoRecordEnabled) }
+                )
+            }
+
             stickyHeader { SettingsSection("System") }
             item {
                 SettingsRow(

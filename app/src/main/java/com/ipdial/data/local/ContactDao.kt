@@ -11,6 +11,15 @@ interface ContactDao {
     @Query("SELECT * FROM contacts WHERE name LIKE :query OR numbers LIKE :query ORDER BY name ASC")
     fun searchContacts(query: String): Flow<List<ContactEntity>>
 
+    @Query("SELECT * FROM contacts WHERE isFavorite = 1 ORDER BY name ASC")
+    fun getFavoriteContacts(): Flow<List<ContactEntity>>
+
+    @Query("SELECT * FROM contacts")
+    suspend fun getContactsOnce(): List<ContactEntity>
+
+    @Query("SELECT id FROM contacts WHERE isFavorite = 1")
+    suspend fun getFavoriteIds(): List<String>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(contacts: List<ContactEntity>)
 

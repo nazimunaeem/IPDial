@@ -42,6 +42,17 @@ object SipEngine {
     internal val _callSession = MutableStateFlow<CallSession?>(null)
     val callSession: StateFlow<CallSession?> = _callSession.asStateFlow()
 
+    // A2: the audio route as CONFIRMED by Telecom via onCallAudioStateChanged.
+    // This only fires once the framework has actually switched the route
+    // (i.e. the Bluetooth SCO link is established), so it is the reliable signal
+    // for "Bluetooth audio is live" instead of assuming it from device presence.
+    private val _confirmedAudioRoute = MutableStateFlow<AudioDeviceMode?>(null)
+    val confirmedAudioRoute: StateFlow<AudioDeviceMode?> = _confirmedAudioRoute.asStateFlow()
+
+    fun setConfirmedAudioRoute(route: AudioDeviceMode) {
+        _confirmedAudioRoute.value = route
+    }
+
     internal val _registrationEvents = MutableSharedFlow<Pair<String, RegStatus>>(
         replay = 1,
         onBufferOverflow = BufferOverflow.DROP_OLDEST
@@ -61,6 +72,19 @@ object SipEngine {
     private var currentEcEnabled = true
     private var currentNsEnabled = true
     private var currentAgcEnabled = true
+
+    // D5: reliable side-channel for the final SIP disconnect code/reason.
+    // StateFlow conflates intermediate values, so the DISCONNECTED-stamped
+    // session can be skipped for slow collectors. This field is set on the
+    // PJSIP thread right before the session is nulled, and consumed by
+    // SipService.observeCallState() when it sees session == null.
+    @Volatile internal var pendingDisconnectInfo: Pair<Int?, String?>? = null
+
+    fun consumeDisconnectInfo(): Pair<Int?, String?>? {
+        val v = pendingDisconnectInfo
+        pendingDisconnectInfo = null
+        return v
+    }
 
     internal fun logEx(message: String, isError: Boolean = false) {
         if (isError) Log.e(TAG, message) else Log.d(TAG, message)
@@ -165,10 +189,23 @@ object SipEngine {
                             quality = 5
                             channelCount = 1
                             audioFramePtime = 20
+
+                            // Q6: Tune the jitter buffer for bursty mobile-network RTP.
+                            jbInit = 100
+                            jbMinPre = 40
+                            jbMax = 250
                         }
                         uaConfig.apply {
                             userAgent = "IPDial/1.0 (Android)"
                             maxCalls = 4
+
+                            // Q5: STUN for NAT traversal so the far end can reach our RTP.
+                            // ICE stays disabled; STUN alone is safe behind most routers.
+                            try {
+                                stunServer.add("stun.l.google.com:19302")
+                            } catch (_: Throwable) {
+                                log("Failed to add STUN server", isError = true)
+                            }
                         }
                     }
                     libInit(epCfg)
@@ -464,6 +501,10 @@ object SipEngine {
                 log = ::logEx
             )
 
+            // D5: clear any stale disconnect info from a previous call so the next
+            // call's log entry doesn't inherit the old reason.
+            pendingDisconnectInfo = null
+
             _callSession.value = CallSession(
                 callId = -1,
                 accountId = accountId,
@@ -559,7 +600,23 @@ object SipEngine {
                 log("hangupCall failed: ${e.message}", true)
             }
         } else {
-            log("Hangup: callId=$id not in callMap — session cleanup only")
+            // H2 fix: never leave native calls alive when the requested callId is
+            // missing from callMap. A stale/ghost session must not survive a hangup
+            // and later overwrite a new call. If any native calls are still running,
+            // hang them all up so PJSIP actually tears down media (CANCEL/BYE/DECLINE
+            // is chosen by PJSIP based on each call's current state).
+            if (callMap.isNotEmpty()) {
+                log("Hangup: callId=$id not in callMap but ${callMap.size} native call(s) still alive — hanging them all up")
+                callMap.toMap().forEach { (cid, nativeCall) ->
+                    try {
+                        val prm = CallOpParam()
+                        nativeCall.hangup(prm)
+                        log("Hangup: sent hangup for callId=$cid")
+                    } catch (e: Throwable) {
+                        log("Hangup: failed for callId=$cid: ${e.message}", true)
+                    }
+                }
+            }
             if (_callSession.value?.callId == id) {
                 _callSession.value = null
             }
