@@ -116,7 +116,7 @@ import com.ipdial.ui.screens.CallScreen
 import com.ipdial.ui.screens.ContactsScreen
 import com.ipdial.ui.screens.DialpadScreen
 import com.ipdial.ui.screens.GetProScreen
-import com.ipdial.ui.screens.HomeScreen
+import com.ipdial.ui.screens.home.HomeScreen
 import com.ipdial.ui.screens.IncomingCallScreen
 import com.ipdial.ui.screens.IncomingCallSettingsScreen
 import com.ipdial.ui.screens.PrivacyPolicyScreen
@@ -789,7 +789,7 @@ fun MainPagerScreen(
     val accounts by vm.accounts.collectAsState()
 
     Column(modifier = Modifier.fillMaxSize()) {
-        com.ipdial.ui.IPDialTopBar(
+        com.ipdial.ui.components.IPDialTopBar(
             accounts = accounts,
             vm = vm,
             onOpenDrawer = onOpenDrawer,

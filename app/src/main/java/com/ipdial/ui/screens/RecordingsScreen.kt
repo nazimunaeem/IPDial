@@ -39,7 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.ipdial.ui.IPDialTopBar
+import com.ipdial.ui.components.IPDialTopBar
 import com.ipdial.ui.SipViewModel
 import java.io.File
 import java.text.SimpleDateFormat
@@ -80,7 +80,7 @@ fun RecordingsScreen(vm: SipViewModel, onOpenDrawer: () -> Unit) {
             IPDialTopBar(accounts = accounts, vm = vm, onOpenDrawer = onOpenDrawer)
         },
         bottomBar = {
-            com.ipdial.ui.StartIoBanner(
+            com.ipdial.ui.components.StartIoBanner(
                 vm = vm,
                 modifier = Modifier.fillMaxWidth().padding(8.dp)
             )

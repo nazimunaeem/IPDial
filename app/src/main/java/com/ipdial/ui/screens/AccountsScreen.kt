@@ -57,8 +57,8 @@ import androidx.compose.ui.unit.dp
 import com.ipdial.data.model.PreferredCodec
 import com.ipdial.data.model.SipAccount
 import com.ipdial.data.model.Transport
-import com.ipdial.ui.IPDialTopBar
-import com.ipdial.ui.RegStatusIndicator
+import com.ipdial.ui.components.IPDialTopBar
+import com.ipdial.ui.components.RegStatusIndicator
 import com.ipdial.ui.SipViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -77,7 +77,7 @@ fun AccountsScreen(vm: SipViewModel, onOpenDrawer: () -> Unit) {
         },
         bottomBar = {
             if (!isPro) {
-                com.ipdial.ui.StartIoBanner(
+                com.ipdial.ui.components.StartIoBanner(
                     vm = vm,
                     modifier = Modifier.fillMaxWidth().padding(8.dp)
                 )
@@ -132,7 +132,7 @@ fun AccountsScreen(vm: SipViewModel, onOpenDrawer: () -> Unit) {
             // ── Custom Firebase ad banner ─────────────────────────────────
             item {
                 Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                    com.ipdial.ui.CustomAccountPageAd(vm = vm)
+                    com.ipdial.ui.components.CustomAccountPageAd(vm = vm)
                 }
             }
         }

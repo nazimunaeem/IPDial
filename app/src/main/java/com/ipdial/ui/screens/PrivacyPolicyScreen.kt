@@ -12,7 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.ipdial.ui.IPDialTopBar
+import com.ipdial.ui.components.IPDialTopBar
 import com.ipdial.ui.SipViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -25,7 +25,7 @@ fun PrivacyPolicyScreen(vm: SipViewModel, onOpenDrawer: () -> Unit) {
             IPDialTopBar(accounts = accounts, vm = vm, onOpenDrawer = onOpenDrawer)
         },
         bottomBar = {
-            com.ipdial.ui.StartIoBanner(
+            com.ipdial.ui.components.StartIoBanner(
                 vm = vm,
                 modifier = Modifier.fillMaxWidth().padding(8.dp)
             )

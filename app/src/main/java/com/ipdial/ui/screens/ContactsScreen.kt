@@ -53,10 +53,11 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.ipdial.data.model.Contact
-import com.ipdial.ui.AccountSelectionDialog
-import com.ipdial.ui.ContactItem
-import com.ipdial.ui.NumberPickerDialog
+import com.ipdial.ui.components.AccountSelectionDialog
+import com.ipdial.ui.components.ContactItem
+import com.ipdial.ui.components.NumberPickerDialog
 import com.ipdial.ui.SipViewModel
+import com.ipdial.ui.screens.home.SearchBarRow
 import com.ipdial.ui.theme.LocalGlassMode
 import kotlinx.coroutines.launch
 

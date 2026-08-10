@@ -131,7 +131,7 @@ fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
 
             if (!isFullScreenPhoto && contact != null) {
                 Spacer(Modifier.height(48.dp))
-                com.ipdial.ui.ContactAvatar(
+                com.ipdial.ui.components.ContactAvatar(
                     name = displayName,
                     photoUri = contact.photoUri,
                     size = 160.dp,

@@ -1004,24 +1004,22 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun fetchBalance(account: SipAccount, context: Context) {
-        val host = account.domain
+        val host = account.domain.lowercase()
         if (!SUPPORTED_BALANCE_DOMAINS.contains(host)) return
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // Determine API URL based on host
-                val url = when (host) {
-                    "103.129.202.202" -> java.net.URL("https://billing.webvoice.net/api/mobile/login")
-                    "103.170.231.10" -> java.net.URL("https://103.170.231.10/api/mobile/login")
-                    else -> java.net.URL("https://sip.amarip.net/api/mobile/login")
-                }
+                // Determine API URL based on host. sip.amarip.net and billing.webvoice.net
+                // are the DNS names for 103.170.231.10 and 103.129.202.202 respectively, and
+                // their TLS is valid — the raw-IP HTTPS endpoints are broken/unverifiable.
+                val url = java.net.URL(
+                    when (host) {
+                        "103.129.202.202" -> "https://billing.webvoice.net/api/mobile/login"
+                        else -> "https://sip.amarip.net/api/mobile/login"
+                    }
+                )
 
                 val conn = url.openConnection() as java.net.HttpURLConnection
-                if (conn is javax.net.ssl.HttpsURLConnection && (host == "103.170.231.10" || host == "103.129.202.202")) {
-                    conn.hostnameVerifier = javax.net.ssl.HostnameVerifier { hostname, _ ->
-                        hostname == "103.170.231.10" || hostname == "103.129.202.202"
-                    }
-                }
                 conn.connectTimeout = 8000
                 conn.readTimeout = 8000
                 conn.requestMethod = "POST"
@@ -1047,6 +1045,25 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                         current[account.id] = balance
                         _balances.value = current
                         showAdBriefly()
+                    }
+                } else {
+                    val errorBody = try {
+                        conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+                    } catch (_: Exception) {
+                        ""
+                    }
+                    android.util.Log.e(
+                        "SipViewModel",
+                        "Balance fetch failed: HTTP ${conn.responseCode} domain=${account.domain} " +
+                            "user=${account.username} passLen=${account.password.length} body=$errorBody"
+                    )
+                    withContext(Dispatchers.Main) {
+                        val msg = if (account.password.isEmpty()) {
+                            "Balance fetch failed: stored password is empty — re-enter it in Accounts"
+                        } else {
+                            "Balance fetch failed (HTTP ${conn.responseCode})"
+                        }
+                        Toast.makeText(getApplication(), msg, Toast.LENGTH_SHORT).show()
                     }
                 }
             } catch (e: Exception) {

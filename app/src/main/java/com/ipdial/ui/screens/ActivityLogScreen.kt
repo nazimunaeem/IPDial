@@ -94,7 +94,7 @@ fun ActivityLogScreen(
             )
         },
         bottomBar = {
-            com.ipdial.ui.StartIoBanner(
+            com.ipdial.ui.components.StartIoBanner(
                 vm = vm,
                 modifier = Modifier.fillMaxWidth().padding(8.dp)
             )

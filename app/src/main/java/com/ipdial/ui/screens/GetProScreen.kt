@@ -18,7 +18,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 // ...existing imports...
-import com.ipdial.ui.IPDialTopBar
+import com.ipdial.ui.components.IPDialTopBar
 import com.ipdial.ui.SipViewModel
 import com.ipdial.ui.theme.glass
 import java.util.concurrent.TimeUnit
@@ -38,7 +38,7 @@ fun GetProScreen(vm: SipViewModel, onOpenDrawer: () -> Unit) {
             IPDialTopBar(accounts = accounts, vm = vm, onOpenDrawer = onOpenDrawer)
         },
         bottomBar = {
-            com.ipdial.ui.StartIoBanner(
+            com.ipdial.ui.components.StartIoBanner(
                 vm = vm,
                 modifier = Modifier.fillMaxWidth().padding(8.dp)
             )

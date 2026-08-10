@@ -1,12 +1,6 @@
 package com.ipdial.ui.screens
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,19 +16,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.CallEnd
-import androidx.compose.material.icons.filled.Dialpad
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.MicOff
-import androidx.compose.material.icons.filled.PhoneInTalk
-import androidx.compose.material.icons.filled.RadioButtonChecked
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -50,7 +35,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -58,10 +42,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.ipdial.data.model.AudioDeviceMode
-import com.ipdial.data.model.CallDirection
 import com.ipdial.data.model.CallSession
 import com.ipdial.data.model.CallState
 import com.ipdial.ui.SipViewModel
+import com.ipdial.ui.screens.call.CallControls
+import com.ipdial.ui.screens.call.InCallDialpad
+import com.ipdial.ui.screens.call.PulsingStateLabel
+import com.ipdial.ui.screens.call.formatDuration
 import com.ipdial.ui.theme.EndRed
 import kotlinx.coroutines.delay
 
@@ -92,7 +79,7 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
     var elapsedSeconds by remember { mutableLongStateOf(0L) }
 
     val isActive = activeSession.state == CallState.CONFIRMED
-    
+
     // Check for Bluetooth devices when call is active
     val context = androidx.compose.ui.platform.LocalContext.current
     LaunchedEffect(isActive) {
@@ -141,7 +128,7 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
                     )
             )
         }
-        
+
         Column(
             modifier = Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -285,206 +272,3 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
         }
     }
 }
-
-@Composable
-fun CallControls(
-    session: CallSession,
-    isActive: Boolean,
-    onKeypad: () -> Unit,
-    onMute: () -> Unit,
-    onSpeaker: () -> Unit,
-    onRecord: () -> Unit,
-    audioDeviceMode: AudioDeviceMode = AudioDeviceMode.EARPIECE,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 24.dp),
-        horizontalArrangement = Arrangement.SpaceEvenly,
-    ) {
-        CallControlButton(
-            icon = Icons.Default.Dialpad,
-            label = "Keypad",
-            onClick = onKeypad
-        )
-        CallControlButton(
-            icon = if (session.isMuted) Icons.Default.MicOff else Icons.Default.Mic,
-            label = "Mute",
-            active = session.isMuted,
-            enabled = isActive,
-            onClick = onMute
-        )
-
-        // Audio Device Button
-        val audioIcon = when (audioDeviceMode) {
-            AudioDeviceMode.SPEAKER -> Icons.AutoMirrored.Filled.VolumeUp
-            AudioDeviceMode.BLUETOOTH -> Icons.Default.Bluetooth
-            else -> Icons.Default.PhoneInTalk
-        }
-        val audioLabel = when (audioDeviceMode) {
-            AudioDeviceMode.SPEAKER -> "Speaker"
-            AudioDeviceMode.BLUETOOTH -> "Bluetooth"
-            else -> "Earpiece"
-        }
-
-        CallControlButton(
-            icon = audioIcon,
-            label = audioLabel,
-            active = audioDeviceMode != AudioDeviceMode.EARPIECE,
-            enabled = true,
-            onClick = onSpeaker
-        )
-
-        CallControlButton(
-            icon = Icons.Default.RadioButtonChecked,
-            label = if (session.isRecording) "Recording" else "Record",
-            active = session.isRecording,
-            enabled = isActive,
-            onClick = onRecord
-        )
-    }
-}
-
-@Composable
-fun CallControlButton(
-    icon: ImageVector,
-    label: String,
-    active: Boolean = false,
-    enabled: Boolean = true,
-    onClick: () -> Unit
-) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier
-                .size(60.dp)
-                .clip(CircleShape)
-                .background(
-                    if (active) MaterialTheme.colorScheme.primaryContainer
-                    else MaterialTheme.colorScheme.surfaceVariant
-                )
-                .then(if (enabled) Modifier.clickableNoRipple { onClick() } else Modifier)
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = label,
-                tint = if (active) MaterialTheme.colorScheme.primary
-                       else if (!enabled) MaterialTheme.colorScheme.outline
-                       else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(24.dp)
-            )
-        }
-        Spacer(Modifier.height(4.dp))
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-}
-
-@Composable
-fun InCallDialpad(vm: SipViewModel, onHide: () -> Unit) {
-    var dtmfString by remember { mutableStateOf("") }
-    
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        // Display pressed digits
-        Text(
-            text = dtmfString,
-            style = MaterialTheme.typography.headlineMedium,
-            color = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.padding(vertical = 16.dp),
-            textAlign = TextAlign.Center
-        )
-
-        TextButton(onClick = onHide) {
-            Text("Hide keypad")
-        }
-        val keys = listOf(
-            "1","2","3","4","5","6","7","8","9","*","0","#"
-        )
-        Column(
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-            modifier = Modifier.padding(horizontal = 32.dp)
-        ) {
-            keys.chunked(3).forEach { row ->
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    row.forEach { digit ->
-                        Surface(
-                            shape = RoundedCornerShape(50),
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(52.dp)
-                                .clip(RoundedCornerShape(50))
-                                .clickableNoRipple { 
-                                    dtmfString += digit
-                                    vm.dialPad(digit[0]) 
-                                }
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text(
-                                    digit,
-                                    style = MaterialTheme.typography.headlineSmall,
-                                    color = MaterialTheme.colorScheme.onBackground
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun PulsingStateLabel(state: CallState) {
-    val infiniteTransition = rememberInfiniteTransition(label = "statePulse")
-
-    val alpha by infiniteTransition.animateFloat(
-        initialValue = 1f,
-        targetValue = 0.4f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(800),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "alpha"
-    )
-
-    val label = when (state) {
-        CallState.CALLING -> "Calling"
-        CallState.INCOMING -> "Incoming"
-        CallState.EARLY -> "Ringing"
-        CallState.CONNECTING -> "Connecting"
-        else -> ""
-    }
-    
-    val color = when (state) {
-        CallState.INCOMING -> MaterialTheme.colorScheme.primary
-        CallState.CONNECTING -> MaterialTheme.colorScheme.tertiary
-        else -> MaterialTheme.colorScheme.onBackground
-    }
-    
-    Text(
-        text = label,
-        style = MaterialTheme.typography.titleLarge.copy(
-            shadow = Shadow(Color.Black, Offset(1f, 1f), 4f)
-        ),
-        color = color.copy(alpha = alpha),
-    )
-}
-
-fun formatDuration(seconds: Long): String {
-    val h = seconds / 3600
-    val m = (seconds % 3600) / 60
-    val s = seconds % 60
-    return if (h > 0) "%02d:%02d:%02d".format(h, m, s)
-    else "%02d:%02d".format(m, s)
-}
-
-

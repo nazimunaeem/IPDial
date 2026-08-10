@@ -32,7 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.ipdial.R
 import com.ipdial.data.model.*
-import com.ipdial.ui.IPDialTopBar
+import com.ipdial.ui.components.IPDialTopBar
 import com.ipdial.ui.SipViewModel
 import com.ipdial.ui.theme.LocalGlassMode
 import com.ipdial.ui.theme.glass
@@ -266,7 +266,7 @@ fun SettingsScreen(
             IPDialTopBar(accounts = accounts, vm = vm, onOpenDrawer = onOpenDrawer)
         },
         bottomBar = {
-            com.ipdial.ui.StartIoBanner(
+            com.ipdial.ui.components.StartIoBanner(
                 vm = vm,
                 modifier = Modifier.fillMaxWidth().padding(8.dp)
             )

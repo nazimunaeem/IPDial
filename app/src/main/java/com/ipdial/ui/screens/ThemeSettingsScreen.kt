@@ -21,7 +21,7 @@ import androidx.compose.ui.unit.dp
 import com.ipdial.ui.theme.ThemeSchemePreview
 import com.ipdial.ui.theme.themePreviewForMode
 import com.ipdial.data.model.ThemeMode
-import com.ipdial.ui.IPDialTopBar
+import com.ipdial.ui.components.IPDialTopBar
 import com.ipdial.ui.SipViewModel
 
 private data class ThemePreview(
