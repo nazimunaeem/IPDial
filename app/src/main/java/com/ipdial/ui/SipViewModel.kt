@@ -41,11 +41,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 class SipViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -697,6 +699,7 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
      fun makeCall(overrideNumber: String? = null) {
          val rawInput = (overrideNumber ?: _dialString.value.text).trim()
          if (rawInput.isBlank()) {
+             com.ipdial.util.SipLogger.log("SipViewModel", "makeCall: ignored blank input")
              Toast.makeText(getApplication(), "Please enter a number", Toast.LENGTH_SHORT).show()
              return
          }
@@ -705,6 +708,7 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
          val enabledAccounts = accounts.value.filter { it.isEnabled }
          if (enabledAccounts.size > 1 && _pendingCallNumber.value == null) {
              // Show dialog and store the number for later
+             com.ipdial.util.SipLogger.log("SipViewModel", "makeCall: multiple enabled accounts -> account selection dialog")
              showAccountSelection(rawInput)
              return
          }
@@ -724,21 +728,25 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
          }
 
          if (account == null) {
+             com.ipdial.util.SipLogger.log("SipViewModel", "makeCall: no enabled SIP account configured")
              Toast.makeText(getApplication(), "No enabled SIP account configured", Toast.LENGTH_SHORT).show()
              return
          }
 
          if (account.regStatus != RegStatus.REGISTERED) {
+             com.ipdial.util.SipLogger.log("SipViewModel", "makeCall: account ${account.id} status=${account.regStatus} not REGISTERED")
              Toast.makeText(getApplication(), "Account is not registered", Toast.LENGTH_SHORT).show()
              return
          }
 
          if (!_isConnected.value) {
+             com.ipdial.util.SipLogger.log("SipViewModel", "makeCall: no internet connection")
              Toast.makeText(getApplication(), "No internet connection", Toast.LENGTH_SHORT).show()
              return
          }
 
          if (callSession.value != null) {
+             com.ipdial.util.SipLogger.log("SipViewModel", "makeCall: call already in progress, ignoring (state=${callSession.value?.state})")
              Toast.makeText(getApplication(), "A call is already in progress", Toast.LENGTH_SHORT).show()
              return
          }
@@ -782,26 +790,116 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                  setAudioDevice(AudioDeviceMode.EARPIECE)
              }
 
-             // Use TelecomHelper to place the call for proper system integration
-             val success = try {
-                 com.ipdial.service.TelecomHelper.placeOutgoingCall(getApplication(), finalUri, account.id)
-             } catch (e: Exception) {
-                 android.util.Log.e("SipViewModel", "TelecomManager failure, falling back", e)
-                 false
-             }
-            if (!success) {
-                android.util.Log.i("SipViewModel", "TelecomManager call failed to initiate, falling back to direct SipEngine calling")
-                viewModelScope.launch(Dispatchers.IO) {
-                    val engineStarted = SipEngine.makeCall(account.id, finalUri)
-                    if (!engineStarted) {
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(getApplication(), "Call not sent", Toast.LENGTH_SHORT).show()
-                        }
+             // HACK: Emulators often have broken Telecom integration for self-managed calls.
+             // If we detect an emulator, bypass Telecom and call direct to PJSIP.
+             val isEmulator = isRunningOnEmulator()
+             com.ipdial.util.SipLogger.log(
+                 "SipViewModel",
+                 "makeCall: emulator=$isEmulator (product=${android.os.Build.PRODUCT}, model=${android.os.Build.MODEL}, manufacturer=${android.os.Build.MANUFACTURER}, hardware=${android.os.Build.HARDWARE}, brand=${android.os.Build.BRAND})"
+             )
+
+            var success = false
+            if (!isEmulator) {
+                android.util.Log.d("SipViewModel", "Placing call via TelecomManager...")
+                com.ipdial.util.SipLogger.log("SipViewModel", "Placing call via TelecomManager: $finalUri")
+                success = try {
+                    com.ipdial.service.TelecomHelper.placeOutgoingCall(getApplication(), finalUri, account.id)
+                } catch (e: Exception) {
+                    android.util.Log.e("SipViewModel", "TelecomManager failure, falling back", e)
+                    com.ipdial.util.SipLogger.log("SipViewModel", "TelecomManager threw, falling back to direct call")
+                    false
+                }
+            } else {
+                android.util.Log.i("SipViewModel", "Emulator detected, bypassing TelecomManager")
+                com.ipdial.util.SipLogger.log("SipViewModel", "Emulator detected, bypassing TelecomManager")
+            }
+
+            if (success) {
+                // Telecom accepted the call. On some devices and emulators (including
+                // MuMu with fully spoofed Build props) Telecom accepts an outgoing call
+                // but never delivers it to our ConnectionService, so no SIP session is
+                // ever created. Watch for a session briefly; if none appears, fall back
+                // to a direct engine call. SipConnectionService rejects a late Telecom
+                // delivery, so this can never double-place the call.
+                viewModelScope.launch {
+                    val acc = account
+                    val uri = finalUri
+                    val sessionSeen = withTimeoutOrNull(3000) {
+                        callSession.filter { it != null }.first()
+                        true
+                    } ?: false
+                    if (!sessionSeen) {
+                        com.ipdial.util.SipLogger.log(
+                            "SipViewModel",
+                            "Telecom accepted call but no SIP session in 3s - falling back to direct SipEngine.makeCall"
+                        )
+                        launchDirectCall(acc, uri)
+                    } else {
+                        com.ipdial.util.SipLogger.log(
+                            "SipViewModel",
+                            "Telecom call confirmed - session created (state=${callSession.value?.state})"
+                        )
                     }
                 }
+            } else {
+                com.ipdial.util.SipLogger.log("SipViewModel", "Calling direct via SipEngine")
+                launchDirectCall(account, finalUri)
             }
          }
      }
+
+    private fun launchDirectCall(account: SipAccount, uri: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val engineStarted = SipEngine.makeCall(account.id, uri)
+            if (!engineStarted) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(getApplication(), "Call not sent", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    private fun isRunningOnEmulator(): Boolean {
+        val all = buildString {
+            append(android.os.Build.PRODUCT).append('|')
+            append(android.os.Build.MODEL).append('|')
+            append(android.os.Build.MANUFACTURER).append('|')
+            append(android.os.Build.HARDWARE).append('|')
+            append(android.os.Build.BRAND).append('|')
+            append(android.os.Build.DEVICE).append('|')
+            append(android.os.Build.FINGERPRINT)
+        }.lowercase()
+        return all.contains("sdk") ||
+            all.contains("emulator") ||
+            all.contains("genymotion") ||
+            all.contains("goldfish") ||
+            all.contains("ranchu") ||
+            all.contains("qemu") ||
+            all.contains("mumu") ||
+            all.contains("vmos") ||
+            all.contains("google_sdk") ||
+            all.contains("x86_64") ||
+            all.contains("kvm")
+
+        // ro.kernel.qemu=1 is the definitive QEMU/emulator marker. It survives
+        // device-identity spoofing (e.g. MuMu Player pretending to be a Xiaomi).
+        if (runCatching {
+                val clazz = Class.forName("android.os.SystemProperties")
+                val get = clazz.getMethod("get", String::class.java)
+                get.invoke(null, "ro.kernel.qemu") == "1"
+            }.getOrDefault(false)
+        ) return true
+
+        // QEMU guest device nodes / marker files present on QEMU-based emulators.
+        val markerFiles = listOf(
+            "/dev/goldfish_pipe",
+            "/dev/qemu_pipe",
+            "/dev/qemu_trace",
+            "/system/lib/libc_malloc_debug_qemu.so",
+            "/system/bin/qemu-props"
+        )
+        return markerFiles.any { java.io.File(it).exists() }
+    }
 
     fun cleanUri(uri: String): String = com.ipdial.ui.screens.cleanUri(uri)
 
@@ -1004,24 +1102,32 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun fetchBalance(account: SipAccount, context: Context) {
-        val host = account.domain.lowercase()
-        if (!SUPPORTED_BALANCE_DOMAINS.contains(host)) return
+        val host = account.domain.lowercase().trim()
+        if (!SUPPORTED_BALANCE_DOMAINS.contains(host)) {
+            android.util.Log.d("SipViewModel", "fetchBalance: domain $host not supported for balance fetch")
+            return
+        }
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 // Determine API URL based on host. sip.amarip.net and billing.webvoice.net
-                // are the DNS names for 103.170.231.10 and 103.129.202.202 respectively, and
-                // their TLS is valid — the raw-IP HTTPS endpoints are broken/unverifiable.
-                val url = java.net.URL(
-                    when (host) {
-                        "103.129.202.202" -> "https://billing.webvoice.net/api/mobile/login"
-                        else -> "https://sip.amarip.net/api/mobile/login"
-                    }
-                )
-
+                // are the DNS names for 103.170.231.10 and 103.129.202.202 respectively.
+                // We use the DNS names for valid TLS, but if DNS fails, we could retry with IP.
+                val urlString = when (host) {
+                    "103.129.202.202", "billing.webvoice.net" -> "https://billing.webvoice.net/api/mobile/login"
+                    else -> "https://sip.amarip.net/api/mobile/login"
+                }
+                
+                val url = java.net.URL(urlString)
                 val conn = url.openConnection() as java.net.HttpURLConnection
-                conn.connectTimeout = 8000
-                conn.readTimeout = 8000
+                
+                // If connecting to raw IP, disable hostname verification
+                if (conn is javax.net.ssl.HttpsURLConnection && (host == "103.170.231.10" || host == "103.129.202.202")) {
+                    conn.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
+                }
+                
+                conn.connectTimeout = 10000
+                conn.readTimeout = 10000
                 conn.requestMethod = "POST"
                 conn.setRequestProperty("Content-Type", "application/json")
                 conn.doOutput = true
@@ -1031,10 +1137,13 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                     "password" to account.password
                 )
                 val body = Gson().toJson(loginData)
+                android.util.Log.d("SipViewModel", "fetchBalance: user=${account.username} passLen=${account.password.length} host=$host url=$urlString")
+                
                 conn.outputStream.use { it.write(body.toByteArray()) }
 
                 if (conn.responseCode == 200) {
                     val response = conn.inputStream.bufferedReader().use { it.readText() }
+                    android.util.Log.d("SipViewModel", "fetchBalance: Success! body=$response")
                     val json = org.json.JSONObject(response)
                     val balance = json.getJSONObject("data")
                         .getJSONObject("client")
@@ -1054,22 +1163,21 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     android.util.Log.e(
                         "SipViewModel",
-                        "Balance fetch failed: HTTP ${conn.responseCode} domain=${account.domain} " +
-                            "user=${account.username} passLen=${account.password.length} body=$errorBody"
+                        "fetchBalance: FAILED HTTP ${conn.responseCode} body=$errorBody"
                     )
                     withContext(Dispatchers.Main) {
                         val msg = if (account.password.isEmpty()) {
-                            "Balance fetch failed: stored password is empty — re-enter it in Accounts"
+                            "Balance failed: password is empty"
                         } else {
-                            "Balance fetch failed (HTTP ${conn.responseCode})"
+                            "Balance failed (HTTP ${conn.responseCode})"
                         }
                         Toast.makeText(getApplication(), msg, Toast.LENGTH_SHORT).show()
                     }
                 }
             } catch (e: Exception) {
-                android.util.Log.e("SipViewModel", "Balance fetch failed", e)
+                android.util.Log.e("SipViewModel", "fetchBalance: EXCEPTION", e)
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(getApplication(), "Failed to fetch balance", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(getApplication(), "Balance fetch error: ${e.message}", Toast.LENGTH_SHORT).show()
                 }
             }
         }

@@ -5,14 +5,25 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.platform.LocalDensity
 import com.ipdial.data.model.CallState
+import kotlinx.coroutines.delay
 
 @Composable
 fun PulsingStateLabel(state: CallState) {
@@ -28,6 +39,14 @@ fun PulsingStateLabel(state: CallState) {
         label = "alpha"
     )
 
+    var dotCount by remember { mutableIntStateOf(0) }
+    LaunchedEffect(state) {
+        while (true) {
+            delay(400)
+            dotCount = (dotCount + 1) % 4
+        }
+    }
+
     val label = when (state) {
         CallState.CALLING -> "Calling"
         CallState.INCOMING -> "Incoming"
@@ -42,13 +61,28 @@ fun PulsingStateLabel(state: CallState) {
         else -> MaterialTheme.colorScheme.onBackground
     }
 
-    Text(
-        text = label,
-        style = MaterialTheme.typography.titleLarge.copy(
-            shadow = Shadow(Color.Black, Offset(1f, 1f), 4f)
-        ),
-        color = color.copy(alpha = alpha),
+    val style = MaterialTheme.typography.titleLarge.copy(
+        shadow = Shadow(Color.Black, Offset(1f, 1f), 4f)
     )
+
+    val density = LocalDensity.current
+    var dotsWidthPx by remember { mutableIntStateOf(0) }
+
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = label,
+            style = style,
+            color = color.copy(alpha = alpha),
+        )
+        Box(modifier = Modifier.width(with(density) { dotsWidthPx.toDp() })) {
+            Text(
+                text = ".".repeat(dotCount),
+                style = style,
+                color = color.copy(alpha = alpha),
+                onTextLayout = { dotsWidthPx = it.size.width }
+            )
+        }
+    }
 }
 
 fun formatDuration(seconds: Long): String {

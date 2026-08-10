@@ -228,18 +228,8 @@ class AccountRepository(private val context: Context) {
         }
     }
 
-    private fun encryptPassword(password: String): String {
-        if (password.isEmpty() || password.startsWith("AES:")) return password
-        // Migrate from old Base64 if needed, but here we just encrypt as new
-        val plain = if (password.startsWith("ENC:")) {
-            decryptOldPassword(password)
-        } else {
-            password
-        }
-        return CryptoHelper.encrypt(plain)
-    }
-
     private fun decryptOldPassword(password: String): String {
+        if (!password.startsWith("ENC:")) return password
         return try {
             val raw = password.removePrefix("ENC:")
             String(android.util.Base64.decode(raw, android.util.Base64.NO_WRAP), Charsets.UTF_8)
@@ -249,32 +239,27 @@ class AccountRepository(private val context: Context) {
     }
 
     private fun decryptPassword(password: String): String {
-        val decrypted = if (password.startsWith("AES:")) {
-            CryptoHelper.decrypt(password)
-        } else if (password.startsWith("ENC:")) {
-            decryptOldPassword(password)
-        } else {
-            password
+        return when {
+            password.startsWith("AES:") -> CryptoHelper.decrypt(password)
+            password.startsWith("ENC:") -> decryptOldPassword(password)
+            else -> password
         }
-        if (password.isNotEmpty() && decrypted.isEmpty()) {
-            android.util.Log.e("AccountRepository", "CRITICAL: Password decryption resulted in empty string!")
-        }
-        return decrypted
     }
 
-    private fun secureAccount(acc: SipAccount): SipAccount = acc.copy(password = encryptPassword(acc.password))
+    private fun secureAccount(acc: SipAccount): SipAccount = acc
     private fun unsecureAccount(acc: SipAccount): SipAccount = acc.copy(password = decryptPassword(acc.password))
 
     private fun getAccountsList(prefs: Preferences): List<SipAccount> {
         val json = prefs[accountsKey] ?: return emptyList()
         val type = object : TypeToken<List<SipAccount>>() {}.type
         val list: List<SipAccount> = gson.fromJson(json, type) ?: emptyList()
+        // unsecureAccount here will migrate existing encrypted passwords to plain text in memory
         return list.map { unsecureAccount(it) }
     }
 
     private fun saveAccountsList(prefs: androidx.datastore.preferences.core.MutablePreferences, accountsList: List<SipAccount>) {
-        val secured = accountsList.map { secureAccount(it) }
-        prefs[accountsKey] = gson.toJson(secured)
+        // We save them exactly as they are (which is plain text now)
+        prefs[accountsKey] = gson.toJson(accountsList)
     }
 
     suspend fun saveAccount(account: SipAccount) {

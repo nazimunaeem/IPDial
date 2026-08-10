@@ -429,9 +429,8 @@ fun IPDialApp() {
                             scope.launch { drawerState.close() }
                             navController.graph?.let { graph ->
                                 navController.navigate(route) {
-                                    popUpTo(graph.findStartDestination().id) { saveState = true }
+                                    popUpTo(graph.findStartDestination().id)
                                     launchSingleTop = true
-                                    restoreState = true
                                 }
                             }
                         }
@@ -716,9 +715,8 @@ fun AppBottomBar(
                         } else {
                             navController.graph?.let { graph ->
                                 navController.navigate(dest.route) {
-                                    popUpTo(graph.findStartDestination().id) { saveState = true }
+                                    popUpTo(graph.findStartDestination().id)
                                     launchSingleTop = true
-                                    restoreState = true
                                 }
                             }
                         }
@@ -810,9 +808,8 @@ fun MainPagerScreen(
                     vm.prefillDialer(number)
                     navController.graph?.let { graph ->
                         navController.navigate(NavDest.Keypad.route) {
-                            popUpTo(graph.findStartDestination().id) { saveState = true }
+                            popUpTo(graph.findStartDestination().id)
                             launchSingleTop = true
-                            restoreState = true
                         }
                     }
                 }

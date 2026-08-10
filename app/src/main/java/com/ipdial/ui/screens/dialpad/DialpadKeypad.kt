@@ -132,14 +132,14 @@ fun DialKeyRounded(
 ) {
     val isGlass = LocalGlassMode.current != GlassMode.None
     Box(
-        modifier = modifier.height(64.dp),
+        modifier = modifier.height(68.dp),
         contentAlignment = Alignment.Center
     ) {
         Surface(
             shape = CircleShape,
             color = if (isGlass) Color.Transparent else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
             modifier = Modifier
-                .size(64.dp)
+                .size(68.dp)
                 .then(if (isGlass) Modifier.glass(CircleShape) else Modifier)
                 .combinedClickable(
                     onClick = onClick,
