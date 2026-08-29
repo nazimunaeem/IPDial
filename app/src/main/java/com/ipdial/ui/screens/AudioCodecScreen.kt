@@ -201,8 +201,8 @@ fun CodecSelectionRow(
                     text = when(codec) {
                         PreferredCodec.G711A -> "Best compatibility (PCMA) · 64 kbps · MOS 4.1"
                         PreferredCodec.G711U -> "Standard (PCMU) · 64 kbps · MOS 4.1"
-                        PreferredCodec.G729 -> "Low bandwidth · 8 kbps · MOS 3.9 · Great for 3G/4G"
                         PreferredCodec.G722 -> "High Definition · 48 kbps · MOS 4.0"
+                        PreferredCodec.G729 -> "Low Bandwidth · 8 kbps · MOS 3.9"
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f) 

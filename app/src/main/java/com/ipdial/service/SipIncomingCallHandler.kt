@@ -13,7 +13,8 @@ class SipIncomingCallHandler(
     private val context: Context,
     private val scope: CoroutineScope,
     private val repo: AccountRepository,
-    private val contactsRepo: ContactsRepository
+    private val contactsRepo: ContactsRepository,
+    private val wakeLockManager: SipWakeLockManager? = null
 ) {
     private val TAG = "SipService"
 
@@ -24,6 +25,8 @@ class SipIncomingCallHandler(
             Log.d(TAG, "onIncomingCall: ignoring ghost delivery for callId=${session.callId} (session=${SipEngine.callSession.value?.state}, hasActive=${SipEngine.hasActiveCall(session.callId)})")
         }
         if (isActive) {
+            // Wake up CPU and screen immediately so the incoming call appears over the lock screen
+            wakeLockManager?.acquireWakeLockForIncoming()
             com.ipdial.util.SipLogger.log("SipService", "Incoming call received: ${session.remoteUri}")
             scope.launch {
                 val accountsNow = repo.accounts.first()
@@ -75,9 +78,14 @@ class SipIncomingCallHandler(
                     }
                     if (!com.ipdial.AppState.isForeground) {
                         val activityIntent = Intent(context, com.ipdial.MainActivity::class.java).apply {
-                            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                            action = "com.ipdial.ACTION_INCOMING_CALL"
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
                         }
-                        context.startActivity(activityIntent)
+                        try {
+                            context.startActivity(activityIntent)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to start MainActivity from background: ${e.message}")
+                        }
                     }
                 }
             }

@@ -48,6 +48,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.InterceptPlatformTextInput
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
@@ -80,7 +81,10 @@ fun DialpadScreen(
     val mostCalled by vm.mostCalledContacts.collectAsState()
     val keypadDesign by vm.keypadDesign.collectAsState()
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
     val haptic = LocalHapticFeedback.current
+    val isWide = configuration.screenWidthDp > 600
+    val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
     var showMenu by remember { mutableStateOf(false) }
     @Suppress("DEPRECATION")
     val clipboardManager = LocalClipboardManager.current
@@ -213,7 +217,7 @@ fun DialpadScreen(
                     },
                     visualTransformation = PhoneNumberTransformation(),
                     textStyle = MaterialTheme.typography.headlineMedium.copy(
-                        fontSize = 28.sp,
+                        fontSize = if (isWide) 36.sp else 28.sp,
                         fontWeight = FontWeight.Normal,
                         color = MaterialTheme.colorScheme.onBackground,
                         textAlign = TextAlign.Center
@@ -276,13 +280,13 @@ fun DialpadScreen(
             onZeroLongPress = { vm.dialPad('+') }
         )
 
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(if (isLandscape) 4.dp else 8.dp))
 
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
-                .width(150.dp)
-                .height(62.dp)
+                .width(if (isWide) 220.dp else 150.dp)
+                .height(if (isWide) 72.dp else 62.dp)
                 .clip(CircleShape)
                 .background(ForestGreen)
                 .clickableWithRipple {
@@ -297,7 +301,7 @@ fun DialpadScreen(
                 imageVector = Icons.Default.Call,
                 contentDescription = "Call",
                 tint = Color.White,
-                modifier = Modifier.size(28.dp)
+                modifier = Modifier.size(if (isWide) 34.dp else 28.dp)
             )
         }
 

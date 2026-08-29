@@ -41,8 +41,8 @@ class SipRingtonePlayer(
     }
 
     fun playRingtone() {
-        ringtoneJob?.cancel()
         if (isPlayingRingtone || ringtone?.isPlaying == true || mediaPlayer?.isPlaying == true) return
+        ringtoneJob?.cancel()
 
         if (SipEngine.isDndActive()) {
             Log.d(TAG, "DND active, skipping ringtone and vibration")
@@ -75,7 +75,7 @@ class SipRingtonePlayer(
 
                     if (ringerMode == AudioManager.RINGER_MODE_NORMAL) {
                         val ringtoneUri = if (ringtoneUriStr != null) {
-                            android.net.Uri.parse(ringtoneUriStr)
+                            normalizeRingtoneUri(ringtoneUriStr)
                         } else {
                             RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
                         }
@@ -106,7 +106,16 @@ class SipRingtonePlayer(
                         } catch (e: Exception) {
                             Log.e(TAG, "MediaPlayer failed for ringtone, falling back to RingtoneManager", e)
                             mp?.release()
-                            ringtone = RingtoneManager.getRingtone(context, ringtoneUri)
+                            var fallback = RingtoneManager.getRingtone(context, ringtoneUri)
+                            if (fallback == null) {
+                                // Unresolvable URI (e.g. an old name-form android.resource
+                                // URI) — use a real system ringtone rather than a default
+                                // notification "ding".
+                                fallback = RingtoneManager.getRingtone(
+                                    context, RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+                                )
+                            }
+                            ringtone = fallback
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                                 ringtone?.isLooping = true
                             }
@@ -123,6 +132,27 @@ class SipRingtonePlayer(
                 isPlayingRingtone = false
             }
         }
+    }
+
+    /** Normalizes an android.resource: URI to the numeric-resource form that
+     *  MediaPlayer can actually open. Legacy name-form URIs like
+     *  "android.resource://pkg/raw/name" are resolved to their resource id. */
+    private fun normalizeRingtoneUri(raw: String): android.net.Uri {
+        val uri = android.net.Uri.parse(raw)
+        if (uri.scheme != android.content.ContentResolver.SCHEME_ANDROID_RESOURCE) return uri
+        val parts = uri.pathSegments
+        if (parts.isNullOrEmpty()) return uri
+        val last = parts.last()
+        last?.toIntOrNull()?.let { return uri }
+        val name = last ?: return uri
+        val id = context.resources.getIdentifier(name, "raw", uri.authority ?: context.packageName)
+        if (id != 0) {
+            return android.net.Uri.parse(
+                android.content.ContentResolver.SCHEME_ANDROID_RESOURCE +
+                    "://" + (uri.authority ?: context.packageName) + "/" + id
+            )
+        }
+        return uri
     }
 
     fun stopRingtone() {

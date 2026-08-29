@@ -8,8 +8,6 @@
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
 
     <!-- Storage -->
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
 
     <!-- Audio -->
@@ -22,7 +20,8 @@
     <!-- Notifications & foreground service -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.VIBRATE" />
@@ -30,7 +29,6 @@
 
     <!-- Keep alive -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
 
     <!-- Start.io Ads -->
@@ -52,20 +50,24 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.IPDial"
-        android:requestLegacyExternalStorage="true"
-        android:usesCleartextTraffic="true">
+        android:theme="@style/Theme.IPDial">
 
         <activity
             android:name=".MainActivity"
             android:enabled="true"
             android:exported="true"
             android:launchMode="singleTop"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:showOnLockScreen="true"
+            android:inheritShowWhenLocked="true"
+            android:showForAllUsers="true"
             android:windowSoftInputMode="adjustResize"
             tools:targetApi="o_mr1">
             <!-- Deep link for incoming call notification -->
             <intent-filter>
                 <action android:name="com.ipdial.ACTION_INCOMING_CALL" />
+                <action android:name="com.ipdial.ACTION_SHOW_CALL" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
 
@@ -167,8 +169,12 @@
         <service
             android:name=".service.SipService"
             android:exported="false"
-            android:foregroundServiceType="phoneCall|dataSync"
-            android:stopWithTask="false" />
+            android:foregroundServiceType="phoneCall|specialUse"
+            android:stopWithTask="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="sip_keepalive" />
+        </service>
 
         <meta-data
             android:name="com.startapp.sdk.APPLICATION_ID"

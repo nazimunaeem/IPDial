@@ -22,8 +22,10 @@ class IPDialApplication : Application() {
 
         // Initialize Start.io SDK
         try {
+            @Suppress("DEPRECATION")
             StartAppSDK.init(this, "205857982", true)
             StartAppSDK.setTestAdsEnabled(false)
+            @Suppress("DEPRECATION")
             StartAppAd.disableSplash()
         } catch (e: Throwable) {
             android.util.Log.e("IPDialApp", "Failed to init StartApp SDK: ${e.message}", e)

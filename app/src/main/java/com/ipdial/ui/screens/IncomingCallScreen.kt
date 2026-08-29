@@ -43,10 +43,13 @@ import kotlin.math.roundToInt
 
 @Composable
 fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
-    if (session.state == CallState.DISCONNECTED) return
-    // Safety: also check the live ViewModel session — bail out if already gone
+    if (session.state == CallState.DISCONNECTED || session.state == CallState.IDLE) return
+    // Safety: also check the live ViewModel session — bail out if already gone.
+    // (vm.callSession IS SipEngine.callSession, so this covers engine staleness.)
     val liveSession by vm.callSession.collectAsState()
-    if (liveSession == null || liveSession?.state == CallState.DISCONNECTED) return
+    if (liveSession == null || liveSession?.state == CallState.DISCONNECTED) {
+        return
+    }
     Log.d("IncomingCallScreen", "Rendering IncomingCallScreen for ${session.remoteUri}")
     val accounts by vm.accounts.collectAsState()
     
@@ -115,7 +118,8 @@ fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
                 textAlign = TextAlign.Center,
                 color = textColor,
                 modifier = Modifier.padding(horizontal = 24.dp),
-                maxLines = 1
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
             )
 
             if (displayName != vm.cleanUri(session.remoteUri)) {
@@ -232,12 +236,12 @@ fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
                                 .size(96.dp)
                                 .clip(CircleShape)
                                 .background(
-                                    if (isDarkOrObsidian) {
-                                        if (offsetX < -40) EndRed else ForestGreen
-                                    } else if (isFullScreenPhoto) {
-                                        Color.White.copy(alpha = 0.3f)
-                                    } else {
-                                        Color.White.copy(alpha = 0.25f)
+                                    when {
+                                        offsetX < -40 -> EndRed
+                                        offsetX > 40 -> ForestGreen
+                                        isDarkOrObsidian -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f)
+                                        isFullScreenPhoto -> Color.White.copy(alpha = 0.3f)
+                                        else -> MaterialTheme.colorScheme.surfaceVariant
                                     }
                                 )
                                 .border(2.dp, if (isDarkOrObsidian) Color.White.copy(alpha = 0.4f) else Color.White.copy(alpha = 0.5f), CircleShape)

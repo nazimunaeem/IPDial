@@ -1,9 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
+    <!-- Internal recordings (legacy location) -->
     <files-path name="recordings" path="recordings/" />
-    <external-files-path name="external_music" path="Music/" />
-    <external-files-path name="external_files" path="." />
-    <root-path name="root" path="." />
-    <external-path name="external_docs" path="Documents/IPCall" />
-    <external-path name="external_root" path="." />
+    <!-- External app-specific call recordings -->
+    <external-files-path name="external_recordings" path="Music/IPDialRecordings/" />
 </paths>

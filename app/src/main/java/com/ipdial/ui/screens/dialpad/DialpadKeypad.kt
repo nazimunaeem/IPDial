@@ -25,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -44,23 +45,30 @@ fun DialpadKeypad(
 ) {
     val haptic = LocalHapticFeedback.current
     val isGlass = LocalGlassMode.current != GlassMode.None
+    val configuration = LocalConfiguration.current
+    val isWide = configuration.screenWidthDp > 600
+    val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    val horizontalPadding = if (isWide) (configuration.screenWidthDp * 0.2f).dp else 64.dp
+    val keySize = if (isWide) 80.dp else 68.dp
+    val gridHeight = if (isWide) 64.dp else 52.dp
 
     if (design == KeypadDesign.Rounded) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 64.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+                .padding(horizontal = if (isLandscape) (configuration.screenWidthDp * 0.3f).dp else horizontalPadding),
+            verticalArrangement = Arrangement.spacedBy(if (isWide) 16.dp else 10.dp)
         ) {
             keys.chunked(3).forEach { row ->
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center
+                    horizontalArrangement = Arrangement.spacedBy(if (isWide) 16.dp else 10.dp)
                 ) {
                     row.forEach { (digit, sub, _) ->
                         DialKeyRounded(
                             digit = digit,
                             subLabel = sub,
+                            keySize = keySize,
                             onClick = {
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 onKeyPress(digit[0])
@@ -89,12 +97,13 @@ fun DialpadKeypad(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(52.dp)
+                        .height(gridHeight)
                 ) {
                     row.forEachIndexed { colIndex, (digit, sub, _) ->
                         DialKey(
                             digit = digit,
                             subLabel = sub,
+                            height = gridHeight,
                             onClick = {
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 onKeyPress(digit[0])
@@ -126,20 +135,21 @@ fun DialpadKeypad(
 fun DialKeyRounded(
     digit: String,
     subLabel: String,
+    keySize: androidx.compose.ui.unit.Dp,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val isGlass = LocalGlassMode.current != GlassMode.None
     Box(
-        modifier = modifier.height(68.dp),
+        modifier = modifier.height(keySize),
         contentAlignment = Alignment.Center
     ) {
         Surface(
             shape = CircleShape,
             color = if (isGlass) Color.Transparent else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
             modifier = Modifier
-                .size(68.dp)
+                .size(keySize)
                 .then(if (isGlass) Modifier.glass(CircleShape) else Modifier)
                 .combinedClickable(
                     onClick = onClick,
@@ -155,18 +165,18 @@ fun DialKeyRounded(
                         text = digit,
                         style = MaterialTheme.typography.displaySmall.copy(
                             fontWeight = FontWeight.Normal,
-                            fontSize = 32.sp
+                            fontSize = if (keySize > 70.dp) 38.sp else 32.sp
                         ),
                         color = MaterialTheme.colorScheme.onSurface,
-                        lineHeight = 32.sp
+                        lineHeight = if (keySize > 70.dp) 38.sp else 32.sp
                     )
                     if (subLabel.isNotBlank() && digit.any { it.isDigit() }) {
                         Text(
                             text = subLabel,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.9f),
-                            fontSize = 12.sp,
-                            lineHeight = 12.sp
+                            fontSize = if (keySize > 70.dp) 14.sp else 12.sp,
+                            lineHeight = if (keySize > 70.dp) 14.sp else 12.sp
                         )
                     }
                 }
@@ -180,6 +190,7 @@ fun DialKeyRounded(
 fun DialKey(
     digit: String,
     subLabel: String,
+    height: androidx.compose.ui.unit.Dp,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
@@ -187,7 +198,7 @@ fun DialKey(
     val isGlass = LocalGlassMode.current != GlassMode.None
     Box(
             modifier = modifier
-            .height(52.dp)
+            .height(height)
             .then(if (isGlass) Modifier.glass(RoundedCornerShape(0.dp), borderWidth = 0.5.dp) else Modifier)
             .combinedClickable(
                 onClick = onClick,
@@ -201,7 +212,10 @@ fun DialKey(
         ) {
             Text(
                 text = digit,
-                style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Normal),
+                style = MaterialTheme.typography.headlineMedium.copy(
+                    fontWeight = FontWeight.Normal,
+                    fontSize = if (height > 60.dp) 28.sp else 24.sp
+                ),
                 color = MaterialTheme.colorScheme.onSurface,
             )
             if (subLabel.isNotBlank()) {
@@ -209,7 +223,7 @@ fun DialKey(
                     text = subLabel,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                    fontSize = 10.sp
+                    fontSize = if (height > 60.dp) 12.sp else 10.sp
                 )
             }
         }

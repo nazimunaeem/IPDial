@@ -483,6 +483,21 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         observeCallSession()
+
+        // Keep the UI audio-device mode in sync with the route Telecom actually
+        // confirmed via onCallAudioStateChanged (e.g. BT SCO link established).
+        // This prevents the UI showing "Bluetooth" while audio is still on the
+        // earpiece/speaker, and vice versa.
+        viewModelScope.launch {
+            SipEngine.confirmedAudioRoute.collect { confirmed ->
+                if (confirmed != null && callSession.value != null &&
+                    callSession.value?.state == CallState.CONFIRMED) {
+                    _audioDeviceMode.value = confirmed
+                    SipAudioController.setSpeaker(confirmed == AudioDeviceMode.SPEAKER)
+                }
+            }
+        }
+
         val connectivityManager = app.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         
         // Initial check for internet connectivity
@@ -607,7 +622,7 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         // framework to re-enter and resurrect the session).
         viewModelScope.launch {
             while (true) {
-                kotlinx.coroutines.delay(2_000)
+                kotlinx.coroutines.delay(1_000) // Check more frequently
                 try {
                     SipEngine.nullSessionIfStale()
                 } catch (_: Throwable) {}
@@ -792,7 +807,7 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
 
              // HACK: Emulators often have broken Telecom integration for self-managed calls.
              // If we detect an emulator, bypass Telecom and call direct to PJSIP.
-             val isEmulator = isRunningOnEmulator()
+             val isEmulator = com.ipdial.util.DeviceUtil.isEmulator()
              com.ipdial.util.SipLogger.log(
                  "SipViewModel",
                  "makeCall: emulator=$isEmulator (product=${android.os.Build.PRODUCT}, model=${android.os.Build.MODEL}, manufacturer=${android.os.Build.MANUFACTURER}, hardware=${android.os.Build.HARDWARE}, brand=${android.os.Build.BRAND})"
@@ -859,48 +874,6 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun isRunningOnEmulator(): Boolean {
-        val all = buildString {
-            append(android.os.Build.PRODUCT).append('|')
-            append(android.os.Build.MODEL).append('|')
-            append(android.os.Build.MANUFACTURER).append('|')
-            append(android.os.Build.HARDWARE).append('|')
-            append(android.os.Build.BRAND).append('|')
-            append(android.os.Build.DEVICE).append('|')
-            append(android.os.Build.FINGERPRINT)
-        }.lowercase()
-        return all.contains("sdk") ||
-            all.contains("emulator") ||
-            all.contains("genymotion") ||
-            all.contains("goldfish") ||
-            all.contains("ranchu") ||
-            all.contains("qemu") ||
-            all.contains("mumu") ||
-            all.contains("vmos") ||
-            all.contains("google_sdk") ||
-            all.contains("x86_64") ||
-            all.contains("kvm")
-
-        // ro.kernel.qemu=1 is the definitive QEMU/emulator marker. It survives
-        // device-identity spoofing (e.g. MuMu Player pretending to be a Xiaomi).
-        if (runCatching {
-                val clazz = Class.forName("android.os.SystemProperties")
-                val get = clazz.getMethod("get", String::class.java)
-                get.invoke(null, "ro.kernel.qemu") == "1"
-            }.getOrDefault(false)
-        ) return true
-
-        // QEMU guest device nodes / marker files present on QEMU-based emulators.
-        val markerFiles = listOf(
-            "/dev/goldfish_pipe",
-            "/dev/qemu_pipe",
-            "/dev/qemu_trace",
-            "/system/lib/libc_malloc_debug_qemu.so",
-            "/system/bin/qemu-props"
-        )
-        return markerFiles.any { java.io.File(it).exists() }
-    }
-
     fun cleanUri(uri: String): String = com.ipdial.ui.screens.cleanUri(uri)
 
     fun cleanDisplayName(name: String, uri: String): String = com.ipdial.ui.screens.cleanDisplayName(name, uri)
@@ -917,6 +890,10 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                 } else {
                     setAudioDevice(AudioDeviceMode.EARPIECE)
                 }
+                // CRITICAL FIX: Force audio devices and EC for the answered call
+                // This ensures the audio path is properly established
+                SipEngine.forceAudioDevicesForCall()
+                SipEngine.forceEcForCallAudio()
             }
         }
     }
@@ -966,6 +943,12 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                  }
 
                  setAudioDevice(nextMode)
+                 
+                 // Force audio path re-establishment after device change
+                 withContext(Dispatchers.Main) {
+                     SipEngine.forceAudioDevicesForCall()
+                     SipEngine.forceEcForCallAudio()
+                 }
              } catch (e: Exception) {
                  android.util.Log.e("SipViewModel", "Failed to cycle audio device", e)
              }
@@ -1038,6 +1021,8 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
 
     fun saveAccount(account: SipAccount) = viewModelScope.launch(Dispatchers.IO) {
         repo.saveAccount(account)
+        if (account.label.isNotBlank()) repo.addSavedLabel(account.label)
+        if (account.domain.isNotBlank()) repo.addSavedHost(account.domain)
     }
 
     fun deleteAccount(id: String) = viewModelScope.launch(Dispatchers.IO) {
@@ -1120,12 +1105,7 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                 
                 val url = java.net.URL(urlString)
                 val conn = url.openConnection() as java.net.HttpURLConnection
-                
-                // If connecting to raw IP, disable hostname verification
-                if (conn is javax.net.ssl.HttpsURLConnection && (host == "103.170.231.10" || host == "103.129.202.202")) {
-                    conn.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
-                }
-                
+
                 conn.connectTimeout = 10000
                 conn.readTimeout = 10000
                 conn.requestMethod = "POST"
@@ -1137,13 +1117,13 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                     "password" to account.password
                 )
                 val body = Gson().toJson(loginData)
-                android.util.Log.d("SipViewModel", "fetchBalance: user=${account.username} passLen=${account.password.length} host=$host url=$urlString")
+                android.util.Log.d("SipViewModel", "fetchBalance: host=$host url=$urlString")
                 
                 conn.outputStream.use { it.write(body.toByteArray()) }
 
                 if (conn.responseCode == 200) {
                     val response = conn.inputStream.bufferedReader().use { it.readText() }
-                    android.util.Log.d("SipViewModel", "fetchBalance: Success! body=$response")
+                    android.util.Log.d("SipViewModel", "fetchBalance: Success")
                     val json = org.json.JSONObject(response)
                     val balance = json.getJSONObject("data")
                         .getJSONObject("client")

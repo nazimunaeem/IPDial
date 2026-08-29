@@ -170,9 +170,7 @@ class MainActivity : ComponentActivity() {
         
         volumeControlStream = android.media.AudioManager.STREAM_VOICE_CALL
         
-        if (intent?.action == "com.ipdial.ACTION_INCOMING_CALL" || intent?.action == "com.ipdial.ACTION_SHOW_CALL") {
-            applyLockScreenFlags()
-        }
+        applyLockScreenFlags()
         
         requestRequiredPermissions()
         com.ipdial.service.SipService.start(this)
@@ -187,16 +185,23 @@ class MainActivity : ComponentActivity() {
             // Keep screen on when there's an active call
             val callSession by vm.callSession.collectAsState()
             val localView = LocalView.current
+            
+            var launchedForCall by remember { mutableStateOf(intent?.action == "com.ipdial.ACTION_INCOMING_CALL" || intent?.action == "com.ipdial.ACTION_SHOW_CALL") }
+            var hasSeenActiveCall by remember { mutableStateOf(false) }
+            
             LaunchedEffect(callSession) {
                 val window = (localView.context as? android.app.Activity)?.window
                 val activity = localView.context as? android.app.Activity
                 if (callSession != null) {
+                    hasSeenActiveCall = true
+                    activity?.volumeControlStream = android.media.AudioManager.STREAM_VOICE_CALL
                     window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
                         activity?.setTurnScreenOn(true)
                         activity?.setShowWhenLocked(true)
                     }
                 } else {
+                    activity?.volumeControlStream = android.media.AudioManager.STREAM_MUSIC
                     window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
                         activity?.setTurnScreenOn(false)
@@ -208,6 +213,10 @@ class MainActivity : ComponentActivity() {
                             android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
                             android.view.WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
                         )
+                    }
+                    if (hasSeenActiveCall && launchedForCall) {
+                        launchedForCall = false
+                        activity?.moveTaskToBack(true)
                     }
                 }
             }
@@ -253,9 +262,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        if (intent.action == "com.ipdial.ACTION_INCOMING_CALL" || intent.action == "com.ipdial.ACTION_SHOW_CALL") {
-            applyLockScreenFlags()
-        }
+        setIntent(intent)
+        applyLockScreenFlags()
         handleIntent(intent)
     }
 
@@ -269,15 +277,14 @@ class MainActivity : ComponentActivity() {
             } catch (e: Exception) {
                 Log.e("MainActivity", "requestDismissKeyguard failed", e)
             }
-        } else {
-            @Suppress("DEPRECATION")
-            window.addFlags(
-                android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
-                android.view.WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
-                android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
-            )
         }
+        @Suppress("DEPRECATION")
+        window.addFlags(
+            android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+            android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+            android.view.WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
+            android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+        )
     }
 
     private fun handleIntent(intent: Intent?) {
@@ -329,9 +336,6 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             required.add(Manifest.permission.POST_NOTIFICATIONS)
             required.add(Manifest.permission.READ_MEDIA_AUDIO)
-        } else {
-            required.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-            required.add(Manifest.permission.READ_EXTERNAL_STORAGE)
         }
         val missing = required.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED

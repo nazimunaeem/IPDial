@@ -25,6 +25,9 @@ import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
@@ -139,6 +142,7 @@ fun AccountsScreen(vm: SipViewModel, onOpenDrawer: () -> Unit) {
 
         if (showEditSheet) {
             AccountEditSheet(
+                vm = vm,
                 existing = editingAccount,
                 defaultDomain = defaultDomain,
                 onSave = { 
@@ -236,23 +240,33 @@ fun AccountSettingsRow(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AccountEditSheet(
+    vm: SipViewModel,
     existing: SipAccount?,
     defaultDomain: String,
     onSave: (SipAccount) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var label     by remember { mutableStateOf(existing?.label ?: "iCall BD") }
+    var label     by remember { mutableStateOf(existing?.label ?: "") }
     var username  by remember { mutableStateOf(existing?.username ?: "") }
     var password  by remember { mutableStateOf(existing?.password ?: "") }
-    var domain    by remember { mutableStateOf(existing?.domain ?: defaultDomain) }
+    var domain    by remember { mutableStateOf(existing?.domain ?: "") }
     var proxy     by remember { mutableStateOf(existing?.proxy ?: "") }
     var port      by remember { mutableStateOf(existing?.port?.toString() ?: "") }
     var transport by remember { mutableStateOf(existing?.transport ?: Transport.UDP) }
-    var codec     by remember { mutableStateOf(existing?.codec ?: PreferredCodec.G711U) }
+    var codec     by remember { mutableStateOf(existing?.codec ?: PreferredCodec.G729) }
     var ecEnabled by remember { mutableStateOf(existing?.ecEnabled ?: true) }
     var nsEnabled by remember { mutableStateOf(existing?.nsEnabled ?: true) }
     var agcEnabled by remember { mutableStateOf(existing?.agcEnabled ?: true) }
     var showPass  by remember { mutableStateOf(false) }
+
+    val savedLabels by vm.repo.savedLabels.collectAsState(initial = emptyList<String>())
+    val savedHosts by vm.repo.savedHosts.collectAsState(initial = emptyList<String>())
+    val suggestedLabels = listOf("iCallBD", "BanglaCall").plus(savedLabels).distinct()
+    val suggestedHosts = listOf("103.129.202.202", "sip.amarip.net").plus(savedHosts).distinct()
+    
+    var expandedLabel by remember { mutableStateOf(false) }
+    var expandedHost by remember { mutableStateOf(false) }
+
 
     // Auto-detect transport based on domain, proxy, and port
     LaunchedEffect(domain, proxy, port) {
@@ -286,11 +300,35 @@ fun AccountEditSheet(
                 modifier = Modifier.padding(bottom = 4.dp)
             )
 
-            OutlinedTextField(
-                value = label, onValueChange = { label = it },
-                label = { Text("Display Name (e.g. Work, Home)") },
-                singleLine = true, modifier = Modifier.fillMaxWidth()
-            )
+            ExposedDropdownMenuBox(
+                expanded = expandedLabel,
+                onExpandedChange = { expandedLabel = it }
+            ) {
+                OutlinedTextField(
+                    value = label,
+                    onValueChange = { label = it; expandedLabel = true },
+                    label = { Text("Display Name (e.g. Work, Home)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().menuAnchor(),
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expandedLabel) }
+                )
+                if (suggestedLabels.isNotEmpty()) {
+                    ExposedDropdownMenu(
+                        expanded = expandedLabel,
+                        onDismissRequest = { expandedLabel = false }
+                    ) {
+                        suggestedLabels.filter { it.contains(label, ignoreCase = true) || label.isEmpty() }.forEach { suggestion ->
+                            DropdownMenuItem(
+                                text = { Text(suggestion) },
+                                onClick = {
+                                    label = suggestion
+                                    expandedLabel = false
+                                }
+                            )
+                        }
+                    }
+                }
+            }
             OutlinedTextField(
                 value = username, onValueChange = { username = it },
                 label = { Text("SIP Username *") },
@@ -310,11 +348,35 @@ fun AccountEditSheet(
                 },
                 modifier = Modifier.fillMaxWidth()
             )
-            OutlinedTextField(
-                value = domain, onValueChange = { domain = it },
-                label = { Text("SIP Domain / Server *") },
-                singleLine = true, modifier = Modifier.fillMaxWidth()
-            )
+            ExposedDropdownMenuBox(
+                expanded = expandedHost,
+                onExpandedChange = { expandedHost = it }
+            ) {
+                OutlinedTextField(
+                    value = domain,
+                    onValueChange = { domain = it; expandedHost = true },
+                    label = { Text("SIP Domain / Server *") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().menuAnchor(),
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expandedHost) }
+                )
+                if (suggestedHosts.isNotEmpty()) {
+                    ExposedDropdownMenu(
+                        expanded = expandedHost,
+                        onDismissRequest = { expandedHost = false }
+                    ) {
+                        suggestedHosts.filter { it.contains(domain, ignoreCase = true) || domain.isEmpty() }.forEach { suggestion ->
+                            DropdownMenuItem(
+                                text = { Text(suggestion) },
+                                onClick = {
+                                    domain = suggestion
+                                    expandedHost = false
+                                }
+                            )
+                        }
+                    }
+                }
+            }
             OutlinedTextField(
                 value = proxy, onValueChange = { proxy = it },
                 label = { Text("Outbound Proxy (optional)") },

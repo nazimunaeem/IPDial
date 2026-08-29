@@ -250,7 +250,6 @@ fun IPDialTheme(
     if (!view.isInEditMode) {
         androidx.compose.runtime.SideEffect {
             val window = (view.context as? android.app.Activity)?.window ?: return@SideEffect
-            window.statusBarColor = android.graphics.Color.TRANSPARENT
             @Suppress("DEPRECATION")
             window.navigationBarColor = android.graphics.Color.TRANSPARENT
             val insetsController = androidx.core.view.WindowInsetsControllerCompat(window, window.decorView)

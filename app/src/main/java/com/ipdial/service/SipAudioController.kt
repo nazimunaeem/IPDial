@@ -2,6 +2,7 @@ package com.ipdial.service
 
 import android.util.Log
 import com.ipdial.data.model.CallSession
+import com.ipdial.util.DeviceUtil
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.pjsip.pjsua2.*
 
@@ -12,7 +13,8 @@ import org.pjsip.pjsua2.*
 object SipAudioController {
 
     private const val TAG = "SipEngine"
-    const val VOLUME_BOOST_FACTOR = 1.0f
+    const val MIC_GAIN_REAL = 1.2f
+    const val MIC_GAIN_EMULATOR = 2.5f
 
     fun setMute(muted: Boolean) {
         SipEngine.registerCurrentThreadEx()
@@ -25,7 +27,13 @@ object SipAudioController {
                         if (mi.type == pjmedia_type.PJMEDIA_TYPE_AUDIO &&
                             mi.status == pjsua_call_media_status.PJSUA_CALL_MEDIA_ACTIVE) {
                             val aud = AudioMedia.typecastFromMedia(call.getMedia(mi.index.toLong()))
-                            if (muted) aud.adjustTxLevel(0f) else aud.adjustTxLevel(VOLUME_BOOST_FACTOR)
+                            if (muted) {
+                                aud.adjustTxLevel(0f)
+                            } else {
+                                val isEmulator = DeviceUtil.isEmulator()
+                                val baseGain = if (isEmulator) MIC_GAIN_EMULATOR else MIC_GAIN_REAL
+                                aud.adjustTxLevel(baseGain)
+                            }
                         }
                     }
                     SipEngine._callSession.value = session.copy(isMuted = muted)
@@ -91,8 +99,19 @@ object SipAudioController {
             SipEngine.callMap[session.callId]?.let { call ->
                 try {
                     val prm = CallOpParam()
-                    if (onHold) call.setHold(prm) else call.reinvite(prm)
-                    SipEngine._callSession.value = session.copy(isOnHold = onHold)
+                    if (onHold) {
+                        call.setHold(prm)
+                        SipEngine._callSession.value = session.copy(isOnHold = true)
+                    } else {
+                        // Re-INVITE to unhold; pjsip does not always re-fire
+                        // onCallMediaState after the reintive completes, so we
+                        // re-establish the audio path explicitly afterwards.
+                        call.reinvite(prm)
+                        SipEngine._callSession.value = session.copy(isOnHold = false)
+                        SipEngine.reconnectAudioPathForCall(session.callId)
+                        SipEngine.forceAudioDevicesForCall()
+                        SipEngine.forceEcForCallAudio()
+                    }
                 } catch (e: Throwable) {
                     SipEngine.logEx("holdCall failed: ${e.message}", true)
                 }

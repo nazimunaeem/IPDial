@@ -107,17 +107,22 @@ fun CallControlButton(
                 .size(60.dp)
                 .clip(CircleShape)
                 .background(
-                    if (active) MaterialTheme.colorScheme.primaryContainer
-                    else MaterialTheme.colorScheme.surfaceVariant
+                    when {
+                        !enabled -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                        active   -> MaterialTheme.colorScheme.primaryContainer
+                        else     -> MaterialTheme.colorScheme.surfaceVariant
+                    }
                 )
                 .then(if (enabled) Modifier.clickableNoRipple { onClick() } else Modifier)
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = label,
-                tint = if (active) MaterialTheme.colorScheme.primary
-                       else if (!enabled) MaterialTheme.colorScheme.outline
-                       else MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = when {
+                    !enabled -> MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)
+                    active   -> MaterialTheme.colorScheme.primary
+                    else     -> MaterialTheme.colorScheme.onSurfaceVariant
+                },
                 modifier = Modifier.size(24.dp)
             )
         }
@@ -125,7 +130,8 @@ fun CallControlButton(
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant
+                    else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)
         )
     }
 }

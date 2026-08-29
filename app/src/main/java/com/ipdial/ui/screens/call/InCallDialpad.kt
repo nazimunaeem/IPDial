@@ -20,6 +20,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.ipdial.ui.SipViewModel
@@ -28,6 +29,9 @@ import com.ipdial.ui.screens.clickableNoRipple
 @Composable
 fun InCallDialpad(vm: SipViewModel, onHide: () -> Unit) {
     var dtmfString by remember { mutableStateOf("") }
+    val configuration = LocalConfiguration.current
+    val isWide = configuration.screenWidthDp > 600
+    val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
 
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         // Display pressed digits
@@ -46,12 +50,12 @@ fun InCallDialpad(vm: SipViewModel, onHide: () -> Unit) {
             "1","2","3","4","5","6","7","8","9","*","0","#"
         )
         Column(
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-            modifier = Modifier.padding(horizontal = 32.dp)
+            verticalArrangement = Arrangement.spacedBy(if (isWide) 8.dp else 4.dp),
+            modifier = Modifier.padding(horizontal = if (isLandscape) (configuration.screenWidthDp * 0.3f).dp else 32.dp)
         ) {
             keys.chunked(3).forEach { row ->
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(if (isWide) 8.dp else 4.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     row.forEach { digit ->
@@ -60,7 +64,7 @@ fun InCallDialpad(vm: SipViewModel, onHide: () -> Unit) {
                             color = MaterialTheme.colorScheme.surfaceVariant,
                             modifier = Modifier
                                 .weight(1f)
-                                .height(52.dp)
+                                .height(if (isWide) 72.dp else 52.dp)
                                 .clip(RoundedCornerShape(50))
                                 .clickableNoRipple {
                                     dtmfString += digit
@@ -70,7 +74,7 @@ fun InCallDialpad(vm: SipViewModel, onHide: () -> Unit) {
                             Box(contentAlignment = Alignment.Center) {
                                 Text(
                                     digit,
-                                    style = MaterialTheme.typography.headlineSmall,
+                                    style = if (isWide) MaterialTheme.typography.displaySmall else MaterialTheme.typography.headlineSmall,
                                     color = MaterialTheme.colorScheme.onBackground
                                 )
                             }

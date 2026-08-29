@@ -34,11 +34,13 @@ object TelecomHelper {
         
         val extras = Bundle().apply {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                @Suppress("DEPRECATION")
                 putBoolean(PhoneAccount.EXTRA_LOG_SELF_MANAGED_CALLS, false)
             }
             // Use string literal if constant is missing in current API level context
             putBoolean("android.telecom.extra.SKIP_CALL_LOGGING", true)
         }
+        @Suppress("DEPRECATION")
         val phoneAccountBuilder = PhoneAccount.builder(handle, context.getString(R.string.app_name))
             .setCapabilities(PhoneAccount.CAPABILITY_SELF_MANAGED)
             .setShortDescription("SIP Calls via IPDial")

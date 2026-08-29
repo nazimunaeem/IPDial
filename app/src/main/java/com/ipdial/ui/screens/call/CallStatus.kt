@@ -11,22 +11,17 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.dp
 import com.ipdial.data.model.CallState
-import kotlinx.coroutines.delay
 
 @Composable
-fun PulsingStateLabel(state: CallState) {
+fun PulsingStateLabel(state: CallState, showShadow: Boolean = false) {
     val infiniteTransition = rememberInfiniteTransition(label = "statePulse")
 
     val alpha by infiniteTransition.animateFloat(
@@ -39,13 +34,34 @@ fun PulsingStateLabel(state: CallState) {
         label = "alpha"
     )
 
-    var dotCount by remember { mutableIntStateOf(0) }
-    LaunchedEffect(state) {
-        while (true) {
-            delay(400)
-            dotCount = (dotCount + 1) % 4
-        }
-    }
+    // Dot animations for "walking" effect
+    val dot1Alpha by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(600, delayMillis = 0),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "dot1"
+    )
+    val dot2Alpha by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(600, delayMillis = 200),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "dot2"
+    )
+    val dot3Alpha by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(600, delayMillis = 400),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "dot3"
+    )
 
     val label = when (state) {
         CallState.CALLING -> "Calling"
@@ -62,28 +78,26 @@ fun PulsingStateLabel(state: CallState) {
     }
 
     val style = MaterialTheme.typography.titleLarge.copy(
-        shadow = Shadow(Color.Black, Offset(1f, 1f), 4f)
+        shadow = if (showShadow) Shadow(Color.Black, Offset(1f, 1f), 4f) else null
     )
-
-    val density = LocalDensity.current
-    var dotsWidthPx by remember { mutableIntStateOf(0) }
 
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
             text = label,
             style = style,
-            color = color.copy(alpha = alpha),
+            color = color.copy(alpha = alpha)
         )
-        Box(modifier = Modifier.width(with(density) { dotsWidthPx.toDp() })) {
-            Text(
-                text = ".".repeat(dotCount),
-                style = style,
-                color = color.copy(alpha = alpha),
-                onTextLayout = { dotsWidthPx = it.size.width }
-            )
+        // Fixed width box for dots to prevent layout jitter
+        Box(modifier = Modifier.width(24.dp)) {
+            Row {
+                Text(text = ".", style = style, color = color.copy(alpha = dot1Alpha * alpha))
+                Text(text = ".", style = style, color = color.copy(alpha = dot2Alpha * alpha))
+                Text(text = ".", style = style, color = color.copy(alpha = dot3Alpha * alpha))
+            }
         }
     }
 }
+
 
 fun formatDuration(seconds: Long): String {
     val h = seconds / 3600

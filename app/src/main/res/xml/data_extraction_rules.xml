@@ -1,11 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <data-extraction-rules>
     <cloud-backup>
-        <include domain="sharedpref" path="."/>
-        <include domain="database" path="."/>
+        <!-- Never upload SIP account credentials or call recordings -->
+        <exclude domain="file" path="datastore/ipdial_accounts.preferences_pb" />
+        <exclude domain="file" path="datastore/ipdial_accounts.preferences_pb.tmp" />
+        <exclude domain="file" path="recordings/" />
     </cloud-backup>
     <device-transfer>
-        <include domain="sharedpref" path="."/>
-        <include domain="database" path="."/>
+        <!-- Same protection for device-to-device transfers -->
+        <exclude domain="file" path="datastore/ipdial_accounts.preferences_pb" />
+        <exclude domain="file" path="datastore/ipdial_accounts.preferences_pb.tmp" />
+        <exclude domain="file" path="recordings/" />
     </device-transfer>
 </data-extraction-rules>

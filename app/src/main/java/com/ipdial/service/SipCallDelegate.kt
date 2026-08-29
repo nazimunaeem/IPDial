@@ -7,6 +7,7 @@ import android.util.Log
 import com.ipdial.data.model.CallDirection
 import com.ipdial.data.model.CallSession
 import com.ipdial.data.model.CallState
+import com.ipdial.util.DeviceUtil
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,6 +29,63 @@ class SipCallDelegate(
 ) : Call(acct, callId) {
 
     private var _isDeleteScheduled = false
+    private var ecEnforcedForCallId = -1
+    private var mediaDumpScheduled = false
+    private var audioWatchdogActive = false
+    // Last codec detected for this call — used to avoid redundant state updates.
+    private var detectedCodec: String? = null
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    /**
+     * Samsung OneUI Telecom flips the device into the cellular "SIM CALL" audio mode
+     * the moment a connection becomes ACTIVE (logcat: "Audio focus entering SIM CALL state").
+     * In that mode the telephony HAL owns the microphone and our OpenSL capture reads
+     * digital silence, so the far end hears nothing (DTMF still passes since it bypasses
+     * the mic). This watchdog reclaims the audio path for VoIP for the duration of the call.
+     */
+    private val audioWatchdog = object : Runnable {
+        override fun run() {
+            if (!audioWatchdogActive) return
+            try {
+                val curMode = audioManager.mode
+                if (curMode != AudioManager.MODE_IN_COMMUNICATION) {
+                    audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+                    log("AUDIO WATCHDOG: mode was $curMode, restored MODE_IN_COMMUNICATION", false)
+                }
+                if (audioManager.isMicrophoneMute &&
+                    _callSession.value?.isMuted != true) {
+                    audioManager.isMicrophoneMute = false
+                    log("AUDIO WATCHDOG: cleared microphone mute", false)
+                }
+            } catch (e: Throwable) {
+                log("audio watchdog error: ${e.message}", true)
+            }
+            if (audioWatchdogActive) mainHandler.postDelayed(this, 700L)
+        }
+    }
+
+    private fun startAudioWatchdog() {
+        if (audioWatchdogActive) return
+        audioWatchdogActive = true
+        log("AUDIO WATCHDOG: started", false)
+        mainHandler.post(audioWatchdog)
+    }
+
+    private fun safeStatusCode(ci: org.pjsip.pjsua2.CallInfo): Int {
+        return try {
+            ci.lastStatusCode?.swigValue() ?: 0
+        } catch (e: Throwable) {
+            0
+        }
+    }
+
+    private fun stopAudioWatchdog() {
+        if (!audioWatchdogActive) return
+        audioWatchdogActive = false
+        mainHandler.removeCallbacks(audioWatchdog)
+        log("AUDIO WATCHDOG: stopped", false)
+    }
 
     override fun onCallState(prm: OnCallStateParam) {
         val currentCallId = try { getId() } catch (e: Throwable) {
@@ -62,7 +120,7 @@ class SipCallDelegate(
                 return
             }
 
-            log("Call $currentCallId state changed to ${ci.stateText} (code=${ci.lastStatusCode}, reason=${ci.lastReason})", false)
+            log("Call $currentCallId state changed to ${ci.stateText} (code=${safeStatusCode(ci)}, reason=${ci.lastReason})", false)
             val newState = when (ci.state) {
                 pjsip_inv_state.PJSIP_INV_STATE_CALLING -> CallState.CALLING
                 pjsip_inv_state.PJSIP_INV_STATE_INCOMING -> CallState.INCOMING
@@ -75,7 +133,15 @@ class SipCallDelegate(
             }
 
             if (newState == CallState.DISCONNECTED || newState == CallState.IDLE) {
-                log("ONCALLSTATE DISCONNECT BLOCK: callId=$currentCallId state=$newState code=${ci.lastStatusCode} reason=${ci.lastReason}", false)
+                val statusCode = safeStatusCode(ci)
+                val statusReason = ci.lastReason
+                log("ONCALLSTATE DISCONNECT BLOCK: callId=$currentCallId state=$newState code=$statusCode reason=$statusReason", false)
+                stopAudioWatchdog()
+
+                // Preserve disconnect code/reason for SipService.observeCallState() to log & toast
+                if (statusCode > 0 || !statusReason.isNullOrBlank()) {
+                    SipEngine.pendingDisconnectInfo = Pair(if (statusCode > 0) statusCode else null, statusReason)
+                }
 
                 try {
                     SipEngine.onCallDisconnected?.invoke(currentCallId)
@@ -83,16 +149,23 @@ class SipCallDelegate(
                     log("onCallDisconnected callback failed: ${e.message}", true)
                 }
 
+                // CRITICAL FIX: Remove from callMap BEFORE nulling session to prevent race conditions
                 callMap.remove(currentCallId)
                 log("ONCALLSTATE DISCONNECT: callId=$currentCallId removed from callMap, callMapSize=${callMap.size}", false)
 
+                // Null the session immediately
                 _callSession.value = null
                 log("ONCALLSTATE DISCONNECT: callId=$currentCallId session nulled", false)
 
                 CoroutineScope(Dispatchers.Main).launch {
                     try {
                         audioManager.mode = AudioManager.MODE_NORMAL
-                        audioManager.isSpeakerphoneOn = false
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                            audioManager.clearCommunicationDevice()
+                        } else {
+                            @Suppress("DEPRECATION")
+                            audioManager.isSpeakerphoneOn = false
+                        }
                     } catch (e: Throwable) {
                         log("Failed to reset audio manager: ${e.message}", true)
                     }
@@ -127,6 +200,84 @@ class SipCallDelegate(
                 if (_callSession.value != null) {
                     _callSession.value = _callSession.value?.copy(state = newState, callId = currentCallId)
                     log("ONCALLSTATE ELSE: callId=$currentCallId sessionAfter=${_callSession.value?.state}", false)
+                }
+
+                if (newState == CallState.CONFIRMED && !mediaDumpScheduled) {
+                    mediaDumpScheduled = true
+                    log("ONCALLSTATE CONFIRMED: scheduling media dump in 6s", false)
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        try {
+                            SipEngine.registerCurrentThreadEx()
+                            log("=== MEDIA DUMP (6s post-CONFIRMED) callId=$currentCallId ===", false)
+                            val dump = try { this.dump(true, "") } catch (e: Throwable) { "call dump failed: ${e.message}" }
+                            dump.split('\n').forEach { line -> log(line, false) }
+                            Thread.sleep(300)
+                            log("=== MIC VS TX LEVELS (sample every 500ms while speaking) ===", false)
+                            val capMedia = try { SipEngine.endpoint?.audDevManager()?.captureDevMedia } catch (e: Throwable) { null }
+                            val callMedia = try { SipEngine.endpoint?.audDevManager()?.playbackDevMedia } catch (e: Throwable) { null }
+                            var recMic: org.pjsip.pjsua2.AudioMediaRecorder? = null
+                            var recTx: org.pjsip.pjsua2.AudioMediaRecorder? = null
+                            try {
+                                val probeDir = SipEngine.probeDir()
+                                if (probeDir != null) {
+                                    recMic = org.pjsip.pjsua2.AudioMediaRecorder().also { it.createRecorder(java.io.File(probeDir, "probe_mic.wav").absolutePath) }
+                                    recTx = org.pjsip.pjsua2.AudioMediaRecorder().also { it.createRecorder(java.io.File(probeDir, "probe_tx.wav").absolutePath) }
+                                    capMedia?.startTransmit(recMic)
+                                    callMedia?.startTransmit(recTx)
+                                    log("PROBE: recording mic+tx to ${probeDir.absolutePath}", false)
+                                } else {
+                                    log("PROBE: probeDir unavailable", false)
+                                }
+                            } catch (e: Throwable) {
+                                log("PROBE: recorder setup failed: ${e.message}", true)
+                            }
+                            if (capMedia != null || callMedia != null) {
+                                repeat(12) { i ->
+                                    try {
+                                        val capRx = capMedia?.getRxLevel() ?: -1
+                                        val callTx = callMedia?.getTxLevel() ?: -1
+                                        log("LEVELS[$i]: captureRx=$capRx callTx=$callTx", false)
+                                    } catch (e: Throwable) {
+                                        log("level sample $i failed: ${e.message}", true)
+                                    }
+                                    try { Thread.sleep(500) } catch (e: InterruptedException) { /* ignore */ }
+                                }
+                            } else {
+                                log("LEVELS: could not obtain capture or call media", false)
+                            }
+                            try {
+                                recMic?.let { r ->
+                                    try { capMedia?.stopTransmit(r) } catch (e: Throwable) {}
+                                    r.delete()
+                                }
+                                recTx?.let { r ->
+                                    try { callMedia?.stopTransmit(r) } catch (e: Throwable) {}
+                                    r.delete()
+                                }
+                                log("PROBE: cleaned up recorders", false)
+                            } catch (e: Throwable) {
+                                log("PROBE: cleanup failed: ${e.message}", true)
+                            }
+                        } catch (e: Throwable) {
+                            log("media dump failed: ${e.message}", true)
+                        }
+                    }, 6000L)
+                }
+
+                if ((newState == CallState.EARLY || newState == CallState.CONFIRMED) && !audioWatchdogActive) {
+                    startAudioWatchdog()
+                }
+
+                // CRITICAL FIX: Force audio devices and EC setup when call becomes CONFIRMED
+                // This ensures the audio path is properly established
+                if (newState == CallState.CONFIRMED) {
+                    log("ONCALLSTATE: Call confirmed, forcing audio devices and EC setup", false)
+                    try {
+                        SipEngine.forceAudioDevicesForCall()
+                        SipEngine.forceEcForCallAudio()
+                    } catch (e: Throwable) {
+                        log("Failed to force audio setup on CONFIRMED: ${e.message}", true)
+                    }
                 }
 
                 SipConnectionService.getConnection(currentCallId)?.let { conn ->
@@ -167,6 +318,11 @@ class SipCallDelegate(
                     val session = _callSession.value
                     if (session != null && session.callId == currentCallId) {
                         log("ONCALLTSXSTATE: Disconnect detected for callId=$currentCallId, executing local hangup cleanup", false)
+                        val statusCode = if (ci != null) safeStatusCode(ci) else 0
+                        val statusReason = ci?.lastReason
+                        if (statusCode > 0 || !statusReason.isNullOrBlank()) {
+                            SipEngine.pendingDisconnectInfo = Pair(if (statusCode > 0) statusCode else null, statusReason)
+                        }
                         try { SipEngine.onCallDisconnected?.invoke(currentCallId) } catch (_: Throwable) {}
                         callMap.remove(currentCallId)
                         _callSession.value = null
@@ -191,9 +347,28 @@ class SipCallDelegate(
                 return
             }
 
-            if (audioManager.mode != AudioManager.MODE_IN_COMMUNICATION) {
-                audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+            try {
+                if (audioManager.mode != AudioManager.MODE_IN_COMMUNICATION) {
+                    audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+                }
+                audioManager.isMicrophoneMute = false
+                SipEngine.audioRouter?.requestAudioFocus()
+            } catch (e: Throwable) {
+                log("Audio setup failed in onCallMediaState: ${e.message}", true)
             }
+
+            val currentCallId = try { getId() } catch (_: Throwable) { -1 }
+            log("onCallMediaState: callId=$currentCallId state=${ci.stateText} mediaCount=${ci.media.size}", false)
+
+            if (currentCallId != ecEnforcedForCallId) {
+                ecEnforcedForCallId = currentCallId
+                SipEngine.forceAudioDevicesForCall()
+                SipEngine.forceEcForCallAudio()
+            }
+
+            val adm = endpoint()?.audDevManager()
+            val captureMedia = adm?.captureDevMedia
+            val playbackMedia = adm?.playbackDevMedia
 
             for (i in 0 until ci.media.size.toInt()) {
                 try {
@@ -203,18 +378,39 @@ class SipCallDelegate(
                         val aud = AudioMedia.typecastFromMedia(getMedia(mi.index.toLong()))
 
                         val currentSession = _callSession.value
-                        val micLevel = if (currentSession?.isMuted == true) 0f else SipAudioController.VOLUME_BOOST_FACTOR
-                        val speakerLevel = currentSession?.rxVolume ?: SipAudioController.VOLUME_BOOST_FACTOR
+                        val isEmulator = DeviceUtil.isEmulator()
+                        val baseGain = if (isEmulator) SipAudioController.MIC_GAIN_EMULATOR else SipAudioController.MIC_GAIN_REAL
+                        val micLevel = if (currentSession?.isMuted == true) 0f else baseGain
+                        val speakerLevel = currentSession?.rxVolume ?: 2.5f
 
                         aud.adjustTxLevel(micLevel)
                         aud.adjustRxLevel(speakerLevel)
 
-                        aud.startTransmit(endpoint()?.audDevManager()?.playbackDevMedia)
-                        endpoint()?.audDevManager()?.captureDevMedia?.startTransmit(aud)
+                        // CRITICAL FIX: Ensure bidirectional audio path
+                        // 1. Remote audio (RX) -> local speaker
+                        playbackMedia?.let { aud.startTransmit(it) }
+                        // 2. Local mic (TX) -> remote
+                        captureMedia?.let { it.startTransmit(aud) }
 
-                        SipEngine.recorder?.let {
-                            aud.startTransmit(it)
-                            endpoint()?.audDevManager()?.captureDevMedia?.startTransmit(it)
+                        // Recording: both directions
+                        SipEngine.recorder?.let { recorder ->
+                            aud.startTransmit(recorder)
+                            captureMedia?.let { it.startTransmit(recorder) }
+                        }
+                        
+                        log("onCallMediaState: Audio path established for callId=$currentCallId (captureMedia=$captureMedia, playbackMedia=$playbackMedia)", false)
+
+                        // Detect and surface the negotiated codec to the UI.
+                        val codecName = try {
+                            getStreamInfo(mi.index.toLong())?.codecName ?: ""
+                        } catch (_: Throwable) { "" }
+                        if (codecName.isNotBlank()) {
+                            val clean = codecName.trim().uppercase()
+                            if (clean != detectedCodec) {
+                                detectedCodec = clean
+                                log("onCallMediaState: negotiated codec for callId=$currentCallId = $clean", false)
+                                _callSession.value = _callSession.value?.copy(negotiatedCodec = clean)
+                            }
                         }
                     }
                 } catch (e: Throwable) {

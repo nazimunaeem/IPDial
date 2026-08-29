@@ -111,6 +111,12 @@ fun RecordingsScreen(vm: SipViewModel, onOpenDrawer: () -> Unit) {
                                             java.io.FileInputStream(file).use { fis ->
                                                 mediaPlayer.setDataSource(fis.fd)
                                             }
+                                            mediaPlayer.setAudioAttributes(
+                                                android.media.AudioAttributes.Builder()
+                                                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                                                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                                                    .build()
+                                            )
                                             mediaPlayer.prepare()
                                             mediaPlayer.start()
                                             playingFile = file

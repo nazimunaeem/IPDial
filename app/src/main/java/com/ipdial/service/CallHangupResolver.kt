@@ -69,7 +69,7 @@ object CallHangupResolver {
      * - All other cases → `null` (PJSIP auto-selects CANCEL for pre-answer outgoing,
      *   BYE for any confirmed call).
      */
-    fun resolveSipStatusCode(session: CallSession?): Int? {
+    fun resolveSipStatusCode(session: CallSession?): org.pjsip.pjsua2.pjsip_status_code? {
         if (session == null) return null
 
         return when {

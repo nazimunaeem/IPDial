@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -51,11 +52,21 @@ import com.ipdial.ui.screens.call.PulsingStateLabel
 import com.ipdial.ui.screens.call.formatDuration
 import com.ipdial.ui.theme.EndRed
 import kotlinx.coroutines.delay
+import android.util.Log
 
 @Composable
 fun CallScreen(vm: SipViewModel, session: CallSession) {
     val liveCallSession by vm.callSession.collectAsState()
     val activeSession = liveCallSession ?: session
+    
+    // Bail out only when the call has fully ended (session null). We intentionally
+    // do NOT compare callIds — vm.callSession IS SipEngine.callSession, so a
+    // strict id check would blank-flash the screen during CALLING/INCOMING →
+    // CONFIRMED transitions.
+    if (activeSession.state == CallState.DISCONNECTED || activeSession.state == CallState.IDLE) {
+        Log.d("CallScreen", "Call ended, not rendering for callId=${activeSession.callId}")
+        return
+    }
 
     val accounts by vm.accounts.collectAsState()
     val contacts by vm.contacts.collectAsState()
@@ -76,7 +87,7 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
     val displayName = contact?.name ?: vm.cleanDisplayName(activeSession.remoteDisplayName, activeSession.remoteUri)
 
     var showDialpad by remember { mutableStateOf(false) }
-    var elapsedSeconds by remember { mutableLongStateOf(0L) }
+    var elapsedSeconds by remember(activeSession.callId) { mutableLongStateOf(0L) }
 
     val isActive = activeSession.state == CallState.CONFIRMED
 
@@ -96,13 +107,17 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
     val textColor = if (isFullScreenPhoto) Color.White else MaterialTheme.colorScheme.onBackground
     val subtitleColor = if (isFullScreenPhoto) Color.White.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant
 
-    // Call timer — uses live session from ViewModel so it stops when remote hangs up
-    LaunchedEffect(activeSession) {
-        if (isActive) {
-            while (liveCallSession?.state == CallState.CONFIRMED) {
-                delay(1000)
-                elapsedSeconds++
-            }
+    // Call timer — ticks every second while the live session is CONFIRMED.
+    // Keyed on callId so elapsedSeconds resets to 0 for each new call.
+    LaunchedEffect(activeSession.callId) {
+        // Wait for the call to become active before ticking
+        while (liveCallSession?.state != CallState.CONFIRMED) {
+            delay(200)
+            if (liveCallSession == null) return@LaunchedEffect
+        }
+        while (liveCallSession?.state == CallState.CONFIRMED) {
+            delay(1000)
+            elapsedSeconds++
         }
     }
 
@@ -159,7 +174,8 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
                 color = textColor,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(horizontal = 24.dp),
-                maxLines = 1
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
             )
 
             if (displayName != vm.cleanUri(activeSession.remoteUri)) {
@@ -194,7 +210,7 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
                     )
                 }
             } else {
-                PulsingStateLabel(activeSession.state)
+                PulsingStateLabel(activeSession.state, showShadow = isFullScreenPhoto)
             }
 
             // Avatar circle
@@ -239,14 +255,16 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
 
             Spacer(Modifier.height(20.dp))
 
-            // End call button
+            // End call button — use navigationBarsPadding so gesture-nav devices
+            // (Pixel, Samsung One UI 5+) don't have the nav bar overlap the button.
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
-                    .padding(bottom = 80.dp)
+                    .navigationBarsPadding()
+                    .padding(bottom = 32.dp)
                     .width(160.dp)
-                    .height(56.dp)
-                    .clip(RoundedCornerShape(28.dp))
+                    .height(64.dp)
+                    .clip(RoundedCornerShape(32.dp))
                     .background(EndRed)
                     .then(Modifier.clickableNoRipple { vm.hangup() })
             ) {

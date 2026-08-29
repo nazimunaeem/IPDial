@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <full-backup-content>
-    <include domain="sharedpref" path="."/>
-    <include domain="database" path="."/>
+    <!-- SIP account credentials (DataStore) must never sync to the cloud.
+         The AndroidKeyStore encryption key is not backed up, so restoring an
+         encrypted accounts file would leave credentials unreadable anyway. -->
+    <exclude domain="file" path="datastore/ipdial_accounts.preferences_pb" />
+    <exclude domain="file" path="datastore/ipdial_accounts.preferences_pb.tmp" />
+    <!-- Call recordings are sensitive (recorded conversations) -->
+    <exclude domain="file" path="recordings/" />
 </full-backup-content>

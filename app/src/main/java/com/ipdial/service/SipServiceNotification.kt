@@ -158,11 +158,12 @@ fun showCallNotificationStatic(context: Context, callerName: String = "", callId
         .build()
 
     val fullscreenIntent = Intent(context, MainActivity::class.java).apply {
-        action = "com.ipdial.ACTION_SHOW_CALL"
+        action = if (isIncomingRinging) "com.ipdial.ACTION_INCOMING_CALL" else "com.ipdial.ACTION_SHOW_CALL"
         flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        putExtra("callId", targetCallId)
     }
     val contentPi = PendingIntent.getActivity(
-        context, 0, fullscreenIntent,
+        context, targetCallId, fullscreenIntent,
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )
 

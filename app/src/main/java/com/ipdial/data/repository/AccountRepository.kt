@@ -1,5 +1,6 @@
 package com.ipdial.data.repository
 
+import android.content.ContentResolver
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
@@ -8,9 +9,16 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.google.gson.Gson
+import com.google.gson.GsonBuilder
+import com.google.gson.JsonDeserializationContext
+import com.google.gson.JsonDeserializer
+import com.google.gson.JsonElement
 import com.google.gson.reflect.TypeToken
+import com.ipdial.R
+import java.lang.reflect.Type
 import com.ipdial.data.model.IncomingCallMode
 import com.ipdial.data.model.KeypadDesign
+import com.ipdial.data.model.PreferredCodec
 import com.ipdial.data.model.SipAccount
 import com.ipdial.data.model.ThemeMode
 import kotlinx.coroutines.flow.Flow
@@ -22,7 +30,17 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
 
 class AccountRepository(private val context: Context) {
 
-    private val gson = Gson()
+    private val gson: Gson = GsonBuilder()
+        .registerTypeAdapter(PreferredCodec::class.java, object : JsonDeserializer<PreferredCodec> {
+            override fun deserialize(json: JsonElement, typeOfT: Type, context: JsonDeserializationContext): PreferredCodec? {
+                return try {
+                    PreferredCodec.valueOf(json.asString)
+                } catch (_: IllegalArgumentException) {
+                    null
+                }
+            }
+        })
+        .create()
     private val accountsKey = stringPreferencesKey("accounts")
     private val ringtoneKey = stringPreferencesKey("global_ringtone")
     private val dndKey = booleanPreferencesKey("dnd_enabled")
@@ -42,6 +60,38 @@ class AccountRepository(private val context: Context) {
     private val recordingCounterKey = androidx.datastore.preferences.core.intPreferencesKey("recording_counter")
     private val batteryNoticeShownKey = booleanPreferencesKey("battery_notice_shown")
     private val autoRecordKey = booleanPreferencesKey("auto_record_enabled")
+    private val savedLabelsKey = stringPreferencesKey("saved_labels")
+    private val savedHostsKey = stringPreferencesKey("saved_hosts")
+
+    val savedLabels: Flow<List<String>> = context.dataStore.data.map { prefs ->
+        val json = prefs[savedLabelsKey] ?: "[]"
+        val type = object : TypeToken<List<String>>() {}.type
+        gson.fromJson(json, type) ?: emptyList()
+    }
+
+    val savedHosts: Flow<List<String>> = context.dataStore.data.map { prefs ->
+        val json = prefs[savedHostsKey] ?: "[]"
+        val type = object : TypeToken<List<String>>() {}.type
+        gson.fromJson(json, type) ?: emptyList()
+    }
+
+    suspend fun addSavedLabel(label: String) {
+        if (label.isBlank()) return
+        val current = savedLabels.first().toMutableSet()
+        current.add(label)
+        context.dataStore.edit { prefs ->
+            prefs[savedLabelsKey] = gson.toJson(current.toList())
+        }
+    }
+
+    suspend fun addSavedHost(host: String) {
+        if (host.isBlank()) return
+        val current = savedHosts.first().toMutableSet()
+        current.add(host)
+        context.dataStore.edit { prefs ->
+            prefs[savedHostsKey] = gson.toJson(current.toList())
+        }
+    }
 
     val accounts: Flow<List<SipAccount>> = context.dataStore.data.map { prefs ->
         val json = prefs[accountsKey] ?: return@map emptyList()
@@ -51,8 +101,12 @@ class AccountRepository(private val context: Context) {
     }
 
     val globalRingtone: Flow<String?> = context.dataStore.data.map { prefs ->
-        prefs[ringtoneKey] ?: "android.resource://${context.packageName}/raw/ipdial_ringtone"
+        prefs[ringtoneKey] ?: builtInRingtoneUri()
     }
+
+    fun builtInRingtoneUri(): String =
+        ContentResolver.SCHEME_ANDROID_RESOURCE + "://" +
+            context.packageName + "/" + R.raw.ipdial_ringtone
 
     val themeMode: Flow<ThemeMode> = context.dataStore.data.map { prefs -> 
         try { ThemeMode.valueOf(prefs[themeKey] ?: "System") } catch (_: Exception) { ThemeMode.System }
@@ -96,20 +150,10 @@ class AccountRepository(private val context: Context) {
     suspend fun getOrCreateDeviceId(): String {
         val current = context.dataStore.data.map { it[deviceIdKey] }.first()
         if (!current.isNullOrBlank()) return current
-        
-        // Try to get ANDROID_ID for better persistence across updates/reinstalls
-        val androidId = android.provider.Settings.Secure.getString(
-            context.contentResolver,
-            android.provider.Settings.Secure.ANDROID_ID
-        )
-        
-        // Use ANDROID_ID if available, otherwise fallback to UUID
-        // "9774d56d682e549c" is a common bug ID on some devices to avoid
-        val newId = if (!androidId.isNullOrBlank() && androidId != "9774d56d682e549c") {
-            androidId
-        } else {
-            UUID.randomUUID().toString()
-        }
+
+        // Use a fresh random UUID so the identifier is device-specific but not
+        // linkable to ANDROID_ID (avoids persistent cross-app tracking exposure).
+        val newId = UUID.randomUUID().toString()
 
         context.dataStore.edit { it[deviceIdKey] = newId }
         return newId
@@ -246,7 +290,15 @@ class AccountRepository(private val context: Context) {
         }
     }
 
-    private fun secureAccount(acc: SipAccount): SipAccount = acc
+    private fun encryptPassword(password: String): String {
+        // Already-encrypted values (or empty passwords) are written through untouched
+        // to avoid double-encrypting migrated data.
+        if (password.isEmpty()) return password
+        if (password.startsWith("AES:") || password.startsWith("ENC:")) return password
+        return CryptoHelper.encrypt(password)
+    }
+
+    private fun secureAccount(acc: SipAccount): SipAccount = acc.copy(password = encryptPassword(acc.password))
     private fun unsecureAccount(acc: SipAccount): SipAccount = acc.copy(password = decryptPassword(acc.password))
 
     private fun getAccountsList(prefs: Preferences): List<SipAccount> {
@@ -258,8 +310,9 @@ class AccountRepository(private val context: Context) {
     }
 
     private fun saveAccountsList(prefs: androidx.datastore.preferences.core.MutablePreferences, accountsList: List<SipAccount>) {
-        // We save them exactly as they are (which is plain text now)
-        prefs[accountsKey] = gson.toJson(accountsList)
+        // Encrypt SIP passwords with the AndroidKeyStore-backed key before persisting
+        // so credentials are never stored in plain text.
+        prefs[accountsKey] = gson.toJson(accountsList.map { secureAccount(it) })
     }
 
     suspend fun saveAccount(account: SipAccount) {

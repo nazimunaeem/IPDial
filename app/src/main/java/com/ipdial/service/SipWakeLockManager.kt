@@ -29,7 +29,7 @@ class SipWakeLockManager(private val context: Context) {
                 PowerManager.FULL_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP or PowerManager.ON_AFTER_RELEASE,
                 "IPDial:incoming_call_wake"
             )
-            wl.acquire(10000L)
+            wl.acquire(20000L)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to acquire incoming wake lock", e)
         }

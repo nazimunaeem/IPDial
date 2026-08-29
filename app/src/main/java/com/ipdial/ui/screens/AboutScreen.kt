@@ -37,7 +37,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -57,7 +57,7 @@ fun AboutScreen(vm: SipViewModel, onOpenDrawer: () -> Unit) {
     val accounts by vm.accounts.collectAsState()
     val adsEnabled by vm.adsEnabled.collectAsState()
     val scope = rememberCoroutineScope()
-    val clipboardManager = LocalClipboardManager.current
+    val clipboardManager = LocalClipboard.current
 
     // Current version from PackageManager
     val currentVersion = remember {
@@ -151,8 +151,14 @@ fun AboutScreen(vm: SipViewModel, onOpenDrawer: () -> Unit) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable {
-                        clipboardManager.setText(AnnotatedString(deviceId))
-                        android.widget.Toast.makeText(context, "Device ID copied", android.widget.Toast.LENGTH_SHORT).show()
+                        scope.launch {
+                            clipboardManager.setClipEntry(
+                                androidx.compose.ui.platform.ClipEntry(
+                                    android.content.ClipData.newPlainText("Device ID", deviceId)
+                                )
+                            )
+                            android.widget.Toast.makeText(context, "Device ID copied", android.widget.Toast.LENGTH_SHORT).show()
+                        }
                     }
             ) {
                 Column(

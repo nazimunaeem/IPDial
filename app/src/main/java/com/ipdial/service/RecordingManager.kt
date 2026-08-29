@@ -3,9 +3,6 @@ package com.ipdial.service
 import android.content.Context
 import com.ipdial.data.model.CallSession
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 /**
  * Shared helper for call recording so the UI (SipViewModel) and the foreground
@@ -23,16 +20,10 @@ object RecordingManager {
 
     fun nextRecordingFile(context: Context, session: CallSession): File {
         val folder = recordingsFolder(context)
-        val sdf = SimpleDateFormat("yyyyMMddHHmmss", Locale.US)
-        val dateStr = sdf.format(Date())
-        val num = session.remoteUri
-            .replace("<", "")
-            .replace(">", "")
-            .removePrefix("sip:")
-            .substringBefore("@")
-            .substringBefore(";")
-        val cleanNum = num.filter { it.isLetterOrDigit() || it == '+' }
-        return File(folder, "IPDial_${cleanNum}_${dateStr}.wav")
+        // Millisecond timestamp + short random suffix guarantees uniqueness
+        // without exposing the dialed number in the filename (privacy).
+        val name = "IPDial_" + System.currentTimeMillis() + "_" + java.util.UUID.randomUUID().toString().take(4) + ".wav"
+        return File(folder, name)
     }
 
     fun startRecording(context: Context, session: CallSession) {
