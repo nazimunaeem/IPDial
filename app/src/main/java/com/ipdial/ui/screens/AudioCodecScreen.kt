@@ -11,6 +11,8 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -61,7 +63,7 @@ fun AudioCodecScreen(
             if (enabledAccounts.isNotEmpty()) {
                 item {
                     Text(
-                        "Preferred Codec",
+                        "Enabled Codecs",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(vertical = 8.dp)
@@ -73,7 +75,16 @@ fun AudioCodecScreen(
                         AccountCodecSection(
                             account = account,
                             availableCodecs = availableCodecs,
-                            onCodecSelected = { codec ->
+                            onToggleCodec = { codec ->
+                                val set = account.enabledCodecs.toMutableSet()
+                                if (set.contains(codec)) set.remove(codec) else set.add(codec)
+                                if (set.isNotEmpty()) {
+                                    val preferred = if (account.codec == codec && !set.contains(codec))
+                                        set.first() else account.codec
+                                    vm.saveAccount(account.copy(enabledCodecs = set, codec = preferred))
+                                }
+                            },
+                            onSelectPreferred = { codec ->
                                 vm.saveAccount(account.copy(codec = codec))
                             }
                         )
@@ -81,15 +92,25 @@ fun AudioCodecScreen(
                 } else if (activeAccount != null) {
                     val acct = activeAccount!!
                     items(PreferredCodec.entries) { codec ->
-                        val isEngineAvailable = availableCodecs.any { 
-                            it.name.lowercase().contains(codec.name.lowercase().replace("g711", "pcm")) && it.isAvailable 
+                        val isEngineAvailable = availableCodecs.any {
+                            it.name.lowercase().contains(codec.name.lowercase().replace("g711", "pcm")) && it.isAvailable
                         }
                         CodecSelectionRow(
                             codec = codec,
-                            isSelected = acct.codec == codec,
+                            isEnabled = acct.enabledCodecs.contains(codec),
+                            isPreferred = acct.codec == codec,
                             isEngineAvailable = isEngineAvailable,
-                            onClick = {
-                                vm.saveAccount(acct.copy(codec = codec))
+                            onToggleEnabled = {
+                                val set = acct.enabledCodecs.toMutableSet()
+                                if (set.contains(codec)) set.remove(codec) else set.add(codec)
+                                if (set.isNotEmpty()) {
+                                    val preferred = if (acct.codec == codec && !set.contains(codec))
+                                        set.first() else acct.codec
+                                    vm.saveAccount(acct.copy(enabledCodecs = set, codec = preferred))
+                                }
+                            },
+                            onSetPreferred = {
+                                if (acct.enabledCodecs.contains(codec)) vm.saveAccount(acct.copy(codec = codec))
                             }
                         )
                     }
@@ -122,7 +143,8 @@ fun AudioCodecScreen(
 fun AccountCodecSection(
     account: SipAccount,
     availableCodecs: List<CodecInfo>,
-    onCodecSelected: (PreferredCodec) -> Unit
+    onToggleCodec: (PreferredCodec) -> Unit,
+    onSelectPreferred: (PreferredCodec) -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -137,14 +159,16 @@ fun AccountCodecSection(
             )
             Spacer(Modifier.height(8.dp))
             PreferredCodec.entries.forEach { codec ->
-                val isEngineAvailable = availableCodecs.any { 
-                    it.name.lowercase().contains(codec.name.lowercase().replace("g711", "pcm")) && it.isAvailable 
+                val isEngineAvailable = availableCodecs.any {
+                    it.name.lowercase().contains(codec.name.lowercase().replace("g711", "pcm")) && it.isAvailable
                 }
                 CodecSelectionRow(
                     codec = codec,
-                    isSelected = account.codec == codec,
+                    isEnabled = account.enabledCodecs.contains(codec),
+                    isPreferred = account.codec == codec,
                     isEngineAvailable = isEngineAvailable,
-                    onClick = { onCodecSelected(codec) }
+                    onToggleEnabled = { onToggleCodec(codec) },
+                    onSetPreferred = { onSelectPreferred(codec) }
                 )
             }
         }
@@ -170,16 +194,18 @@ fun InfoCard() {
 @Composable
 fun CodecSelectionRow(
     codec: PreferredCodec,
-    isSelected: Boolean,
+    isEnabled: Boolean,
+    isPreferred: Boolean,
     isEngineAvailable: Boolean = true,
-    onClick: () -> Unit
+    onToggleEnabled: () -> Unit,
+    onSetPreferred: () -> Unit
 ) {
     Surface(
-        onClick = onClick,
+        onClick = onToggleEnabled,
         shape = RoundedCornerShape(12.dp),
-        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer 
+        color = if (isEnabled) MaterialTheme.colorScheme.primaryContainer
                 else MaterialTheme.colorScheme.surface,
-        border = if (isSelected) null 
+        border = if (isEnabled) null
                  else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         enabled = isEngineAvailable
     ) {
@@ -189,23 +215,44 @@ fun CodecSelectionRow(
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = codec.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                    color = if (isEngineAvailable) MaterialTheme.colorScheme.onSurface
-                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+            Checkbox(
+                checked = isEnabled,
+                onCheckedChange = { onToggleEnabled() },
+                enabled = isEngineAvailable,
+                colors = CheckboxDefaults.colors(
+                    checkedColor = MaterialTheme.colorScheme.primary
                 )
+            )
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = codec.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = if (isEnabled) FontWeight.Bold else FontWeight.Normal,
+                        color = if (isEngineAvailable) MaterialTheme.colorScheme.onSurface
+                                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                    )
+                    if (isPreferred) {
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "PREFERRED",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
                 Text(
                     text = when(codec) {
                         PreferredCodec.G711A -> "Best compatibility (PCMA) · 64 kbps · MOS 4.1"
                         PreferredCodec.G711U -> "Standard (PCMU) · 64 kbps · MOS 4.1"
                         PreferredCodec.G722 -> "High Definition · 48 kbps · MOS 4.0"
                         PreferredCodec.G729 -> "Low Bandwidth · 8 kbps · MOS 3.9"
+                        PreferredCodec.Opus -> "Best quality & adaptability · variable bitrate"
                     },
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f) 
+                    color = if (isEnabled) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
                             else MaterialTheme.colorScheme.onSurfaceVariant.copy(
                                 alpha = if (isEngineAvailable) 1f else 0.38f
                             )
@@ -218,8 +265,18 @@ fun CodecSelectionRow(
                     )
                 }
             }
-            if (isSelected) {
-                Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary)
+            if (isEnabled) {
+                IconButton(
+                    onClick = onSetPreferred,
+                    enabled = isEngineAvailable
+                ) {
+                    Icon(
+                        Icons.Default.Star,
+                        null,
+                        tint = if (isPreferred) MaterialTheme.colorScheme.primary
+                               else MaterialTheme.colorScheme.outline
+                    )
+                }
             }
         }
     }

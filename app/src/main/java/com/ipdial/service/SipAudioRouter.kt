@@ -92,11 +92,13 @@ class SipAudioRouter(
             val isEmulator = com.ipdial.util.DeviceUtil.isEmulator()
             
             if (!hasHwAec || isEmulator) {
-                val adm = SipEngine.endpoint?.audDevManager()
-                if (adm != null) {
-                    // ecOptions 33 = PJMEDIA_ECHO_DEFAULT | PJMEDIA_ECHO_USE_NOISE_SUPPRESSOR
-                    adm.setEcOptions(33, if (on) 600 else 500)
-                    Log.d(TAG, "EC tail set to ${if (on) 600 else 500} ms (speaker=$on)")
+                synchronized(SipEngine.pjsipLock) {
+                    val adm = SipEngine.endpoint?.audDevManager()
+                    if (adm != null) {
+                        // ecOptions 33 = PJMEDIA_ECHO_DEFAULT | PJMEDIA_ECHO_USE_NOISE_SUPPRESSOR
+                        adm.setEcOptions(33, if (on) 600 else 500)
+                        Log.d(TAG, "EC tail set to ${if (on) 600 else 500} ms (speaker=$on)")
+                    }
                 }
             } else {
                 Log.d(TAG, "Hardware AEC active, skipping software EC adjustment for speaker.")

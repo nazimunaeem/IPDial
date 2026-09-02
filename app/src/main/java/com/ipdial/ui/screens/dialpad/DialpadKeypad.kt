@@ -49,20 +49,21 @@ fun DialpadKeypad(
     val isWide = configuration.screenWidthDp > 600
     val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
     val horizontalPadding = if (isWide) (configuration.screenWidthDp * 0.2f).dp else 64.dp
-    val keySize = if (isWide) 80.dp else 68.dp
-    val gridHeight = if (isWide) 64.dp else 52.dp
+    val keySize = if (isWide) 80.dp else if (isLandscape) 52.dp else 68.dp
+    val gridHeight = if (isWide) 64.dp else if (isLandscape) 40.dp else 52.dp
+    val rowSpacing = if (isWide) 16.dp else if (isLandscape) 6.dp else 10.dp
 
     if (design == KeypadDesign.Rounded) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = if (isLandscape) (configuration.screenWidthDp * 0.3f).dp else horizontalPadding),
-            verticalArrangement = Arrangement.spacedBy(if (isWide) 16.dp else 10.dp)
+            verticalArrangement = Arrangement.spacedBy(rowSpacing)
         ) {
             keys.chunked(3).forEach { row ->
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(if (isWide) 16.dp else 10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(rowSpacing)
                 ) {
                     row.forEach { (digit, sub, _) ->
                         DialKeyRounded(

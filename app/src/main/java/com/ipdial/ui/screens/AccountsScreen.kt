@@ -13,9 +13,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.MoreVert
@@ -25,9 +23,7 @@ import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.MenuAnchorType
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
@@ -57,7 +53,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
-import com.ipdial.data.model.PreferredCodec
+
 import com.ipdial.data.model.SipAccount
 import com.ipdial.data.model.Transport
 import com.ipdial.ui.components.IPDialTopBar
@@ -253,7 +249,6 @@ fun AccountEditSheet(
     var proxy     by remember { mutableStateOf(existing?.proxy ?: "") }
     var port      by remember { mutableStateOf(existing?.port?.toString() ?: "") }
     var transport by remember { mutableStateOf(existing?.transport ?: Transport.UDP) }
-    var codec     by remember { mutableStateOf(existing?.codec ?: PreferredCodec.G729) }
     var ecEnabled by remember { mutableStateOf(existing?.ecEnabled ?: true) }
     var nsEnabled by remember { mutableStateOf(existing?.nsEnabled ?: true) }
     var agcEnabled by remember { mutableStateOf(existing?.agcEnabled ?: true) }
@@ -263,9 +258,6 @@ fun AccountEditSheet(
     val savedHosts by vm.repo.savedHosts.collectAsState(initial = emptyList<String>())
     val suggestedLabels = listOf("iCallBD", "BanglaCall").plus(savedLabels).distinct()
     val suggestedHosts = listOf("103.129.202.202", "sip.amarip.net").plus(savedHosts).distinct()
-    
-    var expandedLabel by remember { mutableStateOf(false) }
-    var expandedHost by remember { mutableStateOf(false) }
 
 
     // Auto-detect transport based on domain, proxy, and port
@@ -290,8 +282,7 @@ fun AccountEditSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp)
-                .padding(bottom = 32.dp)
-                .verticalScroll(rememberScrollState()),
+                .padding(bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(
@@ -300,35 +291,14 @@ fun AccountEditSheet(
                 modifier = Modifier.padding(bottom = 4.dp)
             )
 
-            ExposedDropdownMenuBox(
-                expanded = expandedLabel,
-                onExpandedChange = { expandedLabel = it }
-            ) {
-                OutlinedTextField(
-                    value = label,
-                    onValueChange = { label = it; expandedLabel = true },
-                    label = { Text("Display Name (e.g. Work, Home)") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth().menuAnchor(),
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expandedLabel) }
-                )
-                if (suggestedLabels.isNotEmpty()) {
-                    ExposedDropdownMenu(
-                        expanded = expandedLabel,
-                        onDismissRequest = { expandedLabel = false }
-                    ) {
-                        suggestedLabels.filter { it.contains(label, ignoreCase = true) || label.isEmpty() }.forEach { suggestion ->
-                            DropdownMenuItem(
-                                text = { Text(suggestion) },
-                                onClick = {
-                                    label = suggestion
-                                    expandedLabel = false
-                                }
-                            )
-                        }
-                    }
-                }
-            }
+            OutlinedTextField(
+                value = label,
+                onValueChange = { label = it },
+                label = { Text("Display Name (e.g. Work, Home)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            SuggestionChips(suggestions = suggestedLabels, current = label) { label = it }
             OutlinedTextField(
                 value = username, onValueChange = { username = it },
                 label = { Text("SIP Username *") },
@@ -348,35 +318,15 @@ fun AccountEditSheet(
                 },
                 modifier = Modifier.fillMaxWidth()
             )
-            ExposedDropdownMenuBox(
-                expanded = expandedHost,
-                onExpandedChange = { expandedHost = it }
-            ) {
-                OutlinedTextField(
-                    value = domain,
-                    onValueChange = { domain = it; expandedHost = true },
-                    label = { Text("SIP Domain / Server *") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth().menuAnchor(),
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expandedHost) }
-                )
-                if (suggestedHosts.isNotEmpty()) {
-                    ExposedDropdownMenu(
-                        expanded = expandedHost,
-                        onDismissRequest = { expandedHost = false }
-                    ) {
-                        suggestedHosts.filter { it.contains(domain, ignoreCase = true) || domain.isEmpty() }.forEach { suggestion ->
-                            DropdownMenuItem(
-                                text = { Text(suggestion) },
-                                onClick = {
-                                    domain = suggestion
-                                    expandedHost = false
-                                }
-                            )
-                        }
-                    }
-                }
-            }
+            OutlinedTextField(
+                value = domain,
+                onValueChange = { domain = it },
+                label = { Text("SIP Domain / Server *") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            SuggestionChips(suggestions = suggestedHosts, current = domain) { domain = it }
+
             OutlinedTextField(
                 value = proxy, onValueChange = { proxy = it },
                 label = { Text("Outbound Proxy (optional)") },
@@ -408,7 +358,8 @@ fun AccountEditSheet(
                                     proxy = proxy,
                                     port = port.toIntOrNull(),
                                     transport = transport,
-                                    codec = codec,
+                                    codec = existing?.codec,
+                                    enabledCodecs = existing?.enabledCodecs ?: com.ipdial.data.model.DEFAULT_ENABLED_CODECS,
                                     ecEnabled = ecEnabled,
                                     nsEnabled = nsEnabled,
                                     agcEnabled = agcEnabled
@@ -420,6 +371,39 @@ fun AccountEditSheet(
                 ) {
                     Text("Register")
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SuggestionChips(
+    suggestions: List<String>,
+    current: String,
+    onPick: (String) -> Unit
+) {
+    val filtered = suggestions.filter {
+        it.equals(current, ignoreCase = true).not() &&
+        (current.isEmpty() || it.contains(current, ignoreCase = true))
+    }
+    if (filtered.isEmpty()) return
+    FlowRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        filtered.forEach { suggestion ->
+            Surface(
+                shape = MaterialTheme.shapes.small,
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                modifier = Modifier.clickableWithRipple { onPick(suggestion) }
+            ) {
+                Text(
+                    text = suggestion,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                )
             }
         }
     }

@@ -65,9 +65,11 @@ fun SettingsScreen(
     val fontSizeMultiplier by vm.fontSizeMultiplier.collectAsState()
     val appIconAlias by vm.appIconAlias.collectAsState()
     val keypadDesign by vm.keypadDesign.collectAsState()
+    val globalNoiseCancellation by vm.globalNoiseCancellation.collectAsState()
 
     var showRestartDialog by remember { mutableStateOf(false) }
     var showResetDialog by remember { mutableStateOf(false) }
+    var showNoiseCancellationWarning by remember { mutableStateOf(false) }
 
     if (showRestartDialog) {
         AlertDialog(
@@ -92,7 +94,33 @@ fun SettingsScreen(
             }
         )
     }
-
+    // Noise cancellation warning dialog
+    if (showNoiseCancellationWarning) {
+        AlertDialog(
+            onDismissRequest = { showNoiseCancellationWarning = false },
+            title = { Text("Disable Noise Cancellation?") },
+            text = {
+                Text(
+                    "Noise cancellation helps filter background sounds like traffic, wind, and ambient noise. " +
+                    "Disabling it may result in poor call quality with more background noise."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        vm.setGlobalNoiseCancellation(context, false)
+                        showNoiseCancellationWarning = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Disable")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showNoiseCancellationWarning = false }) { Text("Keep On") }
+            }
+        )
+    }
     if (showResetDialog) {
         AlertDialog(
             onDismissRequest = { showResetDialog = false },
@@ -354,6 +382,34 @@ fun SettingsScreen(
                     subtitle = "Vibrate when receiving incoming calls",
                     trailing = { Switch(checked = globalVibrate, onCheckedChange = { vm.setGlobalVibrate(it) }) },
                     onClick = { vm.setGlobalVibrate(!globalVibrate) }
+                )
+            }
+
+            item {
+                val globalNoiseCancellation by vm.globalNoiseCancellation.collectAsState()
+                SettingsRow(
+                    icon = Icons.Default.NoiseControlOff,
+                    title = "Noise Cancellation",
+                    subtitle = if (globalNoiseCancellation) "Reduces background noise for clearer calls" else "Background noise may affect call quality",
+                    trailing = {
+                        Switch(
+                            checked = globalNoiseCancellation,
+                            onCheckedChange = {
+                                if (it) {
+                                    vm.setGlobalNoiseCancellation(context, true)
+                                } else {
+                                    showNoiseCancellationWarning = true
+                                }
+                            }
+                        )
+                    },
+                    onClick = {
+                        if (globalNoiseCancellation) {
+                            vm.setGlobalNoiseCancellation(context, false)
+                        } else {
+                            showNoiseCancellationWarning = true
+                        }
+                    }
                 )
             }
 

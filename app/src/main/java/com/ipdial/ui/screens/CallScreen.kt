@@ -92,13 +92,12 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
     val isActive = activeSession.state == CallState.CONFIRMED
 
     // Check for Bluetooth devices when call is active
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val view = androidx.compose.ui.platform.LocalView.current
     LaunchedEffect(isActive) {
         if (isActive) {
             vm.updateBluetoothAvailability()
             // Haptic feedback on call connect
-            val activity = context as? android.app.Activity
-            activity?.window?.decorView?.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+            view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
         }
     }
 
@@ -200,15 +199,6 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
                     ),
                     color = textColor
                 )
-                // Show negotiated codec
-                if (activeSession.negotiatedCodec != null) {
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = activeSession.negotiatedCodec!!.split("/").first().uppercase(),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = subtitleColor
-                    )
-                }
             } else {
                 PulsingStateLabel(activeSession.state, showShadow = isFullScreenPhoto)
             }

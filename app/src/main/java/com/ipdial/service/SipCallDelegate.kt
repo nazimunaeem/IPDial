@@ -10,6 +10,7 @@ import com.ipdial.data.model.CallState
 import com.ipdial.util.DeviceUtil
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import org.pjsip.pjsua2.*
@@ -172,8 +173,10 @@ class SipCallDelegate(
                 }
 
                 try {
-                    SipEngine.recorder?.delete()
-                    SipEngine.recorder = null
+                    synchronized(SipEngine.pjsipLock) {
+                        SipEngine.recorder?.delete()
+                        SipEngine.recorder = null
+                    }
                 } catch (e: Throwable) {
                     log("Failed to delete recorder on disconnect: ${e.message}", true)
                 }
@@ -186,12 +189,27 @@ class SipCallDelegate(
                 if (!_isDeleteScheduled) {
                     _isDeleteScheduled = true
                     val callToDelete = this
-                    Handler(Looper.getMainLooper()).post {
+                    // Native delete() must run on the PJSIP thread (serialized), NOT
+                    // on the main thread: the main thread performing a native Call
+                    // delete while the SIP worker is inside transaction processing
+                    // corrupts dialog mutex ownership and aborts the process.
+                    SipEngine.runOnPjsipThread {
                         try {
+                            // Guard: if the endpoint is already destroyed (e.g. SipEngine.destroy()
+                            // ran from SipService.onDestroy), deleting the native Call would
+                            // SIGSEGV. The native object will be cleaned up by
+                            // SipEngine.destroy() anyway — skip the delete here.
+                            val ep = SipEngine.endpoint
+                            if (ep == null) {
+                                log("ONCALLSTATE DISCONNECT: endpoint already destroyed — skipping native delete for callId=$currentCallId", false)
+                                return@runOnPjsipThread
+                            }
                             SipEngine.registerCurrentThreadEx()
-                            callToDelete.delete()
+                            synchronized(SipEngine.pjsipLock) {
+                                callToDelete.delete()
+                            }
                         } catch (e: Throwable) {
-                            Log.e("SipEngine", "Failed to delete call on main loop", e)
+                            Log.e("SipEngine", "Failed to delete call on PJSIP thread", e)
                         }
                     }
                 }
@@ -202,66 +220,105 @@ class SipCallDelegate(
                     log("ONCALLSTATE ELSE: callId=$currentCallId sessionAfter=${_callSession.value?.state}", false)
                 }
 
-                if (newState == CallState.CONFIRMED && !mediaDumpScheduled) {
+                // The media-dump diagnostic is a debug-only tool that records mic/TX
+                // probes and samples levels 6s after the call goes CONFIRMED.
+                //
+                // It MUST NOT run in production:
+                //  * It calls native `this.dump()` on the Main thread and then blocks the
+                //    Main thread for ~7s (300ms + 12 x 500ms sleeps). Blocking the Main
+                //    thread for that long after a call triggers an ANR ("app isn't
+                //    responding") and the process gets stopped — exactly the
+                //    "stops after making a call" symptom.
+                //  * It touches the native Call after the call may have disconnected and
+                //    been deleted, which can SIGSEGV the process.
+                //
+                // So: gate it to debug builds, run it on a background thread, and bail
+                // out as soon as the call is no longer active.
+                if (newState == CallState.CONFIRMED && !mediaDumpScheduled && com.ipdial.BuildConfig.DEBUG
+                        && System.getProperty("ipdial.mediaDump") == "1") {
                     mediaDumpScheduled = true
-                    log("ONCALLSTATE CONFIRMED: scheduling media dump in 6s", false)
-                    Handler(Looper.getMainLooper()).postDelayed({
+                    log("ONCALLSTATE CONFIRMED: scheduling media dump in 6s (debug only; ipdial.mediaDump=1)", false)
+                    val dumpCall = this
+                    val dumpCallId = currentCallId
+                    CoroutineScope(Dispatchers.IO).launch {
                         try {
-                            SipEngine.registerCurrentThreadEx()
-                            log("=== MEDIA DUMP (6s post-CONFIRMED) callId=$currentCallId ===", false)
-                            val dump = try { this.dump(true, "") } catch (e: Throwable) { "call dump failed: ${e.message}" }
-                            dump.split('\n').forEach { line -> log(line, false) }
-                            Thread.sleep(300)
-                            log("=== MIC VS TX LEVELS (sample every 500ms while speaking) ===", false)
-                            val capMedia = try { SipEngine.endpoint?.audDevManager()?.captureDevMedia } catch (e: Throwable) { null }
-                            val callMedia = try { SipEngine.endpoint?.audDevManager()?.playbackDevMedia } catch (e: Throwable) { null }
-                            var recMic: org.pjsip.pjsua2.AudioMediaRecorder? = null
-                            var recTx: org.pjsip.pjsua2.AudioMediaRecorder? = null
-                            try {
-                                val probeDir = SipEngine.probeDir()
-                                if (probeDir != null) {
-                                    recMic = org.pjsip.pjsua2.AudioMediaRecorder().also { it.createRecorder(java.io.File(probeDir, "probe_mic.wav").absolutePath) }
-                                    recTx = org.pjsip.pjsua2.AudioMediaRecorder().also { it.createRecorder(java.io.File(probeDir, "probe_tx.wav").absolutePath) }
-                                    capMedia?.startTransmit(recMic)
-                                    callMedia?.startTransmit(recTx)
-                                    log("PROBE: recording mic+tx to ${probeDir.absolutePath}", false)
-                                } else {
-                                    log("PROBE: probeDir unavailable", false)
-                                }
-                            } catch (e: Throwable) {
-                                log("PROBE: recorder setup failed: ${e.message}", true)
+                            delay(6000)
+                            // Only proceed if the call is still live; otherwise the native
+                            // Call has already been deleted and touching it would crash.
+                            if (!callMap.containsKey(dumpCallId)) {
+                                log("MEDIA DUMP: call $dumpCallId already disconnected — skipping", false)
+                                return@launch
                             }
-                            if (capMedia != null || callMedia != null) {
-                                repeat(12) { i ->
-                                    try {
-                                        val capRx = capMedia?.getRxLevel() ?: -1
-                                        val callTx = callMedia?.getTxLevel() ?: -1
-                                        log("LEVELS[$i]: captureRx=$capRx callTx=$callTx", false)
-                                    } catch (e: Throwable) {
-                                        log("level sample $i failed: ${e.message}", true)
+                            if (SipEngine.endpoint == null) {
+                                log("MEDIA DUMP: endpoint already destroyed — skipping", false)
+                                return@launch
+                            }
+                            // The dump touches native pjsua2 objects from a coroutine
+                            // thread. It MUST be serialized with everything else that
+                            // touches pjsua2 (worker callbacks are guarded by the same
+                            // monitor), otherwise it races the SIP worker and aborts the
+                            // process with a pj_mutex_unlock assertion.
+                            synchronized(SipEngine.pjsipLock) {
+                                SipEngine.registerCurrentThreadEx()
+                                log("=== MEDIA DUMP (6s post-CONFIRMED) callId=$dumpCallId ===", false)
+                                val dump = try { dumpCall.dump(true, "") } catch (e: Throwable) { "call dump failed: ${e.message}" }
+                                dump.split('\n').forEach { line -> log(line, false) }
+                                Thread.sleep(300)
+                                log("=== MIC VS TX LEVELS (sample every 500ms while speaking) ===", false)
+                                val capMedia = try { SipEngine.endpoint?.audDevManager()?.captureDevMedia } catch (e: Throwable) { null }
+                                val callMedia = try { SipEngine.endpoint?.audDevManager()?.playbackDevMedia } catch (e: Throwable) { null }
+                                var recMic: org.pjsip.pjsua2.AudioMediaRecorder? = null
+                                var recTx: org.pjsip.pjsua2.AudioMediaRecorder? = null
+                                try {
+                                    val probeDir = SipEngine.probeDir()
+                                    if (probeDir != null) {
+                                        recMic = org.pjsip.pjsua2.AudioMediaRecorder().also { it.createRecorder(java.io.File(probeDir, "probe_mic.wav").absolutePath) }
+                                        recTx = org.pjsip.pjsua2.AudioMediaRecorder().also { it.createRecorder(java.io.File(probeDir, "probe_tx.wav").absolutePath) }
+                                        capMedia?.startTransmit(recMic)
+                                        callMedia?.startTransmit(recTx)
+                                        log("PROBE: recording mic+tx to ${probeDir.absolutePath}", false)
+                                    } else {
+                                        log("PROBE: probeDir unavailable", false)
                                     }
-                                    try { Thread.sleep(500) } catch (e: InterruptedException) { /* ignore */ }
+                                } catch (e: Throwable) {
+                                    log("PROBE: recorder setup failed: ${e.message}", true)
                                 }
-                            } else {
-                                log("LEVELS: could not obtain capture or call media", false)
-                            }
-                            try {
-                                recMic?.let { r ->
-                                    try { capMedia?.stopTransmit(r) } catch (e: Throwable) {}
-                                    r.delete()
+                                if (capMedia != null || callMedia != null) {
+                                    repeat(12) { i ->
+                                        if (!callMap.containsKey(dumpCallId)) {
+                                            log("MEDIA DUMP: call $dumpCallId ended mid-sampling — stopping", false)
+                                            return@synchronized
+                                        }
+                                        try {
+                                            val capRx = capMedia?.getRxLevel() ?: -1
+                                            val callTx = callMedia?.getTxLevel() ?: -1
+                                            log("LEVELS[$i]: captureRx=$capRx callTx=$callTx", false)
+                                        } catch (e: Throwable) {
+                                            log("level sample $i failed: ${e.message}", true)
+                                        }
+                                        try { Thread.sleep(500) } catch (e: InterruptedException) { /* ignore */ }
+                                    }
+                                } else {
+                                    log("LEVELS: could not obtain capture or call media", false)
                                 }
-                                recTx?.let { r ->
-                                    try { callMedia?.stopTransmit(r) } catch (e: Throwable) {}
-                                    r.delete()
+                                try {
+                                    recMic?.let { r ->
+                                        try { capMedia?.stopTransmit(r) } catch (e: Throwable) {}
+                                        r.delete()
+                                    }
+                                    recTx?.let { r ->
+                                        try { callMedia?.stopTransmit(r) } catch (e: Throwable) {}
+                                        r.delete()
+                                    }
+                                    log("PROBE: cleaned up recorders", false)
+                                } catch (e: Throwable) {
+                                    log("PROBE: cleanup failed: ${e.message}", true)
                                 }
-                                log("PROBE: cleaned up recorders", false)
-                            } catch (e: Throwable) {
-                                log("PROBE: cleanup failed: ${e.message}", true)
                             }
                         } catch (e: Throwable) {
                             log("media dump failed: ${e.message}", true)
                         }
-                    }, 6000L)
+                    }
                 }
 
                 if ((newState == CallState.EARLY || newState == CallState.CONFIRMED) && !audioWatchdogActive) {
@@ -269,12 +326,24 @@ class SipCallDelegate(
                 }
 
                 // CRITICAL FIX: Force audio devices and EC setup when call becomes CONFIRMED
-                // This ensures the audio path is properly established
+                // This ensures the audio path is properly established.
+                //
+                // IMPORTANT: forceEcForCallAudio() calls pjsua_set_ec (setEcOptions),
+                // and forceAudioDevicesForCall() may call setCaptureDev/setPlaybackDev.
+                // Both RESTART the sound device, which destroys any startTransmit
+                // bridges that onCallMediaState established earlier (e.g. during EARLY).
+                // onCallMediaState does not re-fire after CONFIRMED, so without
+                // re-bridging here the microphone stops reaching the remote — the far
+                // end hears nothing after the call connects. So re-establish the
+                // audio path with fresh media AFTER forcing.
                 if (newState == CallState.CONFIRMED) {
                     log("ONCALLSTATE: Call confirmed, forcing audio devices and EC setup", false)
                     try {
                         SipEngine.forceAudioDevicesForCall()
                         SipEngine.forceEcForCallAudio()
+                        // Re-bridge mic→call and call→speaker with the freshly opened
+                        // sound device (the forces above restarted it).
+                        SipEngine.reconnectAudioPathForCall(currentCallId)
                     } catch (e: Throwable) {
                         log("Failed to force audio setup on CONFIRMED: ${e.message}", true)
                     }
@@ -298,14 +367,7 @@ class SipCallDelegate(
             }
         } catch (e: Throwable) {
             log("ONCALLSTATE EXCEPTION: callId=$currentCallId error=${e.message}", true)
-            try {
-                if (_callSession.value != null) {
-                    log("onCallState error safety net: force-nulling callSession", false)
-                    _callSession.value = null
-                }
-            } catch (f: Throwable) {
-                log("Failed to null session in safety net: ${f.message}", true)
-            }
+            // Removed: DO NOT null _callSession.value here! It hides the UI for a live call!
         }
     }
 
@@ -317,7 +379,7 @@ class SipCallDelegate(
                 if (ci == null || ci.state == pjsip_inv_state.PJSIP_INV_STATE_DISCONNECTED || ci.state == pjsip_inv_state.PJSIP_INV_STATE_NULL) {
                     val session = _callSession.value
                     if (session != null && session.callId == currentCallId) {
-                        log("ONCALLTSXSTATE: Disconnect detected for callId=$currentCallId, executing local hangup cleanup", false)
+                        log("ONCALLTSXSTATE: Disconnect detected for callId=$currentCallId, executing cleanup", false)
                         val statusCode = if (ci != null) safeStatusCode(ci) else 0
                         val statusReason = ci?.lastReason
                         if (statusCode > 0 || !statusReason.isNullOrBlank()) {
@@ -326,7 +388,12 @@ class SipCallDelegate(
                         try { SipEngine.onCallDisconnected?.invoke(currentCallId) } catch (_: Throwable) {}
                         callMap.remove(currentCallId)
                         _callSession.value = null
-                        SipConnectionService.disconnectCall(currentCallId, android.telecom.DisconnectCause.REMOTE)
+                        // Check localHangupCauses first — if this was a local hangup (BYE/CANCEL sent by us),
+                        // use the locally recorded cause instead of always defaulting to REMOTE.
+                        val disconnectCause = SipEngine.localHangupCauses.remove(currentCallId)
+                            ?: android.telecom.DisconnectCause.REMOTE
+                        log("ONCALLTSXSTATE: callId=$currentCallId telecomCause=$disconnectCause (wasLocal=${disconnectCause != android.telecom.DisconnectCause.REMOTE})", false)
+                        SipConnectionService.disconnectCall(currentCallId, disconnectCause)
                     }
                 }
             }
@@ -336,6 +403,15 @@ class SipCallDelegate(
     }
 
     override fun onCallMediaState(prm: OnCallMediaStateParam) {
+        // This callback runs on the PJSIP worker thread. It touches native call
+        // media objects, so it must be serialized against any concurrent API calls
+        // (mute/volume/DTMF on the PJSIP thread, speaker EC on the main thread).
+        synchronized(SipEngine.pjsipLock) {
+            onCallMediaStateLocked(prm)
+        }
+    }
+
+    private fun onCallMediaStateLocked(prm: OnCallMediaStateParam) {
         try {
             val ci = try { info } catch (e: Throwable) {
                 log("Failed to get call info in onCallMediaState: ${e.message}", true)

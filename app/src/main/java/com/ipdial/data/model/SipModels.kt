@@ -16,7 +16,8 @@ data class SipAccount(
     val regStatus: RegStatus = RegStatus.UNREGISTERED,
     val regStatusText: String = "",
     // Audio quality settings
-    val codec: PreferredCodec? = null,
+    val codec: PreferredCodec? = null,                 // Preferred (priority) codec
+    val enabledCodecs: Set<PreferredCodec> = DEFAULT_ENABLED_CODECS, // codecs offered in SDP
     val ecEnabled: Boolean = true,   // Echo cancellation
     val nsEnabled: Boolean = true,   // Noise suppression
     val agcEnabled: Boolean = true,  // Auto gain control
@@ -32,7 +33,16 @@ enum class PreferredCodec {
     G711A,
     G722,
     G729,
+    Opus,
 }
+
+val DEFAULT_ENABLED_CODECS: Set<PreferredCodec> = setOf(
+    PreferredCodec.G711A,
+    PreferredCodec.G711U,
+    PreferredCodec.G722,
+    PreferredCodec.G729,
+    PreferredCodec.Opus,
+)
 
 enum class RegStatus {
     UNREGISTERED,

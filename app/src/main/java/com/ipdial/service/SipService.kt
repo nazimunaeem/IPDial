@@ -493,6 +493,19 @@ class SipService : Service() {
                     ringtonePlayer.stopRingtone()
                     stopPushingBanner()
                     audioRouter.restoreAudio()
+
+                    // Close the PJSIP sound device so the mic (AudioRecord) is
+                    // released.  The native call.delete() is posted to the main
+                    // looper in onCallState(DISCONNECTED); give it a moment to
+                    // finish before tearing down the sound device.  The next call's
+                    // forceAudioDevicesForCall() re-opens it automatically.
+                    scope.launch {
+                        try {
+                            kotlinx.coroutines.delay(500)
+                            SipEngine.releaseSoundDevice()
+                        } catch (_: Throwable) {}
+                    }
+
                     wakeLockManager.releaseWakeLock()
                     cancelIncomingNotification(this@SipService)
                     sessionToLog?.callId?.let { SipConnectionService.disconnectCall(it) }
@@ -672,6 +685,14 @@ class SipService : Service() {
         }
         scope.cancel()
         super.onDestroy()
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        // If the user swiped the app away from recents, keep the service running
+        // to continue receiving calls (this is a VoIP app).
+        // But if the app was explicitly exited via the Exit button,
+        // the service is stopped before this is called.
+        super.onTaskRemoved(rootIntent)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

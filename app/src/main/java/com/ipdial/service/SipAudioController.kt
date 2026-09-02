@@ -17,28 +17,30 @@ object SipAudioController {
     const val MIC_GAIN_EMULATOR = 2.5f
 
     fun setMute(muted: Boolean) {
-        SipEngine.registerCurrentThreadEx()
-        SipEngine._callSession.value?.let { session ->
-            SipEngine.callMap[session.callId]?.let { call ->
-                try {
-                    val ci = call.info
-                    for (i in 0 until ci.media.size.toInt()) {
-                        val mi = ci.media.get(i)
-                        if (mi.type == pjmedia_type.PJMEDIA_TYPE_AUDIO &&
-                            mi.status == pjsua_call_media_status.PJSUA_CALL_MEDIA_ACTIVE) {
-                            val aud = AudioMedia.typecastFromMedia(call.getMedia(mi.index.toLong()))
-                            if (muted) {
-                                aud.adjustTxLevel(0f)
-                            } else {
-                                val isEmulator = DeviceUtil.isEmulator()
-                                val baseGain = if (isEmulator) MIC_GAIN_EMULATOR else MIC_GAIN_REAL
-                                aud.adjustTxLevel(baseGain)
+        SipEngine.runOnPjsipThread {
+            SipEngine.registerCurrentThreadEx()
+            SipEngine._callSession.value?.let { session ->
+                SipEngine.callMap[session.callId]?.let { call ->
+                    try {
+                        val ci = call.info
+                        for (i in 0 until ci.media.size.toInt()) {
+                            val mi = ci.media.get(i)
+                            if (mi.type == pjmedia_type.PJMEDIA_TYPE_AUDIO &&
+                                mi.status == pjsua_call_media_status.PJSUA_CALL_MEDIA_ACTIVE) {
+                                val aud = AudioMedia.typecastFromMedia(call.getMedia(mi.index.toLong()))
+                                if (muted) {
+                                    aud.adjustTxLevel(0f)
+                                } else {
+                                    val isEmulator = DeviceUtil.isEmulator()
+                                    val baseGain = if (isEmulator) MIC_GAIN_EMULATOR else MIC_GAIN_REAL
+                                    aud.adjustTxLevel(baseGain)
+                                }
                             }
                         }
+                        SipEngine._callSession.value = session.copy(isMuted = muted)
+                    } catch (e: Throwable) {
+                        SipEngine.logEx("setMute failed: ${e.message}", true)
                     }
-                    SipEngine._callSession.value = session.copy(isMuted = muted)
-                } catch (e: Throwable) {
-                    SipEngine.logEx("setMute failed: ${e.message}", true)
                 }
             }
         }
@@ -50,23 +52,25 @@ object SipAudioController {
     }
 
     fun setCallVolume(factor: Float) {
-        SipEngine.registerCurrentThreadEx()
-        SipEngine.logEx("Adjusting call volume (Rx level) to factor: $factor", false)
-        SipEngine._callSession.value?.let { session ->
-            SipEngine._callSession.value = session.copy(rxVolume = factor)
-            SipEngine.callMap[session.callId]?.let { call ->
-                try {
-                    val ci = call.info
-                    for (i in 0 until ci.media.size.toInt()) {
-                        val mi = ci.media.get(i)
-                        if (mi.type == pjmedia_type.PJMEDIA_TYPE_AUDIO &&
-                            mi.status == pjsua_call_media_status.PJSUA_CALL_MEDIA_ACTIVE) {
-                            val aud = AudioMedia.typecastFromMedia(call.getMedia(mi.index.toLong()))
-                            aud.adjustRxLevel(factor)
+        SipEngine.runOnPjsipThread {
+            SipEngine.registerCurrentThreadEx()
+            SipEngine.logEx("Adjusting call volume (Rx level) to factor: $factor", false)
+            SipEngine._callSession.value?.let { session ->
+                SipEngine._callSession.value = session.copy(rxVolume = factor)
+                SipEngine.callMap[session.callId]?.let { call ->
+                    try {
+                        val ci = call.info
+                        for (i in 0 until ci.media.size.toInt()) {
+                            val mi = ci.media.get(i)
+                            if (mi.type == pjmedia_type.PJMEDIA_TYPE_AUDIO &&
+                                mi.status == pjsua_call_media_status.PJSUA_CALL_MEDIA_ACTIVE) {
+                                val aud = AudioMedia.typecastFromMedia(call.getMedia(mi.index.toLong()))
+                                aud.adjustRxLevel(factor)
+                            }
                         }
+                    } catch (e: Throwable) {
+                        SipEngine.logEx("setCallVolume failed: ${e.message}", true)
                     }
-                } catch (e: Throwable) {
-                    SipEngine.logEx("setCallVolume failed: ${e.message}", true)
                 }
             }
         }
@@ -83,37 +87,41 @@ object SipAudioController {
     }
 
     fun sendDtmf(digit: Char) {
-        SipEngine.registerCurrentThreadEx()
-        SipEngine._callSession.value?.let { session ->
-            SipEngine.callMap[session.callId]?.let { call ->
-                try { call.dialDtmf(digit.toString()) } catch (e: Throwable) {
-                    SipEngine.logEx("sendDtmf failed: ${e.message}", true)
+        SipEngine.runOnPjsipThread {
+            SipEngine.registerCurrentThreadEx()
+            SipEngine._callSession.value?.let { session ->
+                SipEngine.callMap[session.callId]?.let { call ->
+                    try { call.dialDtmf(digit.toString()) } catch (e: Throwable) {
+                        SipEngine.logEx("sendDtmf failed: ${e.message}", true)
+                    }
                 }
             }
         }
     }
 
     fun holdCall(onHold: Boolean) {
-        SipEngine.registerCurrentThreadEx()
-        SipEngine._callSession.value?.let { session ->
-            SipEngine.callMap[session.callId]?.let { call ->
-                try {
-                    val prm = CallOpParam()
-                    if (onHold) {
-                        call.setHold(prm)
-                        SipEngine._callSession.value = session.copy(isOnHold = true)
-                    } else {
-                        // Re-INVITE to unhold; pjsip does not always re-fire
-                        // onCallMediaState after the reintive completes, so we
-                        // re-establish the audio path explicitly afterwards.
-                        call.reinvite(prm)
-                        SipEngine._callSession.value = session.copy(isOnHold = false)
-                        SipEngine.reconnectAudioPathForCall(session.callId)
-                        SipEngine.forceAudioDevicesForCall()
-                        SipEngine.forceEcForCallAudio()
+        SipEngine.runOnPjsipThread {
+            SipEngine.registerCurrentThreadEx()
+            SipEngine._callSession.value?.let { session ->
+                SipEngine.callMap[session.callId]?.let { call ->
+                    try {
+                        val prm = CallOpParam()
+                        if (onHold) {
+                            call.setHold(prm)
+                            SipEngine._callSession.value = session.copy(isOnHold = true)
+                        } else {
+                            // Re-INVITE to unhold; pjsip does not always re-fire
+                            // onCallMediaState after the reintive completes, so we
+                            // re-establish the audio path explicitly afterwards.
+                            call.reinvite(prm)
+                            SipEngine._callSession.value = session.copy(isOnHold = false)
+                            SipEngine.reconnectAudioPathForCall(session.callId)
+                            SipEngine.forceAudioDevicesForCall()
+                            SipEngine.forceEcForCallAudio()
+                        }
+                    } catch (e: Throwable) {
+                        SipEngine.logEx("holdCall failed: ${e.message}", true)
                     }
-                } catch (e: Throwable) {
-                    SipEngine.logEx("holdCall failed: ${e.message}", true)
                 }
             }
         }

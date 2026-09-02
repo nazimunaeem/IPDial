@@ -64,51 +64,57 @@ class SipAccountDelegate(
     }
 
     override fun onIncomingCall(prm: OnIncomingCallParam) {
-        log("onIncomingCall callback from PJSIP: callId=${prm.callId}", false)
+        // CRITICAL: PJSIP reuses/mutates the OnIncomingCallParam object once this
+        // callback returns, so any value read asynchronously inside the deferred
+        // Handler block would be corrupted (e.g. prm.callId 0 -> 1799220516 ->
+        // 913576). Capture it synchronously now and use the local copy everywhere.
+        val callId = prm.callId
+        log("onIncomingCall callback from PJSIP: callId=$callId", false)
         try {
             val call = SipCallDelegate(
                 acct = this,
-                callId = prm.callId,
+                callId = callId,
                 callMap = callMap,
                 _callSession = _callSession,
                 audioManager = SipEngine.audioManager,
                 endpoint = { SipEngine.endpoint },
                 log = log
             )
-            callMap[prm.callId] = call
+            callMap[callId] = call
 
             // PJSIP 2.5 asserts inv->last_answer in pjsip_inv_answer, and the
             // initial 100 answer is only created after this callback returns on
-            // the PJSIP thread. Deferring the answer to the main thread avoids
-            // the synchronous-answer SIGABRT.
-            Handler(Looper.getMainLooper()).post {
+            // the PJSIP thread. Run the answer + info + session creation on the
+            // single PJSIP thread (serialized with the worker via pjsipLock) so
+            // native operations never race the worker's transaction processing.
+            SipEngine.runOnPjsipThread {
                 try {
                     if (!accountConfigs.containsKey(accountId)) {
-                        log("Rejecting incoming call #${prm.callId} for disabled account $accountId", true)
+                        log("Rejecting incoming call #$callId for disabled account $accountId", true)
                         val busyPrm = CallOpParam().apply { statusCode = pjsip_status_code.PJSIP_SC_DECLINE }
                         try { call.answer(busyPrm) } catch (_: Throwable) {}
-                        call.delete()
-                        callMap.remove(prm.callId)
-                        return@post
+                        synchronized(SipEngine.pjsipLock) { call.delete() }
+                        callMap.remove(callId)
+                        return@runOnPjsipThread
                     }
 
                     val opPrm = CallOpParam().apply { statusCode = pjsip_status_code.PJSIP_SC_RINGING }
                     try {
-                        log("Answering incoming call #${prm.callId} with RINGING", false)
+                        log("Answering incoming call #$callId with RINGING", false)
                         call.answer(opPrm)
                     } catch (e: Throwable) {
-                        log("Failed to answer incoming call #${prm.callId} with RINGING: ${e.message}", true)
-                        call.delete()
-                        callMap.remove(prm.callId)
-                        return@post
+                        log("Failed to answer incoming call #$callId with RINGING: ${e.message}", true)
+                        synchronized(SipEngine.pjsipLock) { call.delete() }
+                        callMap.remove(callId)
+                        return@runOnPjsipThread
                     }
 
                     try {
                         val ci = call.info ?: run {
-                            log("Call info is null for incoming call #${prm.callId}", true)
-                            call.delete()
-                            callMap.remove(prm.callId)
-                            return@post
+                            log("Call info is null for incoming call #$callId", true)
+                            synchronized(SipEngine.pjsipLock) { call.delete() }
+                            callMap.remove(callId)
+                            return@runOnPjsipThread
                         }
 
                         log("Incoming call from ${ci.remoteUri}, state=${ci.stateText}", false)
@@ -118,7 +124,7 @@ class SipAccountDelegate(
                         SipEngine.pendingDisconnectInfo = null
 
                         val session = CallSession(
-                            callId = prm.callId,
+                            callId = callId,
                             accountId = accountId,
                             remoteUri = ci.remoteUri ?: "",
                             remoteDisplayName = ci.remoteContact ?: ci.remoteUri ?: "",
@@ -134,9 +140,9 @@ class SipAccountDelegate(
                         handler?.invoke(session)
                     } catch (e: Throwable) {
                         log("Failed to process incoming call info: ${e.message}", true)
-                        call.delete()
-                        callMap.remove(prm.callId)
-                        if (_callSession.value?.callId == prm.callId) {
+                        synchronized(SipEngine.pjsipLock) { call.delete() }
+                        callMap.remove(callId)
+                        if (_callSession.value?.callId == callId) {
                             _callSession.value = null
                         }
                     }

@@ -38,6 +38,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Audiotrack
@@ -484,7 +485,10 @@ fun UpdateCheckDialog() {
             containerColor = if (isGlass) Color.Transparent else MaterialTheme.colorScheme.surface,
             modifier = if (isGlass) Modifier.glass(MaterialTheme.shapes.extraLarge, alpha = 0.95f) else Modifier,
             title = { Text("Update Available") },
-            text = { Text("A new version (${updateRelease?.tagName}) is available on GitHub. Would you like to download it?\n\n${updateRelease?.body}") },
+            text = {
+                val description = updateRelease?.body?.takeIf { it.isNotBlank() }
+                Text("A new version (${updateRelease?.tagName}) is available on GitHub. Would you like to download it?" + (description?.let { "\n\n$it" } ?: ""))
+            },
             confirmButton = {
                 Button(onClick = {
                     val intent = Intent(Intent.ACTION_VIEW, updateRelease?.htmlUrl?.toUri())
@@ -512,9 +516,10 @@ fun AppDrawerSheet(
     val isGlass = glassMode != com.ipdial.ui.theme.GlassMode.None
     val isQuartz = glassMode == com.ipdial.ui.theme.GlassMode.Quartz
 
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var showExitDialog by remember { mutableStateOf(false) }
+
     val items = remember(isPro) {
-        // ... (existing list logic)
-        // Always expose IPDial Pro entry in the drawer
         val list = mutableListOf(
             NavDest.Home,
             NavDest.Accounts,
@@ -588,6 +593,60 @@ fun AppDrawerSheet(
                         else -> MaterialTheme.colorScheme.onSurfaceVariant
                     }
                 )
+            )
+        }
+
+        HorizontalDivider(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+        )
+
+        // Exit button at the bottom of the drawer
+        NavigationDrawerItem(
+            modifier = Modifier
+                .padding(horizontal = 12.dp, vertical = 2.dp)
+                .height(44.dp),
+            label = { Text("Exit") },
+            selected = false,
+            onClick = { showExitDialog = true },
+            icon = { Icon(Icons.AutoMirrored.Filled.ExitToApp, null) },
+            colors = NavigationDrawerItemDefaults.colors(
+                unselectedContainerColor = Color.Transparent,
+                selectedContainerColor = Color.Transparent,
+                unselectedTextColor = MaterialTheme.colorScheme.error,
+                unselectedIconColor = MaterialTheme.colorScheme.error
+            )
+        )
+
+        // Exit confirmation dialog
+        if (showExitDialog) {
+            AlertDialog(
+                onDismissRequest = { showExitDialog = false },
+                title = { Text("Exit IPDial?") },
+                text = { Text("This will close the app and stop all background processes. You will not receive incoming calls.") },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showExitDialog = false
+                            // Stop the foreground SIP service — its onDestroy calls SipEngine.destroy()
+                            context.stopService(Intent(context, com.ipdial.service.SipService::class.java))
+                            // Tear down any active Telecom connections
+                            com.ipdial.service.SipConnectionService.destroyAll()
+                            // Null out the call session
+                            com.ipdial.service.SipEngine._callSession.value = null
+                            // Finish activity and kill process so nothing runs in background
+                            (context as? android.app.Activity)?.finishAffinity()
+                            android.os.Process.killProcess(android.os.Process.myPid())
+                            System.exit(0)
+                        },
+                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error
+                        )
+                    ) { Text("Exit") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showExitDialog = false }) { Text("Cancel") }
+                }
             )
         }
     }

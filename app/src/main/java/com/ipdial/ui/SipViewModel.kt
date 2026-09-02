@@ -140,6 +140,9 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     val autoRecordEnabled: StateFlow<Boolean> = repo.autoRecordEnabled
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
+    val globalNoiseCancellation: StateFlow<Boolean> = repo.globalNoiseCancellation
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
     fun setThemeMode(context: Context, mode: ThemeMode) = viewModelScope.launch { 
         repo.setThemeMode(mode)
         if (!isPro.value) triggerAd(context)
@@ -170,6 +173,10 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     fun setAutoRecord(context: Context, enabled: Boolean) = viewModelScope.launch { 
         repo.setAutoRecordEnabled(enabled)
         if (enabled && !isPro.value) triggerAd(context)
+    }
+    fun setGlobalNoiseCancellation(context: Context, enabled: Boolean) = viewModelScope.launch { 
+        repo.setGlobalNoiseCancellation(enabled)
+        if (!isPro.value) triggerAd(context)
     }
 
     suspend fun clearCallHistory() {
@@ -916,6 +923,11 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
         }
+
+        // CRITICAL FIX: Null the session immediately so the CallScreen / IncomingCallScreen
+        // closes right away. Do NOT wait for the PJSIP onCallState(DISCONNECTED) callback,
+        // which can be delayed on slow networks or when the remote doesn't respond promptly.
+        com.ipdial.service.SipEngine._callSession.value = null
     }
      fun toggleMute() { SipAudioController.setMute(!(callSession.value?.isMuted ?: false)) }
      fun toggleSpeaker() { SipAudioController.setSpeaker(!(callSession.value?.isSpeaker ?: false)) }

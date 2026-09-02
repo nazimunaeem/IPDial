@@ -60,6 +60,7 @@ class AccountRepository(private val context: Context) {
     private val recordingCounterKey = androidx.datastore.preferences.core.intPreferencesKey("recording_counter")
     private val batteryNoticeShownKey = booleanPreferencesKey("battery_notice_shown")
     private val autoRecordKey = booleanPreferencesKey("auto_record_enabled")
+    private val globalNoiseCancellationKey = booleanPreferencesKey("global_noise_cancellation")
     private val savedLabelsKey = stringPreferencesKey("saved_labels")
     private val savedHostsKey = stringPreferencesKey("saved_hosts")
 
@@ -146,6 +147,7 @@ class AccountRepository(private val context: Context) {
     val proExpiration: Flow<Long> = context.dataStore.data.map { it[proExpirationKey] ?: 0L }
     val recordingCounter: Flow<Int> = context.dataStore.data.map { it[recordingCounterKey] ?: 0 }
     val batteryNoticeShown: Flow<Boolean> = context.dataStore.data.map { it[batteryNoticeShownKey] ?: false }
+    val globalNoiseCancellation: Flow<Boolean> = context.dataStore.data.map { it[globalNoiseCancellationKey] ?: true }
 
     suspend fun getOrCreateDeviceId(): String {
         val current = context.dataStore.data.map { it[deviceIdKey] }.first()
@@ -177,6 +179,7 @@ class AccountRepository(private val context: Context) {
     suspend fun setRecordingCounter(counter: Int) = context.dataStore.edit { it[recordingCounterKey] = counter }
     suspend fun setBatteryNoticeShown(shown: Boolean) = context.dataStore.edit { it[batteryNoticeShownKey] = shown }
     suspend fun setAutoRecordEnabled(enabled: Boolean) = context.dataStore.edit { it[autoRecordKey] = enabled }
+    suspend fun setGlobalNoiseCancellation(enabled: Boolean) = context.dataStore.edit { it[globalNoiseCancellationKey] = enabled }
 
     suspend fun setGlobalRingtone(uri: String?) {
         context.dataStore.edit { prefs ->

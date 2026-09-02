@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Backspace
 import androidx.compose.material.icons.filled.Call
@@ -104,14 +105,18 @@ fun DialpadScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
+            .background(MaterialTheme.colorScheme.background)
+            // In landscape the screen is short; allow the whole dialpad column to
+            // scroll so the keypad and call button are always reachable.
+            .then(if (isLandscape) Modifier.verticalScroll(rememberScrollState()) else Modifier),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Top
     ) {
-        // Suggested contacts space - fixed weight(1f) so keypad never shifts position when typing
+        // Suggested contacts space - fixed weight(1f) so keypad never shifts position when typing.
+        // In landscape it becomes a compact fixed-height list so the keypad stays visible.
         Box(modifier = Modifier
             .fillMaxWidth()
-            .weight(1f)
+            .then(if (isLandscape) Modifier.height(96.dp) else Modifier.weight(1f))
             .padding(top = 4.dp)) {
             if (dialString.isEmpty() && mostCalled.isNotEmpty()) {
                 LazyColumn(modifier = Modifier.fillMaxSize()) {
