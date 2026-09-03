@@ -17,9 +17,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
@@ -37,6 +34,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -118,31 +116,36 @@ fun DialpadScreen(
             .fillMaxWidth()
             .then(if (isLandscape) Modifier.height(96.dp) else Modifier.weight(1f))
             .padding(top = 4.dp)) {
+            // In landscape the parent Column uses verticalScroll, so we must NOT use
+            // LazyColumn here (nested scrollables cause infinite-height-constraint crash).
+            // Use a plain Column — the list is capped at 5 items so lazy rendering is unnecessary.
             if (dialString.isEmpty() && mostCalled.isNotEmpty()) {
-                LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    item {
-                        Text(
-                            text = "Most Called",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(start = 16.dp, top = 4.dp, bottom = 4.dp)
-                        )
-                    }
-                    itemsIndexed(mostCalled, key = { _, it -> it.id }) { _, contact ->
-                        SuggestedContactRow(contact) { num ->
-                            vm.clearDial()
-                            num.filter { it.isDigit() || it == '+' || it == '*' || it == '#' }.forEach { vm.dialPad(it) }
-                            vm.makeCall()
+                Column(modifier = Modifier.fillMaxSize()) {
+                    Text(
+                        text = "Most Called",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(start = 16.dp, top = 4.dp, bottom = 4.dp)
+                    )
+                    mostCalled.forEach { contact ->
+                        key(contact.id) {
+                            SuggestedContactRow(contact) { num ->
+                                vm.clearDial()
+                                num.filter { it.isDigit() || it == '+' || it == '*' || it == '#' }.forEach { vm.dialPad(it) }
+                                vm.makeCall()
+                            }
                         }
                     }
                 }
             } else if (suggestedContacts.isNotEmpty()) {
-                LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    items(suggestedContacts, key = { it.id }) { contact ->
-                        SuggestedContactRow(contact) { num ->
-                            vm.clearDial()
-                            num.filter { it.isDigit() || it == '+' || it == '*' || it == '#' }.forEach { vm.dialPad(it) }
-                            vm.makeCall()
+                Column(modifier = Modifier.fillMaxSize()) {
+                    suggestedContacts.forEach { contact ->
+                        key(contact.id) {
+                            SuggestedContactRow(contact) { num ->
+                                vm.clearDial()
+                                num.filter { it.isDigit() || it == '+' || it == '*' || it == '#' }.forEach { vm.dialPad(it) }
+                                vm.makeCall()
+                            }
                         }
                     }
                 }

@@ -218,6 +218,13 @@ class SipConnection : Connection() {
     @Volatile var isDestroyed: Boolean = false
     private val connectionScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
+    init {
+        // Without this declaration some Android/OEM Telecom implementations enter
+        // MODE_IN_CALL for a self-managed SIP connection and take ownership of the
+        // microphone, leaving DTMF working but live voice silent.
+        setAudioModeIsVoip(true)
+    }
+
     override fun onAnswer() {
         Log.d("SipConnection", "onAnswer(id=$callId)")
         com.ipdial.util.SipLogger.log("SipConnection", "onAnswer called for callId=$callId")

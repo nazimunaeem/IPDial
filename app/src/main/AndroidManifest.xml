@@ -19,6 +19,7 @@
 
     <!-- Notifications & foreground service -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
@@ -57,11 +58,6 @@
             android:enabled="true"
             android:exported="true"
             android:launchMode="singleTop"
-            android:showWhenLocked="true"
-            android:turnScreenOn="true"
-            android:showOnLockScreen="true"
-            android:inheritShowWhenLocked="true"
-            android:showForAllUsers="true"
             android:windowSoftInputMode="adjustResize"
             tools:targetApi="o_mr1">
             <!-- Deep link for incoming call notification -->
@@ -169,7 +165,7 @@
         <service
             android:name=".service.SipService"
             android:exported="false"
-            android:foregroundServiceType="phoneCall|specialUse"
+            android:foregroundServiceType="dataSync|phoneCall|specialUse"
             android:stopWithTask="false">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"

@@ -345,23 +345,13 @@ object SipEngine {
                             // supported on real devices too, so this is safe everywhere).
                             sndClockRate = 48000
                             val hasHwAec = try { android.media.audiofx.AcousticEchoCanceler.isAvailable() } catch(e: Exception) { false }
-                            val hasHwNs = try { android.media.audiofx.NoiseSuppressor.isAvailable() } catch(e: Exception) { false }
                             
-                            // On devices with hardware AEC (Samsung, OnePlus, Pixel), running software EC 
-                            // causes double-processing (robotic voice, half-duplex clipping). 
-                            // Disable software EC (tail=0) if hardware AEC is present.
-                            if (hasHwAec && !isEmulator) {
-                                ecOptions = 0
-                                ecTailLen = 0
-                                log("Hardware AEC available. Disabled software EC to prevent double-processing.")
-                            } else {
-                                // For low-end/Chinese OEM phones without hardware AEC:
-                                // Use 500ms tail to handle long acoustic paths.
-                                // If hardware NS is missing, enable software NS (32).
-                                ecOptions = if (hasHwNs) 1 else 33 // 1 = DEFAULT, 33 = DEFAULT | NOISE_SUPPRESSOR
-                                ecTailLen = 500
-                                log("No Hardware AEC. Using software EC with 500ms tail. (Software NS: ${!hasHwNs})")
-                            }
+                            // The bundled software EC crashes in pjmedia_echo_capture
+                            // on some Android AudioRecord implementations. Rely only on
+                            // the device audio processing path and keep PJSIP processing off.
+                            ecOptions = 0
+                            ecTailLen = 0
+                            log("PJSIP software audio processing disabled; using device audio processing only.")
 
                             // Stream VAD off. With VAD on, a quiet/low-gain microphone was
                             // classified as silence and the far end received no speech at all.
@@ -490,8 +480,20 @@ object SipEngine {
 
             accountMap[account.id]?.let { removeAccount(account.id) }
 
+            val cleanUsername = account.username.trim()
+            var cleanDomain = account.domain.trim().removePrefix("sip:").removePrefix("sips:")
+            var explicitPort = account.port
+            if (cleanDomain.contains(":")) {
+                val parts = cleanDomain.split(":")
+                cleanDomain = parts[0]
+                if (explicitPort == null || explicitPort <= 0) {
+                    explicitPort = parts.getOrNull(1)?.toIntOrNull()
+                }
+            }
+            val cleanProxy = account.proxy.trim().removePrefix("sip:").removePrefix("sips:")
+
             val acfg = AccountConfig().apply {
-                idUri = "sip:${account.username}@${account.domain}"
+                idUri = "sip:$cleanUsername@$cleanDomain"
 
                 val transportSuffix = when (account.transport) {
                     Transport.TCP -> ";transport=tcp"
@@ -499,10 +501,10 @@ object SipEngine {
                     else -> ""
                 }
 
-                regConfig.registrarUri = if (account.port != null && account.port > 0) {
-                    "sip:${account.domain}:${account.port}$transportSuffix"
+                regConfig.registrarUri = if (explicitPort != null && explicitPort > 0) {
+                    "sip:$cleanDomain:$explicitPort$transportSuffix"
                 } else {
-                    "sip:${account.domain}$transportSuffix"
+                    "sip:$cleanDomain$transportSuffix"
                 }
 
                 regConfig.timeoutSec = 180
@@ -510,11 +512,16 @@ object SipEngine {
                 regConfig.firstRetryIntervalSec = 15
                 regConfig.delayBeforeRefreshSec = 90
 
-                val cred = AuthCredInfo("digest", "*", account.username, 0, account.password)
+                val cred = AuthCredInfo("digest", "*", cleanUsername, 0, account.password)
                 sipConfig.authCreds.add(cred)
 
-                if (account.proxy.isNotBlank()) {
-                    sipConfig.proxies.add("sip:${account.proxy}")
+                if (cleanProxy.isNotBlank()) {
+                    val proxyUri = if (cleanProxy.contains(";lr")) {
+                        "sip:$cleanProxy"
+                    } else {
+                        "sip:$cleanProxy$transportSuffix;lr"
+                    }
+                    sipConfig.proxies.add(proxyUri)
                 }
 
                 transportManager.createTransport(ep, account.transport, ::log)
@@ -997,7 +1004,11 @@ object SipEngine {
     private fun configureCodecs(account: SipAccount) {
         val ep = endpoint ?: return
         val preferred = account.codec ?: PreferredCodec.G711U
-        val targetCodecId = preferred.toCodecId()
+        // Keep the user's codec choice when the peer requires G.729. The RTP
+        // payload must match the negotiated SDP; rejecting payload 18 while the
+        // peer sends G.729 causes every incoming audio packet to be discarded.
+        val effectivePreferred = preferred
+        val targetCodecId = effectivePreferred.toCodecId()
         // Codecs the user can toggle in settings. Anything not in this set (e.g. gsm,
         // ilbc, speex) stays auto-enabled as a universal fallback so connectivity is
         // never worse than the old always-on behaviour.
@@ -1050,21 +1061,16 @@ object SipEngine {
 
             try {
                 val adm = ep.audDevManager()
-                val hasHwAec = try { android.media.audiofx.AcousticEchoCanceler.isAvailable() } catch(e: Exception) { false }
-                val isEmulator = DeviceUtil.isEmulator()
-
-                if (account.ecEnabled && (!hasHwAec || isEmulator)) {
-                    // Match the init-time config: 500 ms tail + noise suppressor flag.
-                    // ecOptions 33 = PJMEDIA_ECHO_DEFAULT (1) | PJMEDIA_ECHO_USE_NOISE_SUPPRESSOR (32)
-                    adm.setEcOptions(33, 500)
-                } else {
-                    adm.setEcOptions(0, 0)
-                }
+                // Keep both software echo cancellation and noise suppression off.
+                // Android's selected communication device may apply its own hardware
+                // processing; the PJSIP wrapper does not expose its AudioRecord session
+                // for safely attaching an Android NoiseSuppressor effect here.
+                adm.setEcOptions(0, 0)
             } catch (e: Throwable) {
                 log("Note on EC settings: ${e.message}")
             }
 
-            log("Codec & Audio configuration complete. Preferred=$targetCodecId")
+            log("Codec & Audio configuration complete. Preferred=$targetCodecId (configured=${preferred.toCodecId()})")
         } catch (e: Throwable) {
             log("Error configuring codecs: ${e.message}", true)
         }
@@ -1091,22 +1097,24 @@ object SipEngine {
             synchronized(pjsipLock) {
                 try {
                     val adm = endpoint?.audDevManager() ?: return@runOnPjsipThread
-                    // If the sound device is already open, keep PJSIP's own device selection:
-                    // it is the driver the platform actually supports (OpenSL on many
-                    // emulators/ROMs, Java Audio elsewhere) and matches what Linphone uses.
-                    if (!adm.sndIsActive()) {
-                        val devs = adm.enumDev()
-                        val names = (0 until devs.size.toInt()).map { i ->
-                            val info = try { devs.get(i) } catch (_: Throwable) { null }
-                            "${i}:${info?.name}"
-                        }.joinToString(", ")
-                        // Touch the sound device to force it open with the auto-selected
-                        // driver. Setting the same capture/playback to -1 (auto) restarts
-                        // the device with PJSIP's default selection.
-                        adm.setCaptureDev(-1)
-                        adm.setPlaybackDev(-1)
-                        log("Call audio: using platform auto-selected sound device. Available: [$names]", false)
+                    val devs = adm.enumDev()
+                    val names = (0 until devs.size.toInt()).map { i ->
+                        val info = try { devs.get(i) } catch (_: Throwable) { null }
+                        "${i}:${info?.name}"
+                    }.joinToString(", ")
+                    val preferredDevice = if (DeviceUtil.isEmulator()) {
+                        -1
+                    } else {
+                        (0 until devs.size.toInt()).firstOrNull { i ->
+                            val name = try { devs.get(i)?.name ?: "" } catch (_: Throwable) { "" }
+                            name.contains("Android JNI", ignoreCase = true)
+                        } ?: -1
                     }
+                    // Re-selecting the device also reopens capture after Telecom or an
+                    // OEM audio policy has taken over the microphone.
+                    adm.setCaptureDev(preferredDevice)
+                    adm.setPlaybackDev(preferredDevice)
+                    log("Call audio: selected device=$preferredDevice. Available: [$names]", false)
                 } catch (e: Throwable) {
                     log("forceAudioDevicesForCall failed: ${e.message}", true)
                 }
@@ -1127,16 +1135,9 @@ object SipEngine {
             registerCurrentThreadEx()
             synchronized(pjsipLock) {
                 try {
-                    val isEmulator = DeviceUtil.isEmulator()
-                    val hasHwAec = try { android.media.audiofx.AcousticEchoCanceler.isAvailable() } catch (e: Exception) { false }
                     val adm = endpoint?.audDevManager() ?: return@runOnPjsipThread
-                    if (hasHwAec && !isEmulator) {
-                        adm.setEcOptions(0, 0)
-                        log("Call audio: forced software EC OFF (hardware AEC present)")
-                    } else {
-                        adm.setEcOptions(33, 500)
-                        log("Call audio: ensured software EC with 500ms tail (no hardware AEC)")
-                    }
+                    adm.setEcOptions(0, 0)
+                    log("Call audio: PJSIP software EC/NS disabled; device processing only")
                 } catch (e: Throwable) {
                     log("forceEcForCallAudio failed: ${e.message}", true)
                 }

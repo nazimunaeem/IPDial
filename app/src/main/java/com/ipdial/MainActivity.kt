@@ -140,6 +140,9 @@ class MainActivity : ComponentActivity() {
         if (results[Manifest.permission.READ_CONTACTS] == true) {
             vm.refreshContacts()
         }
+        if (results[Manifest.permission.RECORD_AUDIO] == true) {
+            startSipServiceIfPermitted()
+        }
     }
 
     private val vm: SipViewModel by viewModels()
@@ -169,12 +172,10 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         
-        volumeControlStream = android.media.AudioManager.STREAM_VOICE_CALL
-        
-        applyLockScreenFlags()
+        volumeControlStream = android.media.AudioManager.STREAM_MUSIC
         
         requestRequiredPermissions()
-        com.ipdial.service.SipService.start(this)
+        startSipServiceIfPermitted()
 
         handleIntent(intent)
 
@@ -193,7 +194,8 @@ class MainActivity : ComponentActivity() {
             LaunchedEffect(callSession) {
                 val window = (localView.context as? android.app.Activity)?.window
                 val activity = localView.context as? android.app.Activity
-                if (callSession != null) {
+                val isActiveCall = callSession?.state != null && callSession?.state != CallState.DISCONNECTED
+                if (isActiveCall) {
                     hasSeenActiveCall = true
                     activity?.volumeControlStream = android.media.AudioManager.STREAM_VOICE_CALL
                     window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -207,14 +209,13 @@ class MainActivity : ComponentActivity() {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
                         activity?.setTurnScreenOn(false)
                         activity?.setShowWhenLocked(false)
-                    } else {
-                        @Suppress("DEPRECATION")
-                        window?.clearFlags(
-                            android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                            android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
-                            android.view.WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
-                        )
                     }
+                    @Suppress("DEPRECATION")
+                    window?.clearFlags(
+                        android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                        android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                        android.view.WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
+                    )
                     if (hasSeenActiveCall && launchedForCall) {
                         launchedForCall = false
                         activity?.moveTaskToBack(true)
@@ -264,7 +265,10 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        applyLockScreenFlags()
+        if (intent.action == "com.ipdial.ACTION_INCOMING_CALL" ||
+            intent.action == "com.ipdial.ACTION_SHOW_CALL") {
+            applyLockScreenFlags()
+        }
         handleIntent(intent)
     }
 
@@ -348,6 +352,16 @@ class MainActivity : ComponentActivity() {
             if (!shown) {
                 checkBatteryOptimizations()
             }
+        }
+    }
+
+    private fun startSipServiceIfPermitted() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            com.ipdial.service.SipService.start(this)
+        } else {
+            Log.w("MainActivity", "SIP service delayed until microphone permission is granted")
         }
     }
 

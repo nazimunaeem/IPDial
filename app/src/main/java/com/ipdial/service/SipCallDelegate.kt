@@ -436,12 +436,6 @@ class SipCallDelegate(
             val currentCallId = try { getId() } catch (_: Throwable) { -1 }
             log("onCallMediaState: callId=$currentCallId state=${ci.stateText} mediaCount=${ci.media.size}", false)
 
-            if (currentCallId != ecEnforcedForCallId) {
-                ecEnforcedForCallId = currentCallId
-                SipEngine.forceAudioDevicesForCall()
-                SipEngine.forceEcForCallAudio()
-            }
-
             val adm = endpoint()?.audDevManager()
             val captureMedia = adm?.captureDevMedia
             val playbackMedia = adm?.playbackDevMedia

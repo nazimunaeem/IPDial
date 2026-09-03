@@ -143,6 +143,12 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     val globalNoiseCancellation: StateFlow<Boolean> = repo.globalNoiseCancellation
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
+    val deviceNoiseCancellationSupported: Boolean = try {
+        android.media.audiofx.NoiseSuppressor.isAvailable()
+    } catch (_: Throwable) {
+        false
+    }
+
     fun setThemeMode(context: Context, mode: ThemeMode) = viewModelScope.launch { 
         repo.setThemeMode(mode)
         if (!isPro.value) triggerAd(context)
@@ -491,6 +497,12 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     init {
         observeCallSession()
 
+        if (!deviceNoiseCancellationSupported) {
+            viewModelScope.launch {
+                repo.setGlobalNoiseCancellation(false)
+            }
+        }
+
         // Keep the UI audio-device mode in sync with the route Telecom actually
         // confirmed via onCallAudioStateChanged (e.g. BT SCO link established).
         // This prevents the UI showing "Bluetooth" while audio is still on the
@@ -516,24 +528,30 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .build()
         
-        connectivityManager.registerNetworkCallback(networkRequest, object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) {
-                _isConnected.value = true
-            }
-
-            override fun onLost(network: Network) {
-                // Instead of assuming everything is lost, check if ANY network still has internet
-                val currentActive = connectivityManager.activeNetwork
-                val currentCaps = connectivityManager.getNetworkCapabilities(currentActive)
-                _isConnected.value = currentCaps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
-            }
-            
-            override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
-                if (networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
+        try {
+            connectivityManager.registerNetworkCallback(networkRequest, object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
                     _isConnected.value = true
                 }
-            }
-        })
+
+                override fun onLost(network: Network) {
+                    // Instead of assuming everything is lost, check if ANY network still has internet
+                    val currentActive = connectivityManager.activeNetwork
+                    val currentCaps = connectivityManager.getNetworkCapabilities(currentActive)
+                    _isConnected.value = currentCaps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+                }
+                
+                override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+                    if (networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
+                        _isConnected.value = true
+                    }
+                }
+            })
+        } catch (e: Exception) {
+            // Connectivity updates are advisory; a restricted OEM implementation must
+            // not prevent the main screen from opening.
+            android.util.Log.w("SipViewModel", "Network callback unavailable", e)
+        }
 
         // Auto-select default/enabled account
         viewModelScope.launch(Dispatchers.IO) {
@@ -668,7 +686,9 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         val newText = text.substring(0, selection.start) + char + text.substring(selection.end)
         val newSelection = selection.start + 1
         _dialString.value = TextFieldValue(text = newText, selection = TextRange(newSelection))
-        if (callSession.value?.state == CallState.CONFIRMED) {
+        // Use the native call ID rather than the UI state, which can lag briefly
+        // during same-app calls and otherwise drops keypad tones in that window.
+        if ((callSession.value?.callId ?: -1) >= 0) {
             SipAudioController.sendDtmf(char)
         }
     }

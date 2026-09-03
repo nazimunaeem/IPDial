@@ -25,6 +25,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -249,6 +250,7 @@ fun AccountEditSheet(
     var proxy     by remember { mutableStateOf(existing?.proxy ?: "") }
     var port      by remember { mutableStateOf(existing?.port?.toString() ?: "") }
     var transport by remember { mutableStateOf(existing?.transport ?: Transport.UDP) }
+    var userManuallySelectedTransport by remember { mutableStateOf(existing != null) }
     var ecEnabled by remember { mutableStateOf(existing?.ecEnabled ?: true) }
     var nsEnabled by remember { mutableStateOf(existing?.nsEnabled ?: true) }
     var agcEnabled by remember { mutableStateOf(existing?.agcEnabled ?: true) }
@@ -259,17 +261,18 @@ fun AccountEditSheet(
     val suggestedLabels = listOf("iCallBD", "BanglaCall").plus(savedLabels).distinct()
     val suggestedHosts = listOf("103.129.202.202", "sip.amarip.net").plus(savedHosts).distinct()
 
-
-    // Auto-detect transport based on domain, proxy, and port
+    // Auto-detect transport based on domain, proxy, and port unless user manually changed it
     LaunchedEffect(domain, proxy, port) {
-        val isSips = domain.startsWith("sips:", ignoreCase = true) || proxy.startsWith("sips:", ignoreCase = true) || domain.contains("transport=tls", ignoreCase = true) || proxy.contains("transport=tls", ignoreCase = true)
-        val isTcp = domain.contains("transport=tcp", ignoreCase = true) || proxy.contains("transport=tcp", ignoreCase = true)
-        val parsedPort = port.toIntOrNull()
-        
-        transport = when {
-            isSips || parsedPort == 5061 -> Transport.TLS
-            isTcp -> Transport.TCP
-            else -> Transport.UDP
+        if (!userManuallySelectedTransport) {
+            val isSips = domain.startsWith("sips:", ignoreCase = true) || proxy.startsWith("sips:", ignoreCase = true) || domain.contains("transport=tls", ignoreCase = true) || proxy.contains("transport=tls", ignoreCase = true)
+            val isTcp = domain.contains("transport=tcp", ignoreCase = true) || proxy.contains("transport=tcp", ignoreCase = true)
+            val parsedPort = port.toIntOrNull()
+            
+            transport = when {
+                isSips || parsedPort == 5061 -> Transport.TLS
+                isTcp -> Transport.TCP
+                else -> Transport.UDP
+            }
         }
     }
 
@@ -303,7 +306,7 @@ fun AccountEditSheet(
                 value = username, onValueChange = { username = it },
                 label = { Text("SIP Username *") },
                 singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
                 modifier = Modifier.fillMaxWidth()
             )
             OutlinedTextField(
@@ -340,6 +343,27 @@ fun AccountEditSheet(
                 modifier = Modifier.fillMaxWidth()
             )
 
+            Column {
+                Text(
+                    text = "Transport",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 4.dp)
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Transport.entries.forEach { tp ->
+                        FilterChip(
+                            selected = transport == tp,
+                            onClick = {
+                                userManuallySelectedTransport = true
+                                transport = tp
+                            },
+                            label = { Text(tp.name) }
+                        )
+                    }
+                }
+            }
+
             Spacer(Modifier.height(8.dp))
 
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -348,15 +372,18 @@ fun AccountEditSheet(
                 }
                 Button(
                     onClick = {
-                        if (username.isNotBlank() && password.isNotBlank() && domain.isNotBlank()) {
+                        val trimmedUser = username.trim()
+                        val trimmedPass = password.trim()
+                        val trimmedDomain = domain.trim()
+                        if (trimmedUser.isNotBlank() && trimmedPass.isNotBlank() && trimmedDomain.isNotBlank()) {
                             onSave(
                                 (existing ?: SipAccount()).copy(
-                                    label = label,
-                                    username = username,
-                                    password = password,
-                                    domain = domain,
-                                    proxy = proxy,
-                                    port = port.toIntOrNull(),
+                                    label = label.trim(),
+                                    username = trimmedUser,
+                                    password = trimmedPass,
+                                    domain = trimmedDomain,
+                                    proxy = proxy.trim(),
+                                    port = port.trim().toIntOrNull(),
                                     transport = transport,
                                     codec = existing?.codec,
                                     enabledCodecs = existing?.enabledCodecs ?: com.ipdial.data.model.DEFAULT_ENABLED_CODECS,

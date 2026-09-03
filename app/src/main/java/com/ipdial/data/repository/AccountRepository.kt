@@ -255,14 +255,14 @@ class AccountRepository(private val context: Context) {
                 val parts = encrypted.split(":")
                 if (parts.size != 3) {
                     android.util.Log.e("CryptoHelper", "Invalid AES format: parts=${parts.size}")
-                    return ""
+                    return encrypted
                 }
                 val iv = android.util.Base64.decode(parts[1], android.util.Base64.NO_WRAP)
                 val ciphertext = android.util.Base64.decode(parts[2], android.util.Base64.NO_WRAP)
                 
                 val key = getSecretKey() ?: run {
                     android.util.Log.e("CryptoHelper", "KeyStore key is null during decryption")
-                    return ""
+                    return encrypted
                 }
                 val cipher = javax.crypto.Cipher.getInstance(TRANSFORMATION)
                 val spec = javax.crypto.spec.GCMParameterSpec(128, iv)
@@ -270,7 +270,7 @@ class AccountRepository(private val context: Context) {
                 String(cipher.doFinal(ciphertext), Charsets.UTF_8)
             } catch (e: Throwable) {
                 android.util.Log.e("CryptoHelper", "Decryption failed: ${e.message}", e)
-                ""
+                encrypted
             }
         }
     }

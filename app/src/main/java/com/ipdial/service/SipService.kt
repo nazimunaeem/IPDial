@@ -36,13 +36,21 @@ class SipService : Service() {
                 }
             }
             if (delayStartForeground) {
-                context.startService(intent)
+                try {
+                    context.startService(intent)
+                } catch (e: Exception) {
+                    Log.e("SipService", "Unable to start delayed SIP service", e)
+                }
             } else {
                 try {
                     context.startForegroundService(intent)
                 } catch (e: Exception) {
                     Log.e("SipService", "startForegroundService failed, trying regular startService", e)
-                    context.startService(intent)
+                    try {
+                        context.startService(intent)
+                    } catch (fallbackError: Exception) {
+                        Log.e("SipService", "Unable to start SIP service", fallbackError)
+                    }
                 }
             }
         }
@@ -66,11 +74,19 @@ class SipService : Service() {
     private var callStartTime = 0L
     private var lastSession: com.ipdial.data.model.CallSession? = null
     private var autoRecordedCallId = -1
+    private val authFailedAccounts = java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
     private fun isPermanentAuthFailure(statusCode: Int) = statusCode == 401 || statusCode == 403
 
     override fun onCreate() {
         super.onCreate()
+        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            Log.w("SipService", "Stopping SIP service because microphone permission is not granted")
+            stopSelf()
+            return
+        }
         audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
 
         repo = AccountRepository(applicationContext)
@@ -149,6 +165,10 @@ class SipService : Service() {
 
                     lastNetwork = network
                     isConnected = true
+
+                    // Reset auth-failed set on network switch so accounts get a fresh chance
+                    // on the new network connection (e.g. switching off captive WiFi)
+                    authFailedAccounts.clear()
 
                     scope.launch(Dispatchers.IO) {
                         val freshAccounts = repo.accounts.first()
@@ -345,10 +365,12 @@ class SipService : Service() {
                                 active.agcEnabled != account.agcEnabled
 
                         if (hasChanged) {
+                            authFailedAccounts.remove(account.id)
                             activeConfigs[account.id] = account
                             SipEngine.addAccount(account)
                         }
                     } else {
+                        authFailedAccounts.remove(account.id)
                         if (activeConfigs.containsKey(account.id)) {
                             activeConfigs.remove(account.id)
                             SipEngine.removeAccount(account.id)
@@ -362,12 +384,6 @@ class SipService : Service() {
                 }
             }
         }
-        // Accounts whose last registration failed with a permanent auth error
-        // (401/403). Auto-retrying these never succeeds until the user fixes the
-        // credentials, so we pause retries to stop spamming the network/server.
-        // A credential change (accounts flow -> hasChanged -> full addAccount) or a
-        // successful REGISTER removes the account from this set.
-        val authFailedAccounts = mutableSetOf<String>()
 
         scope.launch {
             SipEngine.registrationEvents.collect { (accountId, status, statusCode) ->
@@ -382,12 +398,12 @@ class SipService : Service() {
                         authFailedAccounts.add(accountId)
                         Log.w("SipService", "Account $accountId permanent auth failure (code=$statusCode). Pausing auto-retry until credentials change.")
                     }
-                    status == RegStatus.ERROR || status == RegStatus.UNREGISTERED -> {
+                    status == RegStatus.UNREGISTERED -> {
                         authFailedAccounts.remove(accountId)
                         val accounts = repo.accounts.first()
                         val targetAcc = accounts.firstOrNull { it.id == accountId }
                         if (targetAcc != null && targetAcc.isEnabled) {
-                            Log.w("SipService", "Account $accountId dropped registration (status=$status). Scheduling quick retry in 5s.")
+                            Log.w("SipService", "Account $accountId unregistered. Scheduling quick retry in 5s.")
                             scope.launch {
                                 delay(5_000)
                                 val freshAccounts = repo.accounts.first()
@@ -397,6 +413,28 @@ class SipService : Service() {
                                     accountId !in authFailedAccounts
                                 ) {
                                     Log.i("SipService", "Quick retry re-adding account $accountId")
+                                    repo.updateRegStatus(accountId, RegStatus.REGISTERING)
+                                    SipEngine.addAccount(freshAcc)
+                                }
+                            }
+                        }
+                    }
+                    status == RegStatus.ERROR -> {
+                        // Non-permanent errors (e.g. DNS failure, network unreachable)
+                        authFailedAccounts.remove(accountId)
+                        val accounts = repo.accounts.first()
+                        val targetAcc = accounts.firstOrNull { it.id == accountId }
+                        if (targetAcc != null && targetAcc.isEnabled) {
+                            Log.w("SipService", "Account $accountId error (code=$statusCode). Scheduling retry in 10s.")
+                            scope.launch {
+                                delay(10_000)
+                                val freshAccounts = repo.accounts.first()
+                                val freshAcc = freshAccounts.firstOrNull { it.id == accountId }
+                                if (freshAcc != null && freshAcc.isEnabled &&
+                                    freshAcc.regStatus != RegStatus.REGISTERED &&
+                                    accountId !in authFailedAccounts
+                                ) {
+                                    Log.i("SipService", "Retrying account $accountId")
                                     repo.updateRegStatus(accountId, RegStatus.REGISTERING)
                                     SipEngine.addAccount(freshAcc)
                                 }
@@ -415,21 +453,24 @@ class SipService : Service() {
                     val enabledAccounts = accounts.filter { it.isEnabled }
                     for (account in enabledAccounts) {
                         if (account.id in authFailedAccounts) continue
-                        if (account.regStatus != RegStatus.REGISTERED) {
-                            Log.d("SipService", "Keep-alive: Account ${account.id} not registered (status=${account.regStatus}). Attempting re-registration.")
-                            // First try lightweight re-registration
-                            SipEngine.reconnectAccount(account.id)
-                            // Wait and check if it succeeded
-                            delay(5_000)
-                            // If still not registered, force full re-add (handles cases where
-                            // PJSIP internal account state was lost)
-                            val freshAccounts = repo.accounts.first()
-                            val freshAccount = freshAccounts.firstOrNull { it.id == account.id }
-                            if (freshAccount != null && freshAccount.isEnabled && freshAccount.regStatus != RegStatus.REGISTERED) {
-                                Log.w("SipService", "Keep-alive: Re-registration failed for ${account.id}. Force re-adding account.")
-                                repo.updateRegStatus(account.id, RegStatus.REGISTERING)
-                                SipEngine.addAccount(freshAccount)
-                            }
+                        // Skip accounts that are already in the process of registering
+                        if (account.regStatus == RegStatus.REGISTERED || account.regStatus == RegStatus.REGISTERING) continue
+                        
+                        Log.d("SipService", "Keep-alive: Account ${account.id} not registered (status=${account.regStatus}). Attempting re-registration.")
+                        // First try lightweight re-registration
+                        SipEngine.reconnectAccount(account.id)
+                        // Allow time for transaction to complete before checking
+                        delay(15_000)
+                        // If still not registered and not in progress, force full re-add
+                        val freshAccounts = repo.accounts.first()
+                        val freshAccount = freshAccounts.firstOrNull { it.id == account.id }
+                        if (freshAccount != null && freshAccount.isEnabled &&
+                            freshAccount.regStatus != RegStatus.REGISTERED &&
+                            freshAccount.regStatus != RegStatus.REGISTERING
+                        ) {
+                            Log.w("SipService", "Keep-alive: Re-registration failed for ${account.id}. Force re-adding account.")
+                            repo.updateRegStatus(account.id, RegStatus.REGISTERING)
+                            SipEngine.addAccount(freshAccount)
                         }
                     }
                 } catch (e: Exception) {

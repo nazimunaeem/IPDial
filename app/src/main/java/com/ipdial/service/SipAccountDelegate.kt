@@ -50,6 +50,10 @@ class SipAccountDelegate(
                     log("REG_AUTH_FAILED: Account $accountId auth failed (code=$statusCode). Check credentials.", true)
                     RegStatus.ERROR
                 }
+                statusCode == 408 || statusCode == 423 || statusCode in 500..599 || statusCode == 480 -> {
+                    log("REG_TRANSIENT: Account $accountId code=$statusCode (${ai.regStatusText}) - stack will retry", false)
+                    RegStatus.REGISTERING
+                }
                 statusCode >= 300 -> {
                     log("REG_ERROR: Account $accountId code=$statusCode (${ai.regStatusText})", true)
                     RegStatus.ERROR

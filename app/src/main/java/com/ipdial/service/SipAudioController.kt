@@ -112,12 +112,12 @@ object SipAudioController {
                         } else {
                             // Re-INVITE to unhold; pjsip does not always re-fire
                             // onCallMediaState after the reintive completes, so we
-                            // re-establish the audio path explicitly afterwards.
+                            // Reopen the device first, then restore the media bridge.
                             call.reinvite(prm)
                             SipEngine._callSession.value = session.copy(isOnHold = false)
-                            SipEngine.reconnectAudioPathForCall(session.callId)
                             SipEngine.forceAudioDevicesForCall()
                             SipEngine.forceEcForCallAudio()
+                            SipEngine.reconnectAudioPathForCall(session.callId)
                         }
                     } catch (e: Throwable) {
                         SipEngine.logEx("holdCall failed: ${e.message}", true)

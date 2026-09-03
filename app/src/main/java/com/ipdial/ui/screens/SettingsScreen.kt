@@ -66,6 +66,7 @@ fun SettingsScreen(
     val appIconAlias by vm.appIconAlias.collectAsState()
     val keypadDesign by vm.keypadDesign.collectAsState()
     val globalNoiseCancellation by vm.globalNoiseCancellation.collectAsState()
+    val noiseCancellationSupported = vm.deviceNoiseCancellationSupported
 
     var showRestartDialog by remember { mutableStateOf(false) }
     var showResetDialog by remember { mutableStateOf(false) }
@@ -390,11 +391,15 @@ fun SettingsScreen(
                 SettingsRow(
                     icon = Icons.Default.NoiseControlOff,
                     title = "Noise Cancellation",
-                    subtitle = if (globalNoiseCancellation) "Reduces background noise for clearer calls" else "Background noise may affect call quality",
+                    subtitle = if (!noiseCancellationSupported) "Not supported by this device"
+                    else if (globalNoiseCancellation) "Uses device noise cancellation"
+                    else "Device noise cancellation is off",
                     trailing = {
                         Switch(
-                            checked = globalNoiseCancellation,
+                            checked = noiseCancellationSupported && globalNoiseCancellation,
+                            enabled = noiseCancellationSupported,
                             onCheckedChange = {
+                                if (!noiseCancellationSupported) return@Switch
                                 if (it) {
                                     vm.setGlobalNoiseCancellation(context, true)
                                 } else {
@@ -404,6 +409,7 @@ fun SettingsScreen(
                         )
                     },
                     onClick = {
+                        if (!noiseCancellationSupported) return@SettingsRow
                         if (globalNoiseCancellation) {
                             vm.setGlobalNoiseCancellation(context, false)
                         } else {

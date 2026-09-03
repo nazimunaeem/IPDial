@@ -57,7 +57,9 @@ import android.util.Log
 @Composable
 fun CallScreen(vm: SipViewModel, session: CallSession) {
     val liveCallSession by vm.callSession.collectAsState()
-    val activeSession = liveCallSession ?: session
+    // The navigation argument is only the initial snapshot. Once the engine
+    // clears its live session after a remote BYE, never render that stale copy.
+    val activeSession = liveCallSession ?: return
     
     // Bail out only when the call has fully ended (session null). We intentionally
     // do NOT compare callIds — vm.callSession IS SipEngine.callSession, so a

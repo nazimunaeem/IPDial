@@ -95,8 +95,9 @@ class SipAudioRouter(
                 synchronized(SipEngine.pjsipLock) {
                     val adm = SipEngine.endpoint?.audDevManager()
                     if (adm != null) {
-                        // ecOptions 33 = PJMEDIA_ECHO_DEFAULT | PJMEDIA_ECHO_USE_NOISE_SUPPRESSOR
-                        adm.setEcOptions(33, if (on) 600 else 500)
+                        // The bundled software EC can crash inside AudioRecord on
+                        // Android devices, so rely on the platform audio path.
+                        adm.setEcOptions(0, 0)
                         Log.d(TAG, "EC tail set to ${if (on) 600 else 500} ms (speaker=$on)")
                     }
                 }
