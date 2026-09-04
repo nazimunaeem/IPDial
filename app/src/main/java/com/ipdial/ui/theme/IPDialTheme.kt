@@ -103,25 +103,72 @@ data class ThemeSchemePreview(
     val surface: Color,
     val primary: Color,
     val onSurface: Color,
-    val onPrimary: Color
+    val onPrimary: Color,
+    val secondary: Color,
+    val accent: Color
 )
 
-fun themePreviewForMode(mode: ThemeMode): ThemeSchemePreview {
-    val scheme = when (mode) {
-        ThemeMode.System -> LightColors
-        ThemeMode.Light -> LightColors
-        ThemeMode.Dark -> DarkColors
-        ThemeMode.Dynamic -> LightColors
-        ThemeMode.Obsidian -> ObsidianColors
-        ThemeMode.Quartz -> QuartzColors
-    }
-    return ThemeSchemePreview(
-        label = mode.name,
-        background = scheme.background,
-        surface = scheme.surface,
-        primary = scheme.primary,
-        onSurface = scheme.onSurface,
-        onPrimary = scheme.onPrimary
+/** Each theme gets a unique, visually distinct preview that represents its real appearance */
+fun themePreviewForMode(mode: ThemeMode): ThemeSchemePreview = when (mode) {
+    ThemeMode.System -> ThemeSchemePreview(
+        label = "System",
+        background = LightColors.background,
+        surface = LightColors.surface,
+        primary = LightColors.primary,
+        onSurface = LightColors.onSurface,
+        onPrimary = LightColors.onPrimary,
+        secondary = LightColors.primaryContainer,
+        accent = LightColors.surfaceVariant
+    )
+    ThemeMode.Light -> ThemeSchemePreview(
+        label = "Light",
+        background = Color(0xFFFAFDF9),
+        surface = Color(0xFFFFFFFF),
+        primary = Color(0xFF1E6B3C),
+        onSurface = Color(0xFF1A2E1A),
+        onPrimary = Color.White,
+        secondary = Color(0xFFD4EDDA),
+        accent = Color(0xFFE8F5E9)
+    )
+    ThemeMode.Dark -> ThemeSchemePreview(
+        label = "Dark",
+        background = DarkColors.background,
+        surface = DarkColors.surface,
+        primary = DarkColors.primary,
+        onSurface = DarkColors.onSurface,
+        onPrimary = DarkColors.onPrimary,
+        secondary = DarkColors.primaryContainer,
+        accent = DarkColors.surfaceVariant
+    )
+    ThemeMode.Dynamic -> ThemeSchemePreview(
+        label = "Dynamic",
+        background = Color(0xFFDCE8F8),
+        surface = Color(0xFFEEF4FF),
+        primary = Color(0xFF3366CC),
+        onSurface = Color(0xFF1A2240),
+        onPrimary = Color.White,
+        secondary = Color(0xFFB8D4F0),
+        accent = Color(0xFFC8D8F0)
+    )
+    ThemeMode.Obsidian -> ThemeSchemePreview(
+        label = "Obsidian",
+        background = Color(0xFF0D0404),
+        surface = Color(0xFF1C1C1E),
+        primary = ObsidianColors.primary,
+        onSurface = Color.White,
+        onPrimary = Color.White,
+        secondary = Color(0xFF3A1515),
+        accent = Color(0xFF2C2C2E)
+    )
+    ThemeMode.Quartz -> ThemeSchemePreview(
+        label = "Quartz",
+        background = Color(0xFFF2F2F7),
+        surface = Color(0xFFFFFFFF),
+        primary = QuartzColors.primary,
+        onSurface = Color.Black,
+        onPrimary = Color.White,
+        secondary = Color(0xFFE8EDF5),
+        accent = Color(0xFFE5E5EA)
     )
 }
 
@@ -252,9 +299,12 @@ fun IPDialTheme(
             val window = (view.context as? android.app.Activity)?.window ?: return@SideEffect
             @Suppress("DEPRECATION")
             window.navigationBarColor = android.graphics.Color.TRANSPARENT
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                window.isNavigationBarContrastEnforced = false
+            }
             val insetsController = androidx.core.view.WindowInsetsControllerCompat(window, window.decorView)
             insetsController.isAppearanceLightStatusBars = isLight
-            insetsController.isAppearanceLightNavigationBars = true
+            insetsController.isAppearanceLightNavigationBars = isLight
         }
     }
 

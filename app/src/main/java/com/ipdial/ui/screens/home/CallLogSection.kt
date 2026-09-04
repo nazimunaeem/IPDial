@@ -66,7 +66,7 @@ data class LogGroup(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun CallLogRow(
+fun CallLogItem(
     entry: CallLogEntry,
     count: Int = 1,
     account: SipAccount?,

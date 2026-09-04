@@ -55,9 +55,7 @@ fun IPDialTopBar(
     val isGlass = LocalGlassMode.current != GlassMode.None
     val containerColor = if (isGlass) Color.Transparent else MaterialTheme.colorScheme.surface
     val isPro = vm?.isPro?.collectAsState()?.value ?: false
-    val appName = title ?: if (isPro) "IPDial Pro" else "IPDial"
-    val appNameColor = MaterialTheme.colorScheme.onSurface
-    val themeColor = MaterialTheme.colorScheme.primary
+    val activeAccount = vm?.activeAccount?.collectAsState()?.value ?: accounts.firstOrNull { it.isEnabled } ?: accounts.firstOrNull()
 
     Surface(
         color = containerColor,
@@ -72,68 +70,87 @@ fun IPDialTopBar(
                 .statusBarsPadding()
                 .height(56.dp)
         ) {
-            // Left: Back button (if secondary screen) OR Dynamic Status Capsule (if main screen)
-            Box(
-                modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .fillMaxHeight(),
-                contentAlignment = Alignment.CenterStart
-            ) {
-                if (onBack != null) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(start = 6.dp)
+            // LEFT: App Name (or Back Button + Screen Title)
+            if (onBack != null) {
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .padding(start = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(
+                        onClick = onBack,
+                        modifier = Modifier.size(40.dp)
                     ) {
-                        IconButton(
-                            onClick = onBack,
-                            modifier = Modifier.size(40.dp)
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    Spacer(Modifier.width(2.dp))
+                    Text(
+                        text = title ?: if (isPro) "IPDial Pro" else "IPDial",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 17.sp
+                        ),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            } else {
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .padding(start = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "IPDial",
+                        style = MaterialTheme.typography.titleLarge.copy(
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 19.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    )
+                    if (isPro) {
+                        Spacer(Modifier.width(5.dp))
+                        Surface(
+                            color = Color(0xFFBC4749).copy(alpha = 0.15f),
+                            shape = RoundedCornerShape(6.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back",
-                                tint = MaterialTheme.colorScheme.onSurface
+                            Text(
+                                text = "PRO",
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 9.sp,
+                                    color = Color(0xFFBC4749)
+                                )
                             )
                         }
                     }
-                } else {
-                    RegStatusIndicator(accounts = accounts, vm = vm)
                 }
             }
 
-            // Center: App Name / Screen Title Capsule with soft background
-            Surface(
-                color = if (isGlass) Color.Transparent else MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .then(if (isGlass) Modifier.glass(RoundedCornerShape(16.dp)) else Modifier)
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
-                ) {
-                    Text(
-                        text = appName,
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = FontWeight.Bold,
-                            color = appNameColor,
-                            fontSize = 15.sp
-                        ),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Center
-                    )
-                }
+            // MIDDLE: Balance (when on main screen)
+            if (onBack == null && activeAccount != null) {
+                TopBarBalanceChip(
+                    account = activeAccount,
+                    vm = vm,
+                    modifier = Modifier.align(Alignment.Center)
+                )
             }
 
-            // Right side items: Setup Account / Pro Badge (No hamburger icon!)
-            Row(
+            // RIGHT: Display Name + Registration Dot (or Setup Account button)
+            Box(
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
                     .padding(end = 12.dp)
                     .fillMaxHeight(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                contentAlignment = Alignment.CenterEnd
             ) {
                 if (accounts.isEmpty() && onAddAccount != null) {
                     Surface(
@@ -159,8 +176,13 @@ fun IPDialTopBar(
                             )
                         }
                     }
-                } else if (isPro && onBack == null) {
-                    // Small Pro Pill Badge
+                } else if (onBack == null) {
+                    TopBarAccountIndicator(
+                        accounts = accounts,
+                        vm = vm,
+                        onClick = onAddAccount
+                    )
+                } else if (isPro) {
                     Surface(
                         color = Color(0xFFBC4749).copy(alpha = 0.15f),
                         shape = RoundedCornerShape(12.dp)

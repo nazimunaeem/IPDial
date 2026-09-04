@@ -89,6 +89,7 @@ fun ContactItem(
     contact: Contact,
     onNumberClick: (String) -> Unit,
     onContactClick: () -> Unit,
+    onAvatarClick: () -> Unit,
     onToggleFavorite: ((Contact) -> Unit)? = null,
     modifier: Modifier = Modifier,
     isGlass: Boolean = false
@@ -124,9 +125,10 @@ fun ContactItem(
                 name = contact.name,
                 photoUri = contact.photoUri,
                 size = 44.dp,
-                onClick = onContactClick
+                onClick = onAvatarClick
             )
         },
+
         trailingContent = if (onToggleFavorite != null) {
             {
                 IconButton(

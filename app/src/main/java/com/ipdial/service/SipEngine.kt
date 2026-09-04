@@ -403,6 +403,9 @@ object SipEngine {
                         }
                         adm.setCaptureDev(-1)
                         adm.setPlaybackDev(-1)
+                        try {
+                            adm.setEcOptions(0, 0)
+                        } catch (_: Throwable) {}
                     } catch (e: Exception) {
                         log("Failed to configure audio devices: ${e.message}", true)
                     }
@@ -1166,6 +1169,7 @@ object SipEngine {
                     for (i in 0 until ci.media.size.toInt()) {
                         val mi = ci.media.get(i)
                         if (mi.type != pjmedia_type.PJMEDIA_TYPE_AUDIO) continue
+                        if (mi.status != pjsua_call_media_status.PJSUA_CALL_MEDIA_ACTIVE) continue
                         val aud = AudioMedia.typecastFromMedia(call.getMedia(mi.index.toLong()))
                         // Correct PJSIP directions:
                         //   RX: call media -> playback (speaker)
@@ -1286,19 +1290,11 @@ object SipEngine {
      * forceAudioDevicesForCall() will re-open it automatically.
      */
     fun releaseSoundDevice() {
-        runOnPjsipThread {
-            registerCurrentThreadEx()
-            try {
-                val ep = endpoint ?: return@runOnPjsipThread
-                val adm = ep.audDevManager()
-                if (adm.sndIsActive()) {
-                    adm.setNullDev()
-                    logEx("releaseSoundDevice: sound device closed — mic released", false)
-                }
-            } catch (e: Throwable) {
-                logEx("releaseSoundDevice failed: ${e.message}", true)
-            }
-        }
+        // No-op: PJSIP automatically idles audio playback/capture when active call
+        // media ports are disconnected. Do NOT call adm.setNullDev() here because
+        // switching the driver to NullDev destroys the audio device driver state,
+        // causing all subsequent calls (call 2, call 3, etc.) to have no earpiece/mic audio.
+        logEx("releaseSoundDevice: call finished, audio driver kept ready for next call", false)
     }
 
     fun setCodecPriority(codecId: String, priority: Short) {

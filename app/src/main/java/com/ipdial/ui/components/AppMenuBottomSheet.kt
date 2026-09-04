@@ -1,6 +1,7 @@
 package com.ipdial.ui.components
 
 import android.content.Intent
+import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -8,8 +9,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -49,6 +52,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -59,19 +63,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ipdial.NavDest
 import com.ipdial.data.model.RegStatus
 import com.ipdial.ui.SipViewModel
 import com.ipdial.ui.theme.GlassMode
 import com.ipdial.ui.theme.LocalGlassMode
-import com.ipdial.ui.theme.glass
 import java.util.concurrent.TimeUnit
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -89,6 +96,14 @@ fun AppMenuBottomSheet(
     val proExpiration by vm.proExpiration.collectAsState()
     val glassMode = LocalGlassMode.current
     val isGlass = glassMode != GlassMode.None
+    val isQuartz = glassMode == GlassMode.Quartz
+    val isObsidian = glassMode == GlassMode.Obsidian
+
+    val sheetBgColor = when {
+        isQuartz -> Color(0xF7FFFFFF)
+        isObsidian -> Color(0xF71C1C1E)
+        else -> MaterialTheme.colorScheme.surface
+    }
 
     var showExitDialog by remember { mutableStateOf(false) }
 
@@ -110,28 +125,45 @@ fun AppMenuBottomSheet(
         onDismissRequest = onDismissRequest,
         sheetState = sheetState,
         dragHandle = { BottomSheetDefaults.DragHandle() },
-        containerColor = if (isGlass) Color.Transparent else MaterialTheme.colorScheme.surface,
+        containerColor = sheetBgColor,
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-        modifier = if (isGlass) Modifier.glass(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp), alpha = 0.95f) else Modifier
+        modifier = Modifier.fillMaxWidth()
     ) {
+        val view = LocalView.current
+        if (!view.isInEditMode) {
+            val isLight = sheetBgColor.luminance() > 0.5f
+            SideEffect {
+                val window = (view.parent as? DialogWindowProvider)?.window
+                    ?: (view.context as? android.app.Activity)?.window
+                if (window != null) {
+                    @Suppress("DEPRECATION")
+                    window.navigationBarColor = android.graphics.Color.TRANSPARENT
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        window.isNavigationBarContrastEnforced = false
+                    }
+                    val insetsController = WindowInsetsControllerCompat(window, window.decorView)
+                    insetsController.isAppearanceLightNavigationBars = isLight
+                }
+            }
+        }
+
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(horizontal = 20.dp)
+                .padding(horizontal = 14.dp)
                 .verticalScroll(rememberScrollState())
         ) {
             // Title
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 12.dp),
+                    .padding(bottom = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
                     text = "Menu & Services",
-                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.onSurface
                 )
             }
@@ -148,7 +180,7 @@ fun AppMenuBottomSheet(
                 }
             )
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
 
             // 2. Pro Card
             ProBannerCard(
@@ -160,19 +192,20 @@ fun AppMenuBottomSheet(
                 }
             )
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(10.dp))
 
-            // 3. Quick Actions Section (2-Column Grid)
+            // 3. Quick Actions Section (6 Tiles in 3-Column Grid)
             Text(
-                text = "VoIP & Communications",
-                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                text = "Quick Actions & VoIP",
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = 8.dp)
+                modifier = Modifier.padding(bottom = 6.dp)
             )
 
+            // Row 1 of 6 Tiles: Accounts | Recordings | Call Style
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 MenuGridItem(
                     modifier = Modifier.weight(1f),
@@ -189,26 +222,38 @@ fun AppMenuBottomSheet(
                     modifier = Modifier.weight(1f),
                     icon = Icons.Default.Mic,
                     title = "Recordings",
-                    subtitle = "Call audio files",
+                    subtitle = "Audio files",
                     tint = Color(0xFFE57373),
                     onClick = {
                         onDismissRequest()
                         onNavigate(NavDest.Recordings.route)
                     }
                 )
+                MenuGridItem(
+                    modifier = Modifier.weight(1f),
+                    icon = Icons.Default.Call,
+                    title = "Call Style",
+                    subtitle = "Banner/Full",
+                    tint = Color(0xFF4CAF50),
+                    onClick = {
+                        onDismissRequest()
+                        onNavigate(NavDest.IncomingCallStyle.route)
+                    }
+                )
             }
 
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(8.dp))
 
+            // Row 2 of 6 Tiles: Activity Log | Audio Codecs | Appearance
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 MenuGridItem(
                     modifier = Modifier.weight(1f),
                     icon = Icons.AutoMirrored.Filled.List,
                     title = "Activity Log",
-                    subtitle = "SIP event logs",
+                    subtitle = "SIP logs",
                     tint = Color(0xFF64B5F6),
                     onClick = {
                         onDismissRequest()
@@ -218,19 +263,30 @@ fun AppMenuBottomSheet(
                 MenuGridItem(
                     modifier = Modifier.weight(1f),
                     icon = Icons.Default.Audiotrack,
-                    title = "Audio Codecs",
-                    subtitle = "Opus, G.711 & more",
+                    title = "Codecs",
+                    subtitle = "Audio setup",
                     tint = Color(0xFFFFB74D),
                     onClick = {
                         onDismissRequest()
                         onNavigate(NavDest.AudioCodecs.route)
                     }
                 )
+                MenuGridItem(
+                    modifier = Modifier.weight(1f),
+                    icon = Icons.Default.Palette,
+                    title = "Themes",
+                    subtitle = "Appearance",
+                    tint = Color(0xFFBA68C8),
+                    onClick = {
+                        onDismissRequest()
+                        onNavigate(NavDest.ThemeSettings.route)
+                    }
+                )
             }
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(14.dp))
 
-            // 4. Customization & System
+            // 4. Preferences & App Info
             Text(
                 text = "Preferences & App Info",
                 style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
@@ -244,26 +300,6 @@ fun AppMenuBottomSheet(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column {
-                    MenuRowItem(
-                        icon = Icons.Default.Palette,
-                        title = "Appearance & Theme",
-                        subtitle = "Glass Obsidian, Quartz, Dark & Light",
-                        onClick = {
-                            onDismissRequest()
-                            onNavigate(NavDest.ThemeSettings.route)
-                        }
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f), modifier = Modifier.padding(horizontal = 16.dp))
-                    MenuRowItem(
-                        icon = Icons.Default.Call,
-                        title = "Incoming Call Style",
-                        subtitle = "Full screen vs heads-up banner",
-                        onClick = {
-                            onDismissRequest()
-                            onNavigate(NavDest.IncomingCallStyle.route)
-                        }
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f), modifier = Modifier.padding(horizontal = 16.dp))
                     MenuRowItem(
                         icon = Icons.Default.Settings,
                         title = "General Settings",
@@ -329,11 +365,6 @@ fun AppMenuBottomSheet(
                             text = "Exit & Stop Background Service",
                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                             color = MaterialTheme.colorScheme.error
-                        )
-                        Text(
-                            text = "Terminates SIP stack and background listening",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
                         )
                     }
                 }
@@ -478,7 +509,7 @@ private fun ProBannerCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(backgroundBrush)
-                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .padding(horizontal = 12.dp, vertical = 8.dp)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -551,16 +582,16 @@ private fun MenuGridItem(
     Surface(
         onClick = onClick,
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(14.dp),
         modifier = modifier
     ) {
         Column(
-            modifier = Modifier.padding(14.dp)
+            modifier = Modifier.padding(10.dp)
         ) {
             Box(
                 modifier = Modifier
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(10.dp))
+                    .size(32.dp)
+                    .clip(RoundedCornerShape(8.dp))
                     .background(tint.copy(alpha = 0.15f)),
                 contentAlignment = Alignment.Center
             ) {
@@ -568,19 +599,25 @@ private fun MenuGridItem(
                     imageVector = icon,
                     contentDescription = null,
                     tint = tint,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(18.dp)
                 )
             }
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(8.dp))
             Text(
                 text = title,
-                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                style = MaterialTheme.typography.titleSmall.copy(
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp
+                ),
                 color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
             Text(
                 text = subtitle,
-                style = MaterialTheme.typography.labelSmall,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontSize = 10.sp
+                ),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -600,7 +637,7 @@ private fun MenuRowItem(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(

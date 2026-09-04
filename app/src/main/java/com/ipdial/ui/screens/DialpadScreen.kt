@@ -313,7 +313,7 @@ fun DialpadScreen(
             )
         }
 
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(84.dp))
     }
 
     val showAccountSelection by vm.showAccountSelectionDialog.collectAsState()

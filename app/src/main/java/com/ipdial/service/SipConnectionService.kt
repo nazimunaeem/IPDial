@@ -103,6 +103,7 @@ class SipConnectionService : ConnectionService() {
         address?.let { connection.setAddress(it, TelecomManager.PRESENTATION_ALLOWED) }
         connection.setInitializing()
         connection.connectionCapabilities = Connection.CAPABILITY_MUTE or Connection.CAPABILITY_SUPPORT_HOLD
+        connection.connectionProperties = Connection.PROPERTY_SELF_MANAGED
         
         // Try getting accountId from root extras or nested outgoing call extras
         var accountId = request?.extras?.getString("com.ipdial.EXTRA_ACCOUNT_ID")
@@ -168,6 +169,7 @@ class SipConnectionService : ConnectionService() {
         connection.setInitializing()
         connection.setRinging()
         connection.connectionCapabilities = Connection.CAPABILITY_MUTE or Connection.CAPABILITY_SUPPORT_HOLD
+        connection.connectionProperties = Connection.PROPERTY_SELF_MANAGED
         
         // Try to get callId from extras first, fall back to session
         val callId = incomingExtras?.getInt("com.ipdial.EXTRA_CALL_ID", -1) ?: -1

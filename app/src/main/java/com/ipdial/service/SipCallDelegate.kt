@@ -325,27 +325,15 @@ class SipCallDelegate(
                     startAudioWatchdog()
                 }
 
-                // CRITICAL FIX: Force audio devices and EC setup when call becomes CONFIRMED
-                // This ensures the audio path is properly established.
-                //
-                // IMPORTANT: forceEcForCallAudio() calls pjsua_set_ec (setEcOptions),
-                // and forceAudioDevicesForCall() may call setCaptureDev/setPlaybackDev.
-                // Both RESTART the sound device, which destroys any startTransmit
-                // bridges that onCallMediaState established earlier (e.g. during EARLY).
-                // onCallMediaState does not re-fire after CONFIRMED, so without
-                // re-bridging here the microphone stops reaching the remote — the far
-                // end hears nothing after the call connects. So re-establish the
-                // audio path with fresh media AFTER forcing.
                 if (newState == CallState.CONFIRMED) {
-                    log("ONCALLSTATE: Call confirmed, forcing audio devices and EC setup", false)
+                    log("ONCALLSTATE: Call confirmed, ensuring audio path is active", false)
                     try {
-                        SipEngine.forceAudioDevicesForCall()
-                        SipEngine.forceEcForCallAudio()
-                        // Re-bridge mic→call and call→speaker with the freshly opened
-                        // sound device (the forces above restarted it).
                         SipEngine.reconnectAudioPathForCall(currentCallId)
+                        mainHandler.post {
+                            SipEngine.audioRouter?.routeAudioToDefault()
+                        }
                     } catch (e: Throwable) {
-                        log("Failed to force audio setup on CONFIRMED: ${e.message}", true)
+                        log("Failed to verify audio setup on CONFIRMED: ${e.message}", true)
                     }
                 }
 
@@ -375,13 +363,13 @@ class SipCallDelegate(
         try {
             val currentCallId = try { getId() } catch (_: Throwable) { -1 }
             if (currentCallId != -1) {
-                val ci = try { info } catch (_: Throwable) { null }
-                if (ci == null || ci.state == pjsip_inv_state.PJSIP_INV_STATE_DISCONNECTED || ci.state == pjsip_inv_state.PJSIP_INV_STATE_NULL) {
+                val callInfo = try { info } catch (_: Throwable) { null }
+                if (callInfo == null || callInfo.state == pjsip_inv_state.PJSIP_INV_STATE_DISCONNECTED || callInfo.state == pjsip_inv_state.PJSIP_INV_STATE_NULL) {
                     val session = _callSession.value
                     if (session != null && session.callId == currentCallId) {
                         log("ONCALLTSXSTATE: Disconnect detected for callId=$currentCallId, executing cleanup", false)
-                        val statusCode = if (ci != null) safeStatusCode(ci) else 0
-                        val statusReason = ci?.lastReason
+                        val statusCode = if (callInfo != null) safeStatusCode(callInfo) else 0
+                        val statusReason = callInfo?.lastReason
                         if (statusCode > 0 || !statusReason.isNullOrBlank()) {
                             SipEngine.pendingDisconnectInfo = Pair(if (statusCode > 0) statusCode else null, statusReason)
                         }
@@ -469,6 +457,16 @@ class SipCallDelegate(
                         }
                         
                         log("onCallMediaState: Audio path established for callId=$currentCallId (captureMedia=$captureMedia, playbackMedia=$playbackMedia)", false)
+
+                        // Re-apply speaker/earpiece/BT routing AFTER the PJSIP sound
+                        // device is open. The SipService observer fires routeAudioToDefault()
+                        // 300ms after stateChanged, but PJSIP may open its AudioRecord
+                        // LATER (after SDP exchange). If we don't re-route here, the OS
+                        // hands the new AudioRecord to the earpiece regardless of what
+                        // routeAudioToDefault() already set, causing silent speaker calls.
+                        mainHandler.post {
+                            SipEngine.audioRouter?.routeAudioToDefault()
+                        }
 
                         // Detect and surface the negotiated codec to the UI.
                         val codecName = try {

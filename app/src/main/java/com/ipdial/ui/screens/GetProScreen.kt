@@ -99,7 +99,10 @@ fun ReferralCard(vm: com.ipdial.ui.SipViewModel) {
     var code by remember { mutableStateOf("") }
     val fullDeviceId by vm.deviceId.collectAsState()
     val referralCode = remember(fullDeviceId) { fullDeviceId.take(6) }
-    val isGlass = com.ipdial.ui.theme.LocalGlassMode.current != com.ipdial.ui.theme.GlassMode.None
+    val glassMode = com.ipdial.ui.theme.LocalGlassMode.current
+    val isGlass = glassMode != com.ipdial.ui.theme.GlassMode.None
+    val isQuartz = glassMode == com.ipdial.ui.theme.GlassMode.Quartz
+    val buttonContentColor = if (isQuartz) MaterialTheme.colorScheme.primary else Color.White
 
     Card(
         modifier = Modifier
@@ -132,9 +135,9 @@ fun ReferralCard(vm: com.ipdial.ui.SipViewModel) {
                         }
                     }, 
                     modifier = Modifier.weight(1f).then(if (isGlass) Modifier.glass(ButtonDefaults.shape) else Modifier),
-                    colors = if (isGlass) ButtonDefaults.buttonColors(containerColor = Color.Transparent, contentColor = Color.White) else ButtonDefaults.buttonColors()
+                    colors = if (isGlass) ButtonDefaults.buttonColors(containerColor = Color.Transparent, contentColor = buttonContentColor) else ButtonDefaults.buttonColors()
                 ) {
-                    Text("Apply Code")
+                    Text("Apply Code", color = if (isGlass) buttonContentColor else Color.Unspecified, fontWeight = FontWeight.SemiBold)
                 }
 
                 Button(
@@ -148,9 +151,9 @@ fun ReferralCard(vm: com.ipdial.ui.SipViewModel) {
                         context.startActivity(android.content.Intent.createChooser(intent, "Share referral code"))
                     },
                     modifier = Modifier.then(if (isGlass) Modifier.glass(ButtonDefaults.shape) else Modifier),
-                    colors = if (isGlass) ButtonDefaults.buttonColors(containerColor = Color.Transparent, contentColor = Color.White) else ButtonDefaults.buttonColors()
+                    colors = if (isGlass) ButtonDefaults.buttonColors(containerColor = Color.Transparent, contentColor = buttonContentColor) else ButtonDefaults.buttonColors()
                 ) {
-                    Text("Share Code")
+                    Text("Share Code", color = if (isGlass) buttonContentColor else Color.Unspecified, fontWeight = FontWeight.SemiBold)
                 }
             }
             
@@ -174,7 +177,8 @@ fun ProStatusCard(isPro: Boolean, expiration: Long) {
     } else 0
 
     val proAccent = Color(0xFFBC4749)
-    val isGlass = com.ipdial.ui.theme.LocalGlassMode.current != com.ipdial.ui.theme.GlassMode.None
+    val glassMode = com.ipdial.ui.theme.LocalGlassMode.current
+    val isGlass = glassMode != com.ipdial.ui.theme.GlassMode.None
 
     Card(
         modifier = Modifier
@@ -183,7 +187,7 @@ fun ProStatusCard(isPro: Boolean, expiration: Long) {
         colors = CardDefaults.cardColors(
             containerColor = if (isPro) proAccent.copy(alpha = 0.1f) else (if (isGlass) Color.Transparent else MaterialTheme.colorScheme.surfaceVariant)
         ),
-        border = if (isPro) androidx.compose.foundation.BorderStroke(1.dp, proAccent.copy(alpha = 0.5f)) else (if (isGlass) null else null)
+        border = if (isPro) androidx.compose.foundation.BorderStroke(1.dp, proAccent.copy(alpha = 0.5f)) else null
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -199,7 +203,7 @@ fun ProStatusCard(isPro: Boolean, expiration: Long) {
                         text = if (isPro) "IPDial Pro Active" else "Free Version",
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
-                        color = if (isPro) proAccent else Color.Unspecified
+                        color = if (isPro) proAccent else MaterialTheme.colorScheme.onSurface
                     )
                     if (isPro) {
                         Text(
@@ -216,7 +220,11 @@ fun ProStatusCard(isPro: Boolean, expiration: Long) {
 
 @Composable
 fun PointsBalanceCard(points: Int, isLoading: Boolean, cooldown: Int, onWatchAd: () -> Unit) {
-    val isGlass = com.ipdial.ui.theme.LocalGlassMode.current != com.ipdial.ui.theme.GlassMode.None
+    val glassMode = com.ipdial.ui.theme.LocalGlassMode.current
+    val isGlass = glassMode != com.ipdial.ui.theme.GlassMode.None
+    val isQuartz = glassMode == com.ipdial.ui.theme.GlassMode.Quartz
+    val buttonContentColor = if (isQuartz) MaterialTheme.colorScheme.primary else Color.White
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -230,12 +238,16 @@ fun PointsBalanceCard(points: Int, isLoading: Boolean, cooldown: Int, onWatchAd:
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("Available Points", style = MaterialTheme.typography.labelSmall)
+                Text(
+                    text = "Available Points", 
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 Text(
                     text = points.toString(),
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.secondary
+                    color = if (isGlass) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
                 )
             }
             Button(
@@ -244,12 +256,21 @@ fun PointsBalanceCard(points: Int, isLoading: Boolean, cooldown: Int, onWatchAd:
                 shape = RoundedCornerShape(8.dp),
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                 modifier = Modifier.then(if (isGlass) Modifier.glass(RoundedCornerShape(8.dp)) else Modifier),
-                colors = if (isGlass) ButtonDefaults.buttonColors(containerColor = Color.Transparent, contentColor = Color.White) else ButtonDefaults.buttonColors()
+                colors = if (isGlass) ButtonDefaults.buttonColors(containerColor = Color.Transparent, contentColor = buttonContentColor) else ButtonDefaults.buttonColors()
             ) {
                 if (isLoading) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp), 
+                        strokeWidth = 2.dp,
+                        color = buttonContentColor
+                    )
                 } else {
-                    Icon(Icons.Default.VideoLibrary, null, modifier = Modifier.size(16.dp))
+                    Icon(
+                        Icons.Default.VideoLibrary, 
+                        null, 
+                        modifier = Modifier.size(16.dp),
+                        tint = buttonContentColor
+                    )
                 }
                 Spacer(Modifier.width(6.dp))
                 val buttonText = when {
@@ -257,7 +278,12 @@ fun PointsBalanceCard(points: Int, isLoading: Boolean, cooldown: Int, onWatchAd:
                     cooldown > 0 -> "Wait ${cooldown}s"
                     else -> "Get 1 Point"
                 }
-                Text(buttonText, style = MaterialTheme.typography.labelMedium)
+                Text(
+                    text = buttonText, 
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (isGlass) buttonContentColor else Color.Unspecified,
+                    fontWeight = FontWeight.SemiBold
+                )
             }
         }
     }
@@ -265,6 +291,10 @@ fun PointsBalanceCard(points: Int, isLoading: Boolean, cooldown: Int, onWatchAd:
 
 @Composable
 fun RedemptionOptions(currentPoints: Int, onRedeem: (Int) -> Unit) {
+    val glassMode = com.ipdial.ui.theme.LocalGlassMode.current
+    val isGlass = glassMode != com.ipdial.ui.theme.GlassMode.None
+    val isQuartz = glassMode == com.ipdial.ui.theme.GlassMode.Quartz
+
     val tiers = listOf(
         Triple(1, 1, "1 Day"),
         Triple(7, 5, "7 Days"),
@@ -280,13 +310,29 @@ fun RedemptionOptions(currentPoints: Int, onRedeem: (Int) -> Unit) {
             ) {
                 rowItems.forEach { (days, cost, label) ->
                     val canAfford = currentPoints >= cost
+                    val cardBgColor = when {
+                        isGlass && isQuartz -> if (canAfford) Color.White.copy(alpha = 0.90f) else Color.White.copy(alpha = 0.40f)
+                        isGlass -> if (canAfford) Color(0xFF2C2C2E).copy(alpha = 0.85f) else Color(0xFF1C1C1E).copy(alpha = 0.40f)
+                        canAfford -> MaterialTheme.colorScheme.surfaceColorAtElevation(2.dp)
+                        else -> MaterialTheme.colorScheme.surface.copy(alpha = 0.5f)
+                    }
+                    val labelColor = when {
+                        canAfford -> MaterialTheme.colorScheme.onSurface
+                        isGlass && isQuartz -> Color.Black.copy(alpha = 0.35f)
+                        else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                    }
+                    val pointsColor = when {
+                        canAfford -> MaterialTheme.colorScheme.primary
+                        isGlass && isQuartz -> Color.Black.copy(alpha = 0.35f)
+                        else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                    }
+
                     Surface(
                         onClick = { if (canAfford) onRedeem(days) },
                         enabled = canAfford,
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.weight(1f).height(80.dp),
-                        color = if (canAfford) MaterialTheme.colorScheme.surfaceColorAtElevation(2.dp) 
-                                else MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+                        color = cardBgColor,
                         border = androidx.compose.foundation.BorderStroke(
                             width = 1.dp, 
                             color = if (canAfford) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f) 
@@ -298,13 +344,28 @@ fun RedemptionOptions(currentPoints: Int, onRedeem: (Int) -> Unit) {
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Center
                         ) {
-                            Text(label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
-                            Text("$cost Points", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                            Text(
+                                text = label, 
+                                style = MaterialTheme.typography.labelLarge, 
+                                fontWeight = FontWeight.Bold,
+                                color = labelColor
+                            )
+                            Text(
+                                text = "$cost Points", 
+                                style = MaterialTheme.typography.labelSmall, 
+                                color = pointsColor,
+                                fontWeight = FontWeight.Medium
+                            )
                             
                             // Reserve space for the icon so height remains consistent
                             if (canAfford) {
                                 Spacer(Modifier.height(4.dp))
-                                Icon(Icons.Default.CardGiftcard, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                Icon(
+                                    Icons.Default.CardGiftcard, 
+                                    null, 
+                                    tint = MaterialTheme.colorScheme.primary, 
+                                    modifier = Modifier.size(16.dp)
+                                )
                             } else {
                                 Spacer(Modifier.height(20.dp))
                             }

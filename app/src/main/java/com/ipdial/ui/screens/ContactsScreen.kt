@@ -1,6 +1,10 @@
 @file:OptIn(ExperimentalMaterial3Api::class)
 package com.ipdial.ui.screens
 
+import android.content.ContentUris
+import android.content.Intent
+import android.provider.ContactsContract
+import android.widget.Toast
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -93,10 +97,10 @@ fun ContactsScreen(
     onOpenDrawer: () -> Unit,
     onNavigateToAccounts: () -> Unit = {}
 ) {
+    val context = LocalContext.current
     val groupedContacts by vm.groupedContacts.collectAsState()
     val searchQuery by vm.searchQuery.collectAsState()
     val accounts by vm.accounts.collectAsState()
-    val context = LocalContext.current
     var activeContactForNumberPicker by remember { mutableStateOf<Contact?>(null) }
     var searchActive by remember { mutableStateOf(false) }
     var favoritesOnly by remember { mutableStateOf(false) }
@@ -174,7 +178,7 @@ fun ContactsScreen(
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(vertical = 4.dp)
+                        contentPadding = PaddingValues(top = 4.dp, bottom = 88.dp)
                     ) {
                         allEntries.forEach { (letter, contacts) ->
                             item {
@@ -205,6 +209,15 @@ fun ContactsScreen(
                                             activeContactForNumberPicker = contact
                                         } else {
                                             contact.numbers.firstOrNull()?.let { vm.makeCall(it) }
+                                        }
+                                    },
+                                    onAvatarClick = {
+                                        try {
+                                            val intent = Intent(Intent.ACTION_VIEW)
+                                            intent.setData(ContentUris.withAppendedId(ContactsContract.Contacts.CONTENT_URI, contact.id.toLong()))
+                                            context.startActivity(intent)
+                                        } catch (e: Exception) {
+                                            Toast.makeText(context, "Cannot open contact", Toast.LENGTH_SHORT).show()
                                         }
                                     },
                                     onToggleFavorite = { vm.toggleContactFavorite(it) },

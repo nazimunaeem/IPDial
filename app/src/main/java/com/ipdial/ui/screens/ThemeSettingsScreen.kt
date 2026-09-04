@@ -6,16 +6,18 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.ipdial.ui.theme.ThemeSchemePreview
@@ -23,25 +25,6 @@ import com.ipdial.ui.theme.themePreviewForMode
 import com.ipdial.data.model.ThemeMode
 import com.ipdial.ui.components.IPDialTopBar
 import com.ipdial.ui.SipViewModel
-
-private data class ThemePreview(
-    val mode: ThemeMode,
-    val label: String,
-    val background: Color,
-    val surface: Color,
-    val primary: Color,
-    val onSurface: Color,
-    val onPrimary: Color
-)
-
-private val previewData = listOf(
-    ThemePreview(ThemeMode.System, "System", Color(0xFFEAEFE9), Color(0xFFF2F7F1), Color(0xFF1E6B3C), Color(0xFF1A2E1A), Color.White),
-    ThemePreview(ThemeMode.Light, "Light", Color(0xFFEAEFE9), Color(0xFFF2F7F1), Color(0xFF1E6B3C), Color(0xFF1A2E1A), Color.White),
-    ThemePreview(ThemeMode.Dark, "Dark", Color(0xFF121212), Color(0xFF1A1A1A), Color(0xFF8BCF8F), Color(0xFFE0E0E0), Color(0xFF003912)),
-    ThemePreview(ThemeMode.Dynamic, "Dynamic", Color(0xFFD0E8FF), Color(0xFFE0F0FF), Color(0xFF0066CC), Color(0xFF1A1A2E), Color.White),
-    ThemePreview(ThemeMode.Obsidian, "Obsidian", Color(0xFF1C1C1E), Color(0xCC1C1C1E), Color(0xFF34C759), Color.White, Color.White),
-    ThemePreview(ThemeMode.Quartz, "Quartz", Color(0xFFF2F2F7), Color(0xCCFFFFFF), Color(0xFF007AFF), Color.Black, Color.White),
-)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -78,9 +61,10 @@ fun ThemeSettingsScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            items(previews) { preview ->
+            itemsIndexed(previews) { index, preview ->
                 val enabled = if (preview.label == "Dynamic") Build.VERSION.SDK_INT >= 31 else true
                 val selected = themeMode.name == preview.label
+                val isGlass = preview.label == "Obsidian" || preview.label == "Quartz"
 
                 Card(
                     modifier = Modifier
@@ -98,65 +82,170 @@ fun ThemeSettingsScreen(
                         containerColor = MaterialTheme.colorScheme.surface
                     )
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        // Mini preview swatch
-                        Row(
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        // Mini phone-style preview
+                        Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(preview.background)
-                                .padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                                .border(1.dp, preview.onSurface.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
                         ) {
-                            // Sample surface chip
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(preview.surface)
-                                    .border(1.dp, preview.onSurface.copy(alpha = 0.1f), RoundedCornerShape(8.dp)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Box(
+                            Column(modifier = Modifier.padding(8.dp)) {
+                                // Status bar mock
+                                Row(
                                     modifier = Modifier
-                                        .size(16.dp)
-                                        .clip(RoundedCornerShape(4.dp))
-                                        .background(preview.primary)
-                                )
-                            }
+                                        .fillMaxWidth()
+                                        .padding(bottom = 6.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(6.dp)
+                                            .clip(CircleShape)
+                                            .background(preview.primary)
+                                    )
+                                    Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                                        Box(
+                                            modifier = Modifier
+                                                .width(14.dp).height(5.dp)
+                                                .clip(RoundedCornerShape(1.dp))
+                                                .background(preview.onSurface.copy(alpha = 0.35f))
+                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .width(14.dp).height(5.dp)
+                                                .clip(RoundedCornerShape(1.dp))
+                                                .background(preview.onSurface.copy(alpha = 0.35f))
+                                        )
+                                    }
+                                }
 
-                            Spacer(Modifier.width(12.dp))
+                                // Title bar mock
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(preview.surface.copy(alpha = if (isGlass) 0.85f else 1f))
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Dialpad,
+                                        contentDescription = null,
+                                        tint = preview.primary,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(5.dp)
+                                            .clip(RoundedCornerShape(2.dp))
+                                            .background(preview.onSurface.copy(alpha = 0.7f))
+                                    )
+                                }
 
-                            Column {
-                                Text(
-                                    "Sample Title",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = preview.onSurface,
-                                    fontWeight = FontWeight.Medium
-                                )
-                                Text(
-                                    "Sample subtitle text",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = preview.onSurface.copy(alpha = 0.6f)
-                                )
-                            }
+                                Spacer(Modifier.height(6.dp))
 
-                            Spacer(Modifier.weight(1f))
+                                // Card row mock
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(28.dp)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(preview.surface.copy(alpha = if (isGlass) 0.85f else 1f))
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.padding(5.dp),
+                                            verticalArrangement = Arrangement.spacedBy(3.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth(0.6f)
+                                                    .height(4.dp)
+                                                    .clip(RoundedCornerShape(1.dp))
+                                                    .background(preview.onSurface.copy(alpha = 0.5f))
+                                            )
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth(0.4f)
+                                                    .height(3.dp)
+                                                    .clip(RoundedCornerShape(1.dp))
+                                                    .background(preview.onSurface.copy(alpha = 0.25f))
+                                            )
+                                        }
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(28.dp)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(preview.surface.copy(alpha = if (isGlass) 0.85f else 1f))
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.padding(5.dp),
+                                            verticalArrangement = Arrangement.spacedBy(3.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth(0.5f)
+                                                    .height(4.dp)
+                                                    .clip(RoundedCornerShape(1.dp))
+                                                    .background(preview.onSurface.copy(alpha = 0.5f))
+                                            )
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth(0.35f)
+                                                    .height(3.dp)
+                                                    .clip(RoundedCornerShape(1.dp))
+                                                    .background(preview.onSurface.copy(alpha = 0.25f))
+                                            )
+                                        }
+                                    }
+                                }
 
-                            // Sample button
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(preview.primary)
-                                    .padding(horizontal = 12.dp, vertical = 6.dp)
-                            ) {
-                                Text("Action", style = MaterialTheme.typography.labelMedium, color = preview.onPrimary)
+                                Spacer(Modifier.height(4.dp))
+
+                                // Bottom nav mock
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(preview.surface.copy(alpha = if (isGlass) 0.9f else 1f))
+                                        .padding(vertical = 4.dp),
+                                    horizontalArrangement = Arrangement.SpaceEvenly
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .clip(CircleShape)
+                                            .background(preview.primary)
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .clip(CircleShape)
+                                            .background(preview.onSurface.copy(alpha = 0.2f))
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .clip(CircleShape)
+                                            .background(preview.onSurface.copy(alpha = 0.2f))
+                                    )
+                                }
                             }
                         }
 
                         Spacer(Modifier.height(10.dp))
 
-                        // Label + radio
+                        // Label + description + radio
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.fillMaxWidth()
@@ -166,24 +255,58 @@ fun ThemeSettingsScreen(
                                 onClick = null,
                                 enabled = enabled,
                                 colors = RadioButtonDefaults.colors(
-                                    selectedColor = MaterialTheme.colorScheme.primary
+                                    selectedColor = preview.primary
                                 )
                             )
                             Spacer(Modifier.width(8.dp))
-                            Column {
+                            Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     preview.label,
                                     style = MaterialTheme.typography.bodyLarge,
-                                    fontWeight = FontWeight.Medium,
+                                    fontWeight = FontWeight.Bold,
                                     color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline
                                 )
+                                when (preview.label) {
+                                    "System" -> Text("Follows device settings", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                                    "Light" -> Text("Clean green, always light", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                                    "Dark" -> Text("Dark green, easy on eyes", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                                    "Dynamic" -> Text("Material You, wallpaper-based", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                                    "Obsidian" -> Text("Apple-style dark glass", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                                    "Quartz" -> Text("Apple-style light glass", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                                }
                                 if (!enabled) {
                                     Text(
                                         "Requires Android 12+",
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.outline
+                                        color = MaterialTheme.colorScheme.error
                                     )
                                 }
+                            }
+                            // Color swatch strip
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                modifier = Modifier.padding(end = 4.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(10.dp)
+                                        .clip(RoundedCornerShape(3.dp))
+                                        .background(preview.background)
+                                        .border(0.5.dp, preview.onSurface.copy(alpha = 0.1f), RoundedCornerShape(3.dp))
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .size(10.dp)
+                                        .clip(RoundedCornerShape(3.dp))
+                                        .background(preview.surface)
+                                        .border(0.5.dp, preview.onSurface.copy(alpha = 0.1f), RoundedCornerShape(3.dp))
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .size(10.dp)
+                                        .clip(RoundedCornerShape(3.dp))
+                                        .background(preview.primary)
+                                )
                             }
                         }
                     }

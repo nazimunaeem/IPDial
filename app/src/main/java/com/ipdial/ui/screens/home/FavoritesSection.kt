@@ -5,8 +5,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
@@ -32,6 +34,8 @@ import coil.compose.AsyncImage
 import com.ipdial.data.model.Contact
 import com.ipdial.ui.screens.clickableNoRipple
 import com.ipdial.ui.screens.clickableWithRipple
+import com.ipdial.ui.theme.GlassMode
+import com.ipdial.ui.theme.LocalGlassMode
 
 @Composable
 fun FavoriteContactsRow(
@@ -59,6 +63,14 @@ fun FavoriteContactChip(
     onCall: () -> Unit,
     onRemove: () -> Unit
 ) {
+    val glassMode = LocalGlassMode.current
+    val isQuartz = glassMode == GlassMode.Quartz
+    val chipTextColor = when {
+        glassMode != GlassMode.None && !isQuartz -> Color.White
+        glassMode != GlassMode.None && isQuartz -> Color.Black
+        else -> MaterialTheme.colorScheme.onSurface
+    }
+
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier.width(68.dp)
@@ -85,13 +97,14 @@ fun FavoriteContactChip(
                     Text(
                         text = contact.name.take(1).uppercase(),
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.SemiBold,
+                        color = chipTextColor
                     )
                 }
             }
             Surface(
                 shape = CircleShape,
-                color = MaterialTheme.colorScheme.surface,
+                color = if (isQuartz) Color.Black else MaterialTheme.colorScheme.surface,
                 shadowElevation = 2.dp,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
@@ -108,12 +121,15 @@ fun FavoriteContactChip(
                 }
             }
         }
+        Spacer(Modifier.height(4.dp))
         Text(
             text = contact.name,
             style = MaterialTheme.typography.labelSmall,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center,
+            color = chipTextColor,
+            fontWeight = FontWeight.Medium,
             modifier = Modifier.fillMaxWidth()
         )
     }

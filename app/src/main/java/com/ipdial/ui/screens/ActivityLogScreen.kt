@@ -60,7 +60,11 @@ fun ActivityLogScreen(
         }
     }
 
-    val isGlass = com.ipdial.ui.theme.LocalGlassMode.current != com.ipdial.ui.theme.GlassMode.None
+    val glassMode = com.ipdial.ui.theme.LocalGlassMode.current
+    val isGlass = glassMode != com.ipdial.ui.theme.GlassMode.None
+    val isQuartz = glassMode == com.ipdial.ui.theme.GlassMode.Quartz
+    val topBarContentColor = if (isGlass) (if (isQuartz) Color.Black else Color.White) else MaterialTheme.colorScheme.primary
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -88,9 +92,9 @@ fun ActivityLogScreen(
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = if (isGlass) Color.Transparent else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
-                    titleContentColor = if (isGlass) Color.White else MaterialTheme.colorScheme.primary,
-                    navigationIconContentColor = if (isGlass) Color.White else MaterialTheme.colorScheme.primary,
-                    actionIconContentColor = if (isGlass) Color.White else MaterialTheme.colorScheme.primary
+                    titleContentColor = topBarContentColor,
+                    navigationIconContentColor = topBarContentColor,
+                    actionIconContentColor = topBarContentColor
                 ),
                 modifier = Modifier.then(if (isGlass) Modifier.glass(RoundedCornerShape(0.dp)) else Modifier)
             )

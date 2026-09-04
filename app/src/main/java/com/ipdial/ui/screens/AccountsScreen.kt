@@ -17,6 +17,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.BottomSheetDefaults
@@ -41,6 +42,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,6 +50,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -263,7 +270,7 @@ fun AccountEditSheet(
     val savedLabels by vm.repo.savedLabels.collectAsState(initial = emptyList<String>())
     val savedHosts by vm.repo.savedHosts.collectAsState(initial = emptyList<String>())
     val suggestedLabels = listOf("iCallBD", "BanglaCall").plus(savedLabels).distinct()
-    val suggestedHosts = listOf("103.129.202.202", "sip.amarip.net").plus(savedHosts).distinct()
+    val suggestedHosts = listOf("103.129.202.202", "103.170.231.10", "sip.amarip.net").plus(savedHosts).distinct()
 
     // Auto-detect transport based on domain, proxy, and port unless user manually changed it
     LaunchedEffect(domain, proxy, port) {
@@ -280,11 +287,42 @@ fun AccountEditSheet(
         }
     }
 
+    val glassMode = com.ipdial.ui.theme.LocalGlassMode.current
+    val isQuartz = glassMode == com.ipdial.ui.theme.GlassMode.Quartz
+    val isObsidian = glassMode == com.ipdial.ui.theme.GlassMode.Obsidian
+
+    val sheetBgColor = when {
+        isQuartz -> Color(0xF7FFFFFF)
+        isObsidian -> Color(0xF71C1C1E)
+        else -> MaterialTheme.colorScheme.surface
+    }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        dragHandle = { BottomSheetDefaults.DragHandle() }
+        dragHandle = { BottomSheetDefaults.DragHandle() },
+        containerColor = sheetBgColor,
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        modifier = Modifier.fillMaxWidth()
     ) {
+        val view = LocalView.current
+        if (!view.isInEditMode) {
+            val isLight = sheetBgColor.luminance() > 0.5f
+            SideEffect {
+                val window = (view.parent as? DialogWindowProvider)?.window
+                    ?: (view.context as? android.app.Activity)?.window
+                if (window != null) {
+                    @Suppress("DEPRECATION")
+                    window.navigationBarColor = android.graphics.Color.TRANSPARENT
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                        window.isNavigationBarContrastEnforced = false
+                    }
+                    val insetsController = WindowInsetsControllerCompat(window, window.decorView)
+                    insetsController.isAppearanceLightNavigationBars = isLight
+                }
+            }
+        }
+
         Column(
             modifier = Modifier
                 .fillMaxWidth()

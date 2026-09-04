@@ -441,6 +441,7 @@ fun IPDialApp() {
             currentRoute = currentRoute,
             callSession = callSession,
             showFullIncomingScreen = showFullIncomingScreen,
+            isMenuOpen = showMenuBottomSheet,
             onOpenMenu = { showMenuBottomSheet = true },
             onShowFullIncoming = { vm.setShowFullIncomingScreen(true) }
         )
@@ -511,34 +512,40 @@ fun AppScaffold(
     currentRoute: String,
     callSession: CallSession?,
     showFullIncomingScreen: Boolean,
+    isMenuOpen: Boolean = false,
     onOpenMenu: () -> Unit,
     onShowFullIncoming: () -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    Scaffold(
-        contentWindowInsets = WindowInsets.systemBars.only(WindowInsetsSides.Bottom),
-        bottomBar = {
+    val isGlass = com.ipdial.ui.theme.LocalGlassMode.current != com.ipdial.ui.theme.GlassMode.None
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(if (isGlass) Color.Transparent else MaterialTheme.colorScheme.background)
+    ) {
+        AppMainContent(
+            vm = vm,
+            navController = navController,
+            pagerState = pagerState,
+            innerPadding = PaddingValues(0.dp),
+            callSession = callSession,
+            showFullIncomingScreen = showFullIncomingScreen,
+            onOpenMenu = onOpenMenu,
+            onShowFullIncoming = onShowFullIncoming
+        )
+
+        if (!isMenuOpen) {
             FloatingPillNavBar(
                 navController = navController,
                 pagerState = pagerState,
                 currentRoute = currentRoute,
                 callSession = callSession,
                 showFullIncomingScreen = showFullIncomingScreen,
-                onOpenMenu = onOpenMenu
+                onOpenMenu = onOpenMenu,
+                modifier = Modifier.align(Alignment.BottomCenter)
             )
         }
-    ) { innerPadding ->
-        val isGlass = com.ipdial.ui.theme.LocalGlassMode.current != com.ipdial.ui.theme.GlassMode.None
-        AppMainContent(
-            vm = vm,
-            navController = navController,
-            pagerState = pagerState,
-            innerPadding = innerPadding,
-            callSession = callSession,
-            showFullIncomingScreen = showFullIncomingScreen,
-            onOpenMenu = onOpenMenu,
-            onShowFullIncoming = onShowFullIncoming
-        )
 
         val showProPopup by vm.showProBlockPopup.collectAsState()
         if (showProPopup) {

@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -52,6 +53,170 @@ val DotAmber = Color(0xFFFF9800)
 val DotGrey = Color(0xFF9E9E9E)
 
 val ColorPro = Color(0xFFBC4749) // User requested deep red for Pro accent
+
+@Composable
+fun TopBarBalanceChip(
+    account: SipAccount?,
+    vm: SipViewModel?,
+    modifier: Modifier = Modifier
+) {
+    if (account == null || vm == null) return
+
+    val context = LocalContext.current
+    val balanceMap by vm.balances.collectAsState()
+    val balance = balanceMap[account.id]
+    val isPro by vm.isPro.collectAsState()
+
+    var isRevealing by remember { mutableStateOf(false) }
+    val isSupportedDomain = remember(account.domain) {
+        account.domain.equals("sip.amarip.net", ignoreCase = true) ||
+        account.domain.equals("103.170.231.10", ignoreCase = true) ||
+        account.domain.equals("103.129.202.202", ignoreCase = true) ||
+        account.domain.equals("billing.webvoice.net", ignoreCase = true)
+    }
+
+    val showBalance = isPro || isRevealing || (balance != null && balance.isNotBlank())
+
+    LaunchedEffect(isRevealing, isPro, account.id) {
+        if (isSupportedDomain) {
+            if (isPro) {
+                vm.fetchBalance(account, context)
+            }
+            if (isRevealing) {
+                delay(10000)
+                isRevealing = false
+            }
+        }
+    }
+
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.09f),
+        modifier = modifier.clickable {
+            if (isSupportedDomain) {
+                if (isPro) {
+                    vm.fetchBalance(account, context)
+                } else {
+                    if (isRevealing) {
+                        isRevealing = false
+                        vm.dismissAd()
+                    } else {
+                        vm.fetchBalance(account, context)
+                        isRevealing = true
+                    }
+                }
+            }
+        }
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Text(
+                text = "৳",
+                style = MaterialTheme.typography.labelMedium.copy(
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp
+                ),
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(Modifier.width(4.dp))
+            if (showBalance && balance != null) {
+                val cleanBalance = balance.replace("BDT", "").replace("৳", "").trim()
+                Text(
+                    text = cleanBalance,
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp
+                    ),
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1
+                )
+            } else {
+                Text(
+                    text = if (isSupportedDomain) "Balance" else "VoIP",
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 12.sp
+                    ),
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun TopBarAccountIndicator(
+    accounts: List<SipAccount>,
+    vm: SipViewModel? = null,
+    onClick: (() -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
+    val vmActiveAccount by (vm?.activeAccount?.collectAsState() ?: remember { mutableStateOf(null) })
+    val activeAccount = vmActiveAccount ?: accounts.firstOrNull { it.isEnabled } ?: accounts.firstOrNull()
+
+    val regDotColor = when {
+        activeAccount != null -> when (activeAccount.regStatus) {
+            RegStatus.REGISTERED  -> DotGreen
+            RegStatus.REGISTERING -> DotAmber
+            RegStatus.ERROR       -> DotRed
+            else                  -> DotGrey
+        }
+        accounts.any { it.regStatus == RegStatus.REGISTERED }    -> DotGreen
+        accounts.any { it.regStatus == RegStatus.REGISTERING }   -> DotAmber
+        accounts.any { it.regStatus == RegStatus.ERROR }         -> DotRed
+        else                                                      -> DotGrey
+    }
+
+    if (activeAccount == null) return
+
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = Color.Transparent,
+        modifier = modifier.then(if (onClick != null) Modifier.clickable { onClick.invoke() } else Modifier)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.End
+        ) {
+            Text(
+                text = activeAccount.displayName.ifBlank { activeAccount.username },
+                style = MaterialTheme.typography.labelMedium.copy(
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp
+                ),
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 110.dp)
+            )
+
+            Spacer(Modifier.width(6.dp))
+
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier.size(16.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(12.dp)
+                        .clip(CircleShape)
+                        .background(regDotColor.copy(alpha = 0.25f))
+                )
+                Box(
+                    modifier = Modifier
+                        .size(7.dp)
+                        .clip(CircleShape)
+                        .background(regDotColor)
+                )
+            }
+        }
+    }
+}
 
 @Composable
 fun EmptyState(message: String, icon: ImageVector = Icons.Default.Info) {

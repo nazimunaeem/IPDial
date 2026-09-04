@@ -228,6 +228,7 @@ fun HomeScreen(
                                     contact.numbers.firstOrNull()?.let { vm.makeCall(it) }
                                 }
                             },
+                            onAvatarClick = { /* Handle avatar click if needed */ },
                             onToggleFavorite = { vm.toggleContactFavorite(it) }
                         )
                     }
@@ -251,7 +252,7 @@ fun HomeScreen(
                                 ?: (10..13).mapNotNull { l -> if (l < cleanNumber.length) contactLookupMap[cleanNumber.takeLast(l)] else null }.firstOrNull()
                         }
                         val numberToCopy = cleanUri(entry.remoteUri).filter { it.isDigit() || it == '+' }
-                         CallLogRow(
+                         CallLogItem(
                              entry   = entry,
                              count   = group.count,
                              account = accounts.firstOrNull { it.id == entry.accountId },

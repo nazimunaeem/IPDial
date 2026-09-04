@@ -535,18 +535,6 @@ class SipService : Service() {
                     stopPushingBanner()
                     audioRouter.restoreAudio()
 
-                    // Close the PJSIP sound device so the mic (AudioRecord) is
-                    // released.  The native call.delete() is posted to the main
-                    // looper in onCallState(DISCONNECTED); give it a moment to
-                    // finish before tearing down the sound device.  The next call's
-                    // forceAudioDevicesForCall() re-opens it automatically.
-                    scope.launch {
-                        try {
-                            kotlinx.coroutines.delay(500)
-                            SipEngine.releaseSoundDevice()
-                        } catch (_: Throwable) {}
-                    }
-
                     wakeLockManager.releaseWakeLock()
                     cancelIncomingNotification(this@SipService)
                     sessionToLog?.callId?.let { SipConnectionService.disconnectCall(it) }
@@ -597,6 +585,18 @@ class SipService : Service() {
                                 scope.launch {
                                     if (stateChanged) delay(300)
                                     audioRouter.routeAudioToDefault()
+                                    // Give the OS 150 ms to switch the physical audio
+                                    // device (setCommunicationDevice is asynchronous on
+                                    // many OEMs), then tell PJSIP to re-open its
+                                    // AudioRecord/AudioTrack so it captures from the
+                                    // new device instead of the old one.
+                                    if (speakerChanged) {
+                                        delay(150)
+                                        val callId = SipEngine.callSession.value?.callId ?: -1
+                                        if (callId >= 0) {
+                                            SipEngine.reconnectAudioPathForCall(callId)
+                                        }
+                                    }
                                 }
                             }
 
