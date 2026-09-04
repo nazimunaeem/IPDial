@@ -17,12 +17,16 @@ import com.ipdial.ui.SipViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PrivacyPolicyScreen(vm: SipViewModel, onOpenDrawer: () -> Unit) {
+fun PrivacyPolicyScreen(
+    vm: SipViewModel,
+    onBack: () -> Unit = {},
+    onOpenDrawer: (() -> Unit)? = null
+) {
     val accounts by vm.accounts.collectAsState()
 
     Scaffold(
         topBar = {
-            IPDialTopBar(accounts = accounts, vm = vm, onOpenDrawer = onOpenDrawer)
+            IPDialTopBar(accounts = accounts, vm = vm, title = "Privacy Policy", onBack = onBack)
         },
         bottomBar = {
             com.ipdial.ui.components.StartIoBanner(

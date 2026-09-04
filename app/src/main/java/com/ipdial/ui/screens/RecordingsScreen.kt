@@ -48,7 +48,11 @@ import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RecordingsScreen(vm: SipViewModel, onOpenDrawer: () -> Unit) {
+fun RecordingsScreen(
+    vm: SipViewModel,
+    onBack: () -> Unit = {},
+    onOpenDrawer: (() -> Unit)? = null
+) {
     val context = LocalContext.current
     val accounts by vm.accounts.collectAsState()
     
@@ -77,7 +81,7 @@ fun RecordingsScreen(vm: SipViewModel, onOpenDrawer: () -> Unit) {
 
     Scaffold(
         topBar = {
-            IPDialTopBar(accounts = accounts, vm = vm, onOpenDrawer = onOpenDrawer)
+            IPDialTopBar(accounts = accounts, vm = vm, title = "Recordings", onBack = onBack)
         },
         bottomBar = {
             com.ipdial.ui.components.StartIoBanner(

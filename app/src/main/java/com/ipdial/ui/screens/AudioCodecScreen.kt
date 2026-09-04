@@ -28,8 +28,8 @@ import com.ipdial.ui.SipViewModel
 @Composable
 fun AudioCodecScreen(
     vm: SipViewModel,
-    onOpenDrawer: () -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onOpenDrawer: (() -> Unit)? = null
 ) {
     val activeAccount by vm.activeAccount.collectAsState()
     val availableCodecs = remember { com.ipdial.service.SipEngine.getAvailableCodecs() }

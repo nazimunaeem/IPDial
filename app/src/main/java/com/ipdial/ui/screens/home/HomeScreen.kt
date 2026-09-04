@@ -81,10 +81,12 @@ fun HomeScreen(
     }
 
     val filteredLog = remember(callLog, searchQuery) {
+        val digitsQuery = searchQuery.filter { it.isDigit() }
         callLog.filter { entry ->
             val matchesSearch = searchQuery.isBlank() || 
                 entry.remoteDisplayName.contains(searchQuery, ignoreCase = true) || 
-                entry.remoteUri.contains(searchQuery)
+                entry.remoteUri.contains(searchQuery, ignoreCase = true) ||
+                (digitsQuery.isNotEmpty() && cleanUri(entry.remoteUri).filter { it.isDigit() }.contains(digitsQuery))
             matchesSearch
         }
     }
@@ -155,10 +157,16 @@ fun HomeScreen(
 
         val searchContacts = remember(contactsState, searchQuery, showSearchContactsInHistory) {
             if (!showSearchContactsInHistory) emptyList()
-            else contactsState.filter {
-                it.name.contains(searchQuery, ignoreCase = true) ||
-                        it.numbers.any { num -> num.contains(searchQuery) }
-            }.sortedBy { it.name.trim().lowercase() }
+            else {
+                val digitsQuery = searchQuery.filter { it.isDigit() }
+                contactsState.filter {
+                    it.name.contains(searchQuery, ignoreCase = true) ||
+                    it.numbers.any { num -> 
+                        num.contains(searchQuery, ignoreCase = true) ||
+                        (digitsQuery.isNotEmpty() && num.filter { d -> d.isDigit() }.contains(digitsQuery))
+                    }
+                }.sortedBy { it.name.trim().lowercase() }
+            }
         }
 
         LazyColumn(

@@ -63,7 +63,11 @@ import com.ipdial.ui.SipViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AccountsScreen(vm: SipViewModel, onOpenDrawer: () -> Unit) {
+fun AccountsScreen(
+    vm: SipViewModel,
+    onBack: () -> Unit = {},
+    onOpenDrawer: (() -> Unit)? = null
+) {
     val accounts by vm.accounts.collectAsState()
     val isPro by vm.isPro.collectAsState()
     val defaultDomain by vm.defaultDomain.collectAsState()
@@ -73,7 +77,7 @@ fun AccountsScreen(vm: SipViewModel, onOpenDrawer: () -> Unit) {
 
     Scaffold(
         topBar = {
-            IPDialTopBar(accounts = accounts, vm = vm, onOpenDrawer = onOpenDrawer)
+            IPDialTopBar(accounts = accounts, vm = vm, title = "SIP Accounts", onBack = onBack)
         },
         bottomBar = {
             if (!isPro) {

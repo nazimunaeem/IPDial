@@ -404,10 +404,14 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
 
     val groupedContacts: StateFlow<Map<Char, List<Contact>>> =
         combine(_contacts, _searchQuery) { allContacts, query ->
+            val digitsQuery = query.filter { it.isDigit() }
             val filtered = if (query.isBlank()) allContacts
             else allContacts.filter {
                 it.name.contains(query, ignoreCase = true) ||
-                it.numbers.any { num -> num.contains(query) }
+                it.numbers.any { num -> 
+                    num.contains(query, ignoreCase = true) ||
+                    (digitsQuery.isNotEmpty() && num.filter { d -> d.isDigit() }.contains(digitsQuery))
+                }
             }
             filtered.sortedBy { it.name.trim().lowercase() }
                 .groupBy { contact ->

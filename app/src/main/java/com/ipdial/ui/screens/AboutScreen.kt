@@ -52,7 +52,11 @@ private const val SHOW_AD_TOGGLE = false
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AboutScreen(vm: SipViewModel, onOpenDrawer: () -> Unit) {
+fun AboutScreen(
+    vm: SipViewModel,
+    onBack: () -> Unit = {},
+    onOpenDrawer: (() -> Unit)? = null
+) {
     val context = LocalContext.current
     val accounts by vm.accounts.collectAsState()
     val adsEnabled by vm.adsEnabled.collectAsState()
@@ -86,7 +90,7 @@ fun AboutScreen(vm: SipViewModel, onOpenDrawer: () -> Unit) {
 
     Scaffold(
         topBar = {
-            IPDialTopBar(accounts = accounts, vm = vm, onOpenDrawer = onOpenDrawer)
+            IPDialTopBar(accounts = accounts, vm = vm, title = "About", onBack = onBack)
         },
         bottomBar = {
             com.ipdial.ui.components.StartIoBanner(

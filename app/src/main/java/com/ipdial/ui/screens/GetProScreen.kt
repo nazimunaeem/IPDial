@@ -25,7 +25,11 @@ import java.util.concurrent.TimeUnit
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun GetProScreen(vm: SipViewModel, onOpenDrawer: () -> Unit) {
+fun GetProScreen(
+    vm: SipViewModel,
+    onBack: () -> Unit = {},
+    onOpenDrawer: (() -> Unit)? = null
+) {
     val context = LocalContext.current
     val accounts by vm.accounts.collectAsState()
     val proPoints by vm.proPoints.collectAsState()
@@ -35,7 +39,7 @@ fun GetProScreen(vm: SipViewModel, onOpenDrawer: () -> Unit) {
 
     Scaffold(
         topBar = {
-            IPDialTopBar(accounts = accounts, vm = vm, onOpenDrawer = onOpenDrawer)
+            IPDialTopBar(accounts = accounts, vm = vm, title = "IPDial Pro", onBack = onBack)
         },
         bottomBar = {
             com.ipdial.ui.components.StartIoBanner(

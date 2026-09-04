@@ -37,6 +37,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import com.ipdial.ui.SipViewModel
 import com.ipdial.ui.theme.glass
 import com.ipdial.util.SipLogger
@@ -45,7 +46,8 @@ import com.ipdial.util.SipLogger
 @Composable
 fun ActivityLogScreen(
     vm: SipViewModel,
-    onOpenDrawer: () -> Unit
+    onBack: () -> Unit = {},
+    onOpenDrawer: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val logs by SipLogger.logs.collectAsState()
@@ -64,8 +66,8 @@ fun ActivityLogScreen(
             TopAppBar(
                 title = { Text("Activity Log") },
                 navigationIcon = {
-                    IconButton(onClick = onOpenDrawer) {
-                        Icon(Icons.Default.Menu, contentDescription = "Menu")
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {

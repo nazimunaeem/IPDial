@@ -109,6 +109,8 @@ import com.ipdial.data.model.CallDirection
 import com.ipdial.data.model.CallSession
 import com.ipdial.data.model.CallState
 import com.ipdial.ui.SipViewModel
+import com.ipdial.ui.components.AppMenuBottomSheet
+import com.ipdial.ui.components.FloatingPillNavBar
 import com.ipdial.ui.screens.AboutScreen
 import com.ipdial.ui.screens.AccountsScreen
 import com.ipdial.ui.screens.ActivityLogScreen
@@ -425,56 +427,40 @@ fun IPDialApp() {
     // HorizontalPager composables at once during transitions, which causes massive lag.
     // The bottom bar now syncs its highlight directly from pagerState.
 
-    // Navigation drawer state
-    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
-    val scope = rememberCoroutineScope()
+    var showMenuBottomSheet by remember { mutableStateOf(false) }
 
     UpdateCheckDialog()
 
-    // Wrap the entire app in Ltr by default, but ModalNavigationDrawer uses LocalLayoutDirection
-    // to decide which side it opens from. We want it to open from the right.
-    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-        val isGlass = com.ipdial.ui.theme.LocalGlassMode.current != com.ipdial.ui.theme.GlassMode.None
-        ModalNavigationDrawer(
-            drawerState = drawerState,
-            gesturesEnabled = drawerState.isOpen,
-            scrimColor = if (isGlass) Color.Black.copy(alpha = 0.3f) else DrawerDefaults.scrimColor,
-            drawerContent = {
-                // Wrap drawer content back to Ltr so text isn't flipped
-                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                    AppDrawerSheet(
-                        currentRoute = currentRoute,
-                        onNavigate = { route ->
-                            scope.launch { drawerState.close() }
-                            navController.graph?.let { graph ->
-                                navController.navigate(route) {
-                                    popUpTo(graph.findStartDestination().id)
-                                    launchSingleTop = true
-                                }
+    val isGlass = com.ipdial.ui.theme.LocalGlassMode.current != com.ipdial.ui.theme.GlassMode.None
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        AppScaffold(
+            vm = vm,
+            navController = navController,
+            pagerState = pagerState,
+            currentRoute = currentRoute,
+            callSession = callSession,
+            showFullIncomingScreen = showFullIncomingScreen,
+            onOpenMenu = { showMenuBottomSheet = true },
+            onShowFullIncoming = { vm.setShowFullIncomingScreen(true) }
+        )
+
+        if (showMenuBottomSheet) {
+            AppMenuBottomSheet(
+                onDismissRequest = { showMenuBottomSheet = false },
+                onNavigate = { route ->
+                    navController.graph.let { graph ->
+                        navController.navigate(route) {
+                            popUpTo(graph.findStartDestination().id) {
+                                saveState = true
                             }
+                            launchSingleTop = true
+                            restoreState = true
                         }
-                    )
-                }
-            }
-        ) {
-            // Wrap main app content back to Ltr
-            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                Box(modifier = Modifier.fillMaxSize().then(
-                    if (isGlass && (drawerState.isOpen || drawerState.isAnimationRunning)) 
-                        Modifier.blur(20.dp) else Modifier
-                )) {
-                    AppScaffold(
-                        vm = vm,
-                        navController = navController,
-                        pagerState = pagerState,
-                        currentRoute = currentRoute,
-                        callSession = callSession,
-                        showFullIncomingScreen = showFullIncomingScreen,
-                        onOpenDrawer = { scope.launch { drawerState.open() } },
-                        onShowFullIncoming = { vm.setShowFullIncomingScreen(true) }
-                    )
-                }
-            }
+                    }
+                },
+                vm = vm
+            )
         }
     }
 }
@@ -517,155 +503,6 @@ fun UpdateCheckDialog() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun AppDrawerSheet(
-    currentRoute: String,
-    onNavigate: (String) -> Unit
-) {
-    val vm: SipViewModel = viewModel()
-    val isPro by vm.isPro.collectAsState()
-    val proExpiration by vm.proExpiration.collectAsState()
-    val glassMode = com.ipdial.ui.theme.LocalGlassMode.current
-    val isGlass = glassMode != com.ipdial.ui.theme.GlassMode.None
-    val isQuartz = glassMode == com.ipdial.ui.theme.GlassMode.Quartz
-
-    val context = androidx.compose.ui.platform.LocalContext.current
-    var showExitDialog by remember { mutableStateOf(false) }
-
-    val items = remember(isPro) {
-        val list = mutableListOf(
-            NavDest.Home,
-            NavDest.Accounts,
-            NavDest.Recordings,
-            NavDest.Settings,
-            NavDest.GetPro,
-            NavDest.Privacy,
-            NavDest.About
-        )
-        list
-    }
-
-    val drawerShape = androidx.compose.ui.graphics.RectangleShape
-    ModalDrawerSheet(
-        modifier = Modifier
-            .width(300.dp)
-            .then(if (isGlass) Modifier.glass(drawerShape, alpha = 0.9f) else Modifier),
-        drawerShape = drawerShape,
-        drawerContainerColor = if (isGlass) Color.Transparent else MaterialTheme.colorScheme.surface,
-        drawerTonalElevation = 0.dp
-    ) {
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "Menu",
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-            style = MaterialTheme.typography.titleLarge
-        )
-        HorizontalDivider()
-        items.forEach { dest ->
-            val labelText = if (dest == NavDest.GetPro && isPro) {
-                val diff = proExpiration - System.currentTimeMillis()
-                val days = maxOf(0, java.util.concurrent.TimeUnit.MILLISECONDS.toDays(diff) + 1)
-                "${dest.label} ($days days left)"
-            } else dest.label
-
-            val labelColor = if (dest == NavDest.GetPro) Color(0xFFBC4749) else Color.Unspecified
-            
-            NavigationDrawerItem(
-                modifier = Modifier
-                    .padding(horizontal = 12.dp, vertical = 2.dp)
-                    .height(44.dp),
-                label = { Text(labelText, color = labelColor) },
-                selected = currentRoute == dest.route,
-                onClick = { onNavigate(dest.route) },
-                icon = { Icon(dest.icon, null, tint = if (labelColor != Color.Unspecified) labelColor else LocalContentColor.current) },
-                colors = NavigationDrawerItemDefaults.colors(
-                    unselectedContainerColor = Color.Transparent,
-                    selectedContainerColor = when {
-                        isQuartz -> Color.Black.copy(alpha = 0.1f)
-                        isGlass -> Color.White.copy(alpha = 0.2f)
-                        else -> MaterialTheme.colorScheme.primaryContainer
-                    },
-                    selectedTextColor = when {
-                        isQuartz -> Color.Black
-                        isGlass -> Color.White
-                        else -> MaterialTheme.colorScheme.onPrimaryContainer
-                    },
-                    unselectedTextColor = when {
-                        isQuartz -> Color.Black.copy(alpha = 0.7f)
-                        isGlass -> Color.White.copy(alpha = 0.8f)
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                    selectedIconColor = when {
-                        isQuartz -> Color.Black
-                        isGlass -> Color.White
-                        else -> MaterialTheme.colorScheme.onPrimaryContainer
-                    },
-                    unselectedIconColor = when {
-                        isQuartz -> Color.Black.copy(alpha = 0.7f)
-                        isGlass -> Color.White.copy(alpha = 0.8f)
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant
-                    }
-                )
-            )
-        }
-
-        HorizontalDivider(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
-        )
-
-        // Exit button at the bottom of the drawer
-        NavigationDrawerItem(
-            modifier = Modifier
-                .padding(horizontal = 12.dp, vertical = 2.dp)
-                .height(44.dp),
-            label = { Text("Exit") },
-            selected = false,
-            onClick = { showExitDialog = true },
-            icon = { Icon(Icons.AutoMirrored.Filled.ExitToApp, null) },
-            colors = NavigationDrawerItemDefaults.colors(
-                unselectedContainerColor = Color.Transparent,
-                selectedContainerColor = Color.Transparent,
-                unselectedTextColor = MaterialTheme.colorScheme.error,
-                unselectedIconColor = MaterialTheme.colorScheme.error
-            )
-        )
-
-        // Exit confirmation dialog
-        if (showExitDialog) {
-            AlertDialog(
-                onDismissRequest = { showExitDialog = false },
-                title = { Text("Exit IPDial?") },
-                text = { Text("This will close the app and stop all background processes. You will not receive incoming calls.") },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            showExitDialog = false
-                            // Stop the foreground SIP service — its onDestroy calls SipEngine.destroy()
-                            context.stopService(Intent(context, com.ipdial.service.SipService::class.java))
-                            // Tear down any active Telecom connections
-                            com.ipdial.service.SipConnectionService.destroyAll()
-                            // Null out the call session
-                            com.ipdial.service.SipEngine._callSession.value = null
-                            // Finish activity and kill process so nothing runs in background
-                            (context as? android.app.Activity)?.finishAffinity()
-                            android.os.Process.killProcess(android.os.Process.myPid())
-                            System.exit(0)
-                        },
-                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.error
-                        )
-                    ) { Text("Exit") }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showExitDialog = false }) { Text("Cancel") }
-                }
-            )
-        }
-    }
-}
-
 @Composable
 fun AppScaffold(
     vm: SipViewModel,
@@ -674,14 +511,21 @@ fun AppScaffold(
     currentRoute: String,
     callSession: CallSession?,
     showFullIncomingScreen: Boolean,
-    onOpenDrawer: () -> Unit,
+    onOpenMenu: () -> Unit,
     onShowFullIncoming: () -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     Scaffold(
         contentWindowInsets = WindowInsets.systemBars.only(WindowInsetsSides.Bottom),
         bottomBar = {
-            AppBottomBar(navController, pagerState, currentRoute, callSession, showFullIncomingScreen)
+            FloatingPillNavBar(
+                navController = navController,
+                pagerState = pagerState,
+                currentRoute = currentRoute,
+                callSession = callSession,
+                showFullIncomingScreen = showFullIncomingScreen,
+                onOpenMenu = onOpenMenu
+            )
         }
     ) { innerPadding ->
         val isGlass = com.ipdial.ui.theme.LocalGlassMode.current != com.ipdial.ui.theme.GlassMode.None
@@ -692,7 +536,7 @@ fun AppScaffold(
             innerPadding = innerPadding,
             callSession = callSession,
             showFullIncomingScreen = showFullIncomingScreen,
-            onOpenDrawer = onOpenDrawer,
+            onOpenMenu = onOpenMenu,
             onShowFullIncoming = onShowFullIncoming
         )
 
@@ -707,7 +551,7 @@ fun AppScaffold(
                 confirmButton = {
                     Button(onClick = {
                         vm.dismissProPopup()
-                        navController.graph?.let { graph ->
+                        navController.graph.let { graph ->
                             navController.navigate(NavDest.GetPro.route) {
                                 popUpTo(graph.findStartDestination().id) { saveState = true }
                                 launchSingleTop = true
@@ -751,69 +595,6 @@ fun AppScaffold(
 }
 
 @Composable
-fun AppBottomBar(
-    navController: androidx.navigation.NavHostController,
-    pagerState: PagerState,
-    currentRoute: String,
-    callSession: CallSession?,
-    showFullIncomingScreen: Boolean
-) {
-    // Remove GetPro from the bottom bar; it is available in the drawer as "IPDial Pro"
-    val bottomTabs = listOf(NavDest.Home, NavDest.Keypad, NavDest.Contacts)
-    val coroutineScope = rememberCoroutineScope()
-
-    val isMainScreen = currentRoute == NavDest.Home.route || currentRoute == NavDest.Keypad.route || currentRoute == NavDest.Contacts.route
-    val hasActiveCall = callSession != null && callSession.state != CallState.DISCONNECTED
-    val showBottomBar = !hasActiveCall && (isMainScreen ||
-                        ((callSession == null || !showFullIncomingScreen) &&
-                         currentRoute == NavDest.GetPro.route))
-    
-    if (showBottomBar) {
-        val isGlass = com.ipdial.ui.theme.LocalGlassMode.current != com.ipdial.ui.theme.GlassMode.None
-
-        NavigationBar(
-            tonalElevation = 0.dp,
-            containerColor = if (isGlass) Color.Transparent else MaterialTheme.colorScheme.surface
-        ) {
-            bottomTabs.forEachIndexed { index, dest ->
-                val isSelected = if (isMainScreen) {
-                    pagerState.currentPage == index
-                } else {
-                    currentRoute == dest.route
-                }
-
-                NavigationBarItem(
-                    selected = isSelected,
-                    onClick = {
-                        if (isMainScreen) {
-                            coroutineScope.launch {
-                                pagerState.animateScrollToPage(index)
-                            }
-                        } else {
-                            navController.graph?.let { graph ->
-                                navController.navigate(dest.route) {
-                                    popUpTo(graph.findStartDestination().id)
-                                    launchSingleTop = true
-                                }
-                            }
-                        }
-                    },
-                    icon = { Icon(dest.icon, dest.label, modifier = Modifier.size(20.dp)) },
-                    label = { Text(dest.label, style = MaterialTheme.typography.labelSmall) },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = MaterialTheme.colorScheme.primary,
-                        selectedTextColor = MaterialTheme.colorScheme.primary,
-                        indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
-                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                        unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    ),
-                )
-            }
-        }
-    }
-}
-
-@Composable
 fun AppMainContent(
     vm: SipViewModel,
     navController: androidx.navigation.NavHostController,
@@ -821,7 +602,7 @@ fun AppMainContent(
     innerPadding: PaddingValues,
     callSession: CallSession?,
     showFullIncomingScreen: Boolean,
-    onOpenDrawer: () -> Unit,
+    onOpenMenu: () -> Unit,
     onShowFullIncoming: () -> Unit
 ) {
     Log.d("MainActivity", "AppMainContent: session=${callSession?.state}, showFull=$showFullIncomingScreen")
@@ -833,7 +614,7 @@ fun AppMainContent(
     if (hasActiveCall) {
         CallOverlay(vm, callSession!!)
     } else {
-        AppNavHost(vm, navController, pagerState, innerPadding, onOpenDrawer)
+        AppNavHost(vm, navController, pagerState, innerPadding, onOpenMenu)
     }
 }
 
@@ -859,7 +640,7 @@ fun MainPagerScreen(
     vm: SipViewModel,
     navController: androidx.navigation.NavHostController,
     pagerState: PagerState,
-    onOpenDrawer: () -> Unit
+    onOpenMenu: () -> Unit
 ) {
     val accounts by vm.accounts.collectAsState()
 
@@ -867,7 +648,6 @@ fun MainPagerScreen(
         com.ipdial.ui.components.IPDialTopBar(
             accounts = accounts,
             vm = vm,
-            onOpenDrawer = onOpenDrawer,
             onAddAccount = { navController.navigate(NavDest.Accounts.route) }
         )
 
@@ -879,30 +659,30 @@ fun MainPagerScreen(
             when (page) {
                 0 -> HomeScreen(
                     vm = vm, 
-                    onOpenDrawer = onOpenDrawer,
+                    onOpenDrawer = onOpenMenu,
                     onNavigateToAccounts = { navController.navigate(NavDest.Accounts.route) },
                     onEditBeforeCall = { number ->
-                    vm.prefillDialer(number)
-                    navController.graph?.let { graph ->
-                        navController.navigate(NavDest.Keypad.route) {
-                            popUpTo(graph.findStartDestination().id)
-                            launchSingleTop = true
+                        vm.prefillDialer(number)
+                        navController.graph.let { graph ->
+                            navController.navigate(NavDest.Keypad.route) {
+                                popUpTo(graph.findStartDestination().id)
+                                launchSingleTop = true
+                            }
                         }
                     }
-                }
-            )
-            1 -> DialpadScreen(
-                vm = vm, 
-                onOpenDrawer = onOpenDrawer,
-                onNavigateToAccounts = { navController.navigate(NavDest.Accounts.route) }
-            )
-            2 -> ContactsScreen(
-                vm = vm, 
-                onOpenDrawer = onOpenDrawer,
-                onNavigateToAccounts = { navController.navigate(NavDest.Accounts.route) }
-            )
+                )
+                1 -> DialpadScreen(
+                    vm = vm, 
+                    onOpenDrawer = onOpenMenu,
+                    onNavigateToAccounts = { navController.navigate(NavDest.Accounts.route) }
+                )
+                2 -> ContactsScreen(
+                    vm = vm, 
+                    onOpenDrawer = onOpenMenu,
+                    onNavigateToAccounts = { navController.navigate(NavDest.Accounts.route) }
+                )
+            }
         }
-    }
     }
 }
 
@@ -912,7 +692,7 @@ fun AppNavHost(
     navController: androidx.navigation.NavHostController,
     pagerState: PagerState,
     innerPadding: PaddingValues,
-    onOpenDrawer: () -> Unit
+    onOpenMenu: () -> Unit
 ) {
     NavHost(
         navController = navController,
@@ -922,18 +702,19 @@ fun AppNavHost(
             .padding(innerPadding)
     ) {
         composable(NavDest.Home.route) { 
-            MainPagerScreen(vm, navController, pagerState, onOpenDrawer)
+            MainPagerScreen(vm, navController, pagerState, onOpenMenu)
         }
         composable(NavDest.Keypad.route) { 
-            MainPagerScreen(vm, navController, pagerState, onOpenDrawer)
+            MainPagerScreen(vm, navController, pagerState, onOpenMenu)
         }
         composable(NavDest.Contacts.route) { 
-            MainPagerScreen(vm, navController, pagerState, onOpenDrawer)
+            MainPagerScreen(vm, navController, pagerState, onOpenMenu)
         }
         composable(NavDest.Settings.route) { 
             SettingsScreen(
                 vm = vm, 
-                onOpenDrawer = onOpenDrawer,
+                onBack = { navController.popBackStack() },
+                onOpenDrawer = onOpenMenu,
                 onNavigateToLogs = { navController.navigate(NavDest.Logs.route) },
                 onNavigateToCodecs = { navController.navigate(NavDest.AudioCodecs.route) },
                 onNavigateToTheme = { navController.navigate(NavDest.ThemeSettings.route) },
@@ -943,7 +724,7 @@ fun AppNavHost(
         composable(NavDest.ThemeSettings.route) {
             ThemeSettingsScreen(
                 vm = vm,
-                onOpenDrawer = onOpenDrawer,
+                onOpenDrawer = onOpenMenu,
                 onBack = { navController.popBackStack() }
             )
         }
@@ -956,29 +737,54 @@ fun AppNavHost(
         composable(NavDest.AudioCodecs.route) {
             AudioCodecScreen(
                 vm = vm,
-                onOpenDrawer = onOpenDrawer,
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                onOpenDrawer = onOpenMenu
             )
         }
         composable(NavDest.Accounts.route) { 
-            AccountsScreen(vm = vm, onOpenDrawer = onOpenDrawer) 
+            AccountsScreen(
+                vm = vm,
+                onBack = { navController.popBackStack() },
+                onOpenDrawer = onOpenMenu
+            ) 
         }
         composable(NavDest.Recordings.route) {
-            RecordingsScreen(vm = vm, onOpenDrawer = onOpenDrawer)
+            RecordingsScreen(
+                vm = vm,
+                onBack = { navController.popBackStack() },
+                onOpenDrawer = onOpenMenu
+            )
         }
         composable(NavDest.Logs.route) {
-            ActivityLogScreen(vm = vm, onOpenDrawer = onOpenDrawer)
+            ActivityLogScreen(
+                vm = vm,
+                onBack = { navController.popBackStack() },
+                onOpenDrawer = onOpenMenu
+            )
         }
         composable(NavDest.About.route) { 
-            AboutScreen(vm = vm, onOpenDrawer = onOpenDrawer)
+            AboutScreen(
+                vm = vm,
+                onBack = { navController.popBackStack() },
+                onOpenDrawer = onOpenMenu
+            )
         }
         composable(NavDest.Privacy.route) {
-            PrivacyPolicyScreen(vm = vm, onOpenDrawer = onOpenDrawer)
+            PrivacyPolicyScreen(
+                vm = vm,
+                onBack = { navController.popBackStack() },
+                onOpenDrawer = onOpenMenu
+            )
         }
         composable(NavDest.GetPro.route) {
-            GetProScreen(vm = vm, onOpenDrawer = onOpenDrawer)
+            GetProScreen(
+                vm = vm,
+                onBack = { navController.popBackStack() },
+                onOpenDrawer = onOpenMenu
+            )
         }
     }
 }
+
 
 

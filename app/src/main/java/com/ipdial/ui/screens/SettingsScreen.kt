@@ -51,7 +51,8 @@ val fontSizeOptions = listOf(
 @Composable
 fun SettingsScreen(
     vm: SipViewModel,
-    onOpenDrawer: () -> Unit,
+    onBack: () -> Unit = {},
+    onOpenDrawer: (() -> Unit)? = null,
     onNavigateToLogs: () -> Unit,
     onNavigateToCodecs: () -> Unit,
     onNavigateToTheme: () -> Unit = {},
@@ -297,7 +298,7 @@ fun SettingsScreen(
 
     Scaffold(
         topBar = {
-            IPDialTopBar(accounts = accounts, vm = vm, onOpenDrawer = onOpenDrawer)
+            IPDialTopBar(accounts = accounts, vm = vm, title = "Settings", onBack = onBack)
         },
         bottomBar = {
             com.ipdial.ui.components.StartIoBanner(

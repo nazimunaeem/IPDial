@@ -47,8 +47,8 @@ private val previewData = listOf(
 @Composable
 fun ThemeSettingsScreen(
     vm: SipViewModel,
-    onOpenDrawer: () -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onOpenDrawer: (() -> Unit)? = null
 ) {
     val accounts by vm.accounts.collectAsState()
     val themeMode by vm.themeMode.collectAsState()
