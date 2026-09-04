@@ -20,6 +20,13 @@ keystore.properties
 # Google Services
 app/google-services.json
 
+# Firebase / Firestore
+firestore.rules
+firestore.indexes.json
+.firebase/
+firebase-debug.log
+.firebase-debug.log
+
 # Local configuration
 local.properties
 gradle.properties
