@@ -97,7 +97,7 @@ enum class CallState {
     DISCONNECTED,
 }
 
-enum class KeypadDesign { Grid, Rounded }
+enum class KeypadDesign { Grid, Rounded, Ring }
 
 enum class IncomingCallMode { Slider, Buttons }
 

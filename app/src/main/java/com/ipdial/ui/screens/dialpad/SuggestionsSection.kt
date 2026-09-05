@@ -12,7 +12,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -33,7 +32,6 @@ internal val T9_MAP = mapOf(
 
 @Composable
 fun SuggestedContactRow(contact: Contact, onNumberClick: (String) -> Unit) {
-    val context = LocalContext.current
     Row(
         modifier = Modifier
             .fillMaxWidth()

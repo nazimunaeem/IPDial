@@ -57,12 +57,14 @@ class AccountRepository(private val context: Context) {
     private val deviceIdKey = stringPreferencesKey("device_id")
     private val proPointsKey = androidx.datastore.preferences.core.intPreferencesKey("pro_points")
     private val proExpirationKey = androidx.datastore.preferences.core.longPreferencesKey("pro_expiration")
+    private val proWelcomeInitializedKey = booleanPreferencesKey("pro_welcome_initialized")
     private val recordingCounterKey = androidx.datastore.preferences.core.intPreferencesKey("recording_counter")
     private val batteryNoticeShownKey = booleanPreferencesKey("battery_notice_shown")
     private val autoRecordKey = booleanPreferencesKey("auto_record_enabled")
     private val globalNoiseCancellationKey = booleanPreferencesKey("global_noise_cancellation")
     private val savedLabelsKey = stringPreferencesKey("saved_labels")
     private val savedHostsKey = stringPreferencesKey("saved_hosts")
+    private val firebaseUserIdKey = stringPreferencesKey("firebase_user_id")
 
     val savedLabels: Flow<List<String>> = context.dataStore.data.map { prefs ->
         val json = prefs[savedLabelsKey] ?: "[]"
@@ -143,11 +145,12 @@ class AccountRepository(private val context: Context) {
     val deviceId: Flow<String?> = context.dataStore.data.map { it[deviceIdKey] }
     val autoRecordEnabled: Flow<Boolean> = context.dataStore.data.map { it[autoRecordKey] ?: false }
 
-    val proPoints: Flow<Int> = context.dataStore.data.map { it[proPointsKey] ?: 3 }
+    val proPoints: Flow<Int> = context.dataStore.data.map { it[proPointsKey] ?: 0 }
     val proExpiration: Flow<Long> = context.dataStore.data.map { it[proExpirationKey] ?: 0L }
     val recordingCounter: Flow<Int> = context.dataStore.data.map { it[recordingCounterKey] ?: 0 }
     val batteryNoticeShown: Flow<Boolean> = context.dataStore.data.map { it[batteryNoticeShownKey] ?: false }
     val globalNoiseCancellation: Flow<Boolean> = context.dataStore.data.map { it[globalNoiseCancellationKey] ?: true }
+    val firebaseUserId: Flow<String?> = context.dataStore.data.map { it[firebaseUserIdKey] }
 
     suspend fun getOrCreateDeviceId(): String {
         val current = context.dataStore.data.map { it[deviceIdKey] }.first()
@@ -176,10 +179,28 @@ class AccountRepository(private val context: Context) {
     suspend fun setDeviceId(id: String) = context.dataStore.edit { it[deviceIdKey] = id }
     suspend fun setProPoints(points: Int) = context.dataStore.edit { it[proPointsKey] = points }
     suspend fun setProExpiration(expiration: Long) = context.dataStore.edit { it[proExpirationKey] = expiration }
+
+    suspend fun initializeProWelcomeOffer() {
+        context.dataStore.edit { prefs ->
+            if (prefs[proWelcomeInitializedKey] == true) return@edit
+
+            val isFreshInstall = !prefs.contains(deviceIdKey)
+            val hasExistingProData = prefs.contains(proPointsKey) || prefs.contains(proExpirationKey)
+            if (isFreshInstall && !hasExistingProData) {
+                prefs[proPointsKey] = 0
+                prefs[proExpirationKey] = System.currentTimeMillis() + 3 * 24 * 60 * 60 * 1000L
+            }
+            prefs[proWelcomeInitializedKey] = true
+        }
+    }
     suspend fun setRecordingCounter(counter: Int) = context.dataStore.edit { it[recordingCounterKey] = counter }
     suspend fun setBatteryNoticeShown(shown: Boolean) = context.dataStore.edit { it[batteryNoticeShownKey] = shown }
     suspend fun setAutoRecordEnabled(enabled: Boolean) = context.dataStore.edit { it[autoRecordKey] = enabled }
     suspend fun setGlobalNoiseCancellation(enabled: Boolean) = context.dataStore.edit { it[globalNoiseCancellationKey] = enabled }
+    suspend fun setFirebaseUserId(id: String?) = context.dataStore.edit {
+        if (id == null) it.remove(firebaseUserIdKey)
+        else it[firebaseUserIdKey] = id
+    }
 
     suspend fun setGlobalRingtone(uri: String?) {
         context.dataStore.edit { prefs ->

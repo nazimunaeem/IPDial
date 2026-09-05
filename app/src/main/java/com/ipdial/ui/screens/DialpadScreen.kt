@@ -11,9 +11,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -42,6 +45,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -104,23 +108,38 @@ fun DialpadScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
+            .navigationBarsPadding()
             // In landscape the screen is short; allow the whole dialpad column to
             // scroll so the keypad and call button are always reachable.
             .then(if (isLandscape) Modifier.verticalScroll(rememberScrollState()) else Modifier),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Top
     ) {
-        // Suggested contacts space - fixed weight(1f) so keypad never shifts position when typing.
-        // In landscape it becomes a compact fixed-height list so the keypad stays visible.
-        Box(modifier = Modifier
-            .fillMaxWidth()
-            .then(if (isLandscape) Modifier.height(96.dp) else Modifier.weight(1f))
-            .padding(top = 4.dp)) {
+        // Suggested contacts space stays at least one stable viewport row high so
+        // the keypad does not jump upward while contacts are loading or unmatched.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(
+                    if (isLandscape) Modifier.height(96.dp)
+                    else Modifier.weight(1f, fill = false)
+                )
+                .heightIn(min = if (isLandscape) 96.dp else 120.dp)
+                .padding(top = 4.dp)
+                .clipToBounds()
+        ) {
             // In landscape the parent Column uses verticalScroll, so we must NOT use
             // LazyColumn here (nested scrollables cause infinite-height-constraint crash).
             // Use a plain Column — the list is capped at 5 items so lazy rendering is unnecessary.
+            // The list scrolls within this box so items never spill onto (or hide under)
+            // the keypad/digit row.
             if (dialString.isEmpty() && mostCalled.isNotEmpty()) {
-                Column(modifier = Modifier.fillMaxSize()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .fillMaxHeight()
+                        .verticalScroll(rememberScrollState())
+                ) {
                     Text(
                         text = "Most Called",
                         style = MaterialTheme.typography.labelLarge,
@@ -138,7 +157,12 @@ fun DialpadScreen(
                     }
                 }
             } else if (suggestedContacts.isNotEmpty()) {
-                Column(modifier = Modifier.fillMaxSize()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .fillMaxHeight()
+                        .verticalScroll(rememberScrollState())
+                ) {
                     suggestedContacts.forEach { contact ->
                         key(contact.id) {
                             SuggestedContactRow(contact) { num ->
@@ -150,7 +174,7 @@ fun DialpadScreen(
                     }
                 }
             } else if (dialString.isNotEmpty()) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Text(
                         "No matching contacts",
                         style = MaterialTheme.typography.bodyMedium,
@@ -169,8 +193,6 @@ fun DialpadScreen(
                     modifier = Modifier.fillMaxSize()
                 )
             }
-        } else {
-            Spacer(Modifier.height(8.dp))
         }
 
         // Dial display row
@@ -281,39 +303,46 @@ fun DialpadScreen(
             Triple("#", "", null),
         )
 
+        val callAction = {
+            if (dialString.isEmpty() && !lastDialedNumber.isNullOrEmpty()) {
+                vm.setDialString(androidx.compose.ui.text.input.TextFieldValue(lastDialedNumber!!))
+            } else if (dialString.isNotEmpty()) {
+                vm.makeCall()
+            }
+        }
+
         DialpadKeypad(
             keys = keys,
             design = keypadDesign,
             onKeyPress = { vm.dialPad(it) },
-            onZeroLongPress = { vm.dialPad('+') }
+            onZeroLongPress = { vm.dialPad('+') },
+            onCallClick = if (keypadDesign == KeypadDesign.Ring) callAction else null
         )
 
-        Spacer(Modifier.height(if (isLandscape) 4.dp else 8.dp))
+        if (keypadDesign != KeypadDesign.Ring) {
+            Spacer(Modifier.height(if (isLandscape) 9.dp else 13.dp))
 
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier
-                .width(if (isWide) 220.dp else 150.dp)
-                .height(if (isWide) 72.dp else 62.dp)
-                .clip(CircleShape)
-                .background(ForestGreen)
-                .clickableWithRipple {
-                    if (dialString.isEmpty() && !lastDialedNumber.isNullOrEmpty()) {
-                        vm.setDialString(androidx.compose.ui.text.input.TextFieldValue(lastDialedNumber!!))
-                    } else if (dialString.isNotEmpty()) {
-                        vm.makeCall()
-                    }
-                }
-        ) {
-            Icon(
-                imageVector = Icons.Default.Call,
-                contentDescription = "Call",
-                tint = Color.White,
-                modifier = Modifier.size(if (isWide) 34.dp else 28.dp)
-            )
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .width(if (isWide) 220.dp else 150.dp)
+                    .height(if (isWide) 72.dp else 62.dp)
+                    .clip(CircleShape)
+                    .background(ForestGreen)
+                    .clickableWithRipple(onClick = callAction)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Call,
+                    contentDescription = "Call",
+                    tint = Color.White,
+                    modifier = Modifier.size(if (isWide) 34.dp else 28.dp)
+                )
+            }
         }
 
-        Spacer(Modifier.height(84.dp))
+        // Reserve the pill height, its bottom margin, and an 8dp gap above it.
+        // navigationBarsPadding() moves this whole layout with system navigation.
+        Spacer(Modifier.height(66.dp))
     }
 
     val showAccountSelection by vm.showAccountSelectionDialog.collectAsState()

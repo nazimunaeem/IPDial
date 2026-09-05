@@ -67,12 +67,19 @@ class ContactsRepository(private val context: Context) {
      */
     fun findContactByNumber(phoneNumber: String): Contact? {
         if (!indexBuilt) return null
-        val digits = phoneNumber.filter { it.isDigit() }
-        if (digits.length < 3) return null
+        val cleanNum = phoneNumber.replace("<", "").replace(">", "").removePrefix("sip:").substringBefore("@").substringBefore(";")
+        val digits = cleanNum.filter { it.isDigit() }
+        if (digits.length < 10) return null
+        // Exact full match wins
         normalizedNumberIndex[digits]?.let { return it }
-        if (digits.length >= 10) {
+        // Otherwise match on the last 10 digits so that a local number
+        // (e.g. 01729979896) matches an international saved number
+        // (+8801729979896) and vice versa.
+        val last10 = digits.takeLast(10)
+        normalizedNumberIndex[last10]?.let { return it }
+        if (digits.length > 10) {
             for (len in suffixLengths) {
-                if (len < digits.length) {
+                if (len > 10 && len < digits.length) {
                     normalizedNumberIndex[digits.takeLast(len)]?.let { return it }
                 }
             }

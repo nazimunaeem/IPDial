@@ -57,7 +57,7 @@ fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
     val viaLine  = account?.label?.ifBlank { account.domain } ?: "SIP"
     
     val contact = remember(session.remoteUri) {
-        vm.findContactByNumber(session.remoteUri)
+        vm.findContactByNumber(vm.cleanUri(session.remoteUri))
     }
     val displayName = contact?.name ?: vm.cleanDisplayName(session.remoteDisplayName, session.remoteUri)
 

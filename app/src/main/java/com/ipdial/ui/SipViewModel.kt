@@ -29,6 +29,7 @@ import com.ipdial.data.repository.AccountRepository
 import com.ipdial.data.repository.CallLogRepository
 import com.ipdial.data.repository.ContactsRepository
 import com.ipdial.data.repository.FirestorePointsSync
+import com.ipdial.data.repository.AuthRepository
 import com.ipdial.service.SipAudioController
 import com.ipdial.service.SipEngine
 import kotlinx.coroutines.Dispatchers
@@ -58,6 +59,13 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     private val contactsRepo = ContactsRepository(app)
     // Firestore sync manager (initialized in init)
     private var firestoreSync: FirestorePointsSync? = null
+
+    // Auth repository (initialized in init)
+    lateinit var authRepo: AuthRepository
+        private set
+
+    val isSignedIn: StateFlow<Boolean>
+    val currentUser: StateFlow<com.google.firebase.auth.FirebaseUser?>
 
     private val _balances = MutableStateFlow<Map<String, String>>(emptyMap())
     val balances: StateFlow<Map<String, String>> = _balances.asStateFlow()
@@ -189,7 +197,46 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         logRepo.deleteAll()
     }
 
-    fun getReferralCode(): String = deviceId.value
+    fun getReferralCode(): String {
+        // Use Firebase UID short code if signed in, otherwise use deviceId
+        return if (authRepo.isSignedIn) authRepo.referralCode else deviceId.value.take(6)
+    }
+
+    fun signIn(activityContext: Context, onComplete: (Boolean, String) -> Unit) {
+        viewModelScope.launch {
+            val result = authRepo.signIn(activityContext)
+            if (result.isSuccess) {
+                val token = result.getOrNull()!!
+                authRepo.firebaseAuthWithGoogle(token)
+                // Restart Firestore listening with new UID
+                firestoreSync?.startListening()
+                withContext(Dispatchers.Main) { onComplete(true, "Signed in") }
+            } else {
+                withContext(Dispatchers.Main) { onComplete(false, "Sign-in cancelled") }
+            }
+        }
+    }
+
+    fun signOut() {
+        viewModelScope.launch {
+            authRepo.signOut()
+            repo.setFirebaseUserId(null)
+        }
+    }
+
+    fun deleteAccount(onComplete: (Boolean, String) -> Unit) {
+        viewModelScope.launch {
+            val result = authRepo.deleteAccount()
+            if (result.isSuccess) {
+                repo.setFirebaseUserId(null)
+                repo.setProPoints(0)
+                repo.setProExpiration(0L)
+                withContext(Dispatchers.Main) { onComplete(true, "Account deleted") }
+            } else {
+                withContext(Dispatchers.Main) { onComplete(false, "Delete failed") }
+            }
+        }
+    }
 
     fun claimReferral(code: String, onComplete: (Boolean, String) -> Unit) {
         try {
@@ -199,22 +246,29 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun redeemPoints(days: Int) = viewModelScope.launch {
-        val cost = when(days) {
-            1 -> 1
-            7 -> 5
-            30 -> 20
-            90 -> 50
-            else -> return@launch
+    fun redeemPoints(days: Int, onComplete: (Boolean, String) -> Unit = { _, _ -> }) {
+        if (!authRepo.isSignedIn) {
+            onComplete(false, "Please sign in to buy Pro")
+            return
         }
-        if (proPoints.value >= cost) {
-            val newPoints = maxOf(0, proPoints.value - cost)
-            repo.setProPoints(newPoints)
-            val currentExp = maxOf(proExpiration.value, System.currentTimeMillis())
-            val newExp = currentExp + (days * 24 * 60 * 60 * 1000L)
-            repo.setProExpiration(newExp)
-            // Atomic update to Firestore
-            try { firestoreSync?.redeemPoints(cost, newExp) } catch (_: Exception) {}
+        viewModelScope.launch {
+            val cost = when(days) {
+                1 -> 1
+                7 -> 5
+                30 -> 20
+                90 -> 50
+                else -> return@launch
+            }
+            if (proPoints.value >= cost) {
+                val newPoints = maxOf(0, proPoints.value - cost)
+                repo.setProPoints(newPoints)
+                val currentExp = maxOf(proExpiration.value, System.currentTimeMillis())
+                val newExp = currentExp + (days * 24 * 60 * 60 * 1000L)
+                repo.setProExpiration(newExp)
+                // Atomic update to Firestore
+                try { firestoreSync?.redeemPoints(cost, newExp) } catch (_: Exception) {}
+                onComplete(true, "Pro activated")
+            }
         }
     }
 
@@ -223,7 +277,7 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun startAdCooldown() {
         viewModelScope.launch {
-            _adCooldownSeconds.value = 7
+            _adCooldownSeconds.value = 5
             while (_adCooldownSeconds.value > 0) {
                 delay(1000)
                 _adCooldownSeconds.value -= 1
@@ -231,25 +285,31 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private fun grantRewardedAdPoint() {
+        viewModelScope.launch {
+            val newPoints = proPoints.value + 1
+            repo.setProPoints(newPoints)
+            try { firestoreSync?.incrementPoints(1) } catch (_: Exception) {}
+            _isLoadingAd.value = false
+            startAdCooldown()
+        }
+    }
+
     fun watchRewardedAd(context: Context, onReward: () -> Unit) {
+        if (!authRepo.isSignedIn) {
+            return
+        }
         if (_isLoadingAd.value || _adCooldownSeconds.value > 0) return
         _isLoadingAd.value = true
         android.util.Log.d("SipViewModel", "Starting rewarded ad flow")
 
         val rewardedAd = com.startapp.sdk.adsbase.StartAppAd(context)
         
-        // Define common success logic
+        // Define common success logic for rewarded-video and fallback completion.
         val grantReward = {
-            viewModelScope.launch {
-                android.util.Log.d("SipViewModel", "Granting 1 point reward")
-                val newPoints = proPoints.value + 1
-                repo.setProPoints(newPoints)
-                // Atomic increment in Firestore instead of overwriting with local total
-                try { firestoreSync?.incrementPoints(1) } catch (_: Exception) {}
-                onReward()
-                _isLoadingAd.value = false
-                startAdCooldown()
-            }
+            android.util.Log.d("SipViewModel", "Granting 1 point for rewarded ad")
+            grantRewardedAdPoint()
+            onReward()
         }
 
         rewardedAd.setVideoListener(object : com.startapp.sdk.adsbase.adlisteners.VideoListener {
@@ -574,9 +634,31 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         }
         refreshContacts()
 
-        // Ensure deviceId is created
-        viewModelScope.launch {
+        // Give fresh installs a one-time three-day Pro welcome offer before
+        // creating the device ID used to distinguish existing installations.
+        viewModelScope.launch(Dispatchers.IO) {
+            repo.initializeProWelcomeOffer()
             repo.getOrCreateDeviceId()
+        }
+
+        // Initialize Auth repository
+        authRepo = AuthRepository(app)
+        isSignedIn = authRepo.currentUser.map { it != null }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+        currentUser = authRepo.currentUser
+            .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+        // Check for migration on first sign-in
+        viewModelScope.launch {
+            val firebaseUid = authRepo.userId
+            val deviceId = repo.getOrCreateDeviceId()
+            val savedFirebaseId = repo.firebaseUserId.first()
+
+            if (firebaseUid != null && savedFirebaseId == null) {
+                // First sign-in - migrate device data
+                firestoreSync?.migrateFromDeviceId(deviceId, firebaseUid)
+                repo.setFirebaseUserId(firebaseUid)
+            }
         }
 
         // Initialize Firestore sync for points/expiration

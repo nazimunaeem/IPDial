@@ -118,6 +118,7 @@ import com.ipdial.ui.screens.AudioCodecScreen
 import com.ipdial.ui.screens.CallScreen
 import com.ipdial.ui.screens.ContactsScreen
 import com.ipdial.ui.screens.DialpadScreen
+import com.ipdial.ui.screens.DialpadStyleScreen
 import com.ipdial.ui.screens.GetProScreen
 import com.ipdial.ui.screens.home.HomeScreen
 import com.ipdial.ui.screens.IncomingCallScreen
@@ -394,6 +395,7 @@ sealed class NavDest(val route: String, val label: String, val icon: ImageVector
     object AudioCodecs : NavDest("audio_codecs", "Audio Codecs", Icons.Default.Audiotrack)
     object ThemeSettings : NavDest("theme_settings", "Theme", Icons.Default.Settings)
     object IncomingCallStyle : NavDest("incoming_call_style", "Incoming Call Style", Icons.Default.Call)
+    object DialpadStyle : NavDest("dialpad_style", "Dialpad Style", Icons.Default.Dialpad)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -764,6 +766,13 @@ fun AppNavHost(
         }
         composable(NavDest.Logs.route) {
             ActivityLogScreen(
+                vm = vm,
+                onBack = { navController.popBackStack() },
+                onOpenDrawer = onOpenMenu
+            )
+        }
+        composable(NavDest.DialpadStyle.route) {
+            DialpadStyleScreen(
                 vm = vm,
                 onBack = { navController.popBackStack() },
                 onOpenDrawer = onOpenMenu

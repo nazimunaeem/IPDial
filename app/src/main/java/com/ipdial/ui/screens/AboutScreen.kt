@@ -69,7 +69,8 @@ fun AboutScreen(
         catch (e: Exception) { "1.0" }
     }
 
-    val deviceId by vm.deviceId.collectAsState()
+    val isSignedIn by vm.isSignedIn.collectAsState()
+    val userId = remember(isSignedIn) { vm.getReferralCode() }
 
     val appIconBitmap = remember(context) {
         try {
@@ -154,14 +155,14 @@ fun AboutScreen(
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable {
+                    .clickable(enabled = isSignedIn && userId.isNotEmpty()) {
                         scope.launch {
                             clipboardManager.setClipEntry(
                                 androidx.compose.ui.platform.ClipEntry(
-                                    android.content.ClipData.newPlainText("Device ID", deviceId)
+                                    android.content.ClipData.newPlainText("User ID", userId)
                                 )
                             )
-                            android.widget.Toast.makeText(context, "Device ID copied", android.widget.Toast.LENGTH_SHORT).show()
+                            android.widget.Toast.makeText(context, "User ID copied", android.widget.Toast.LENGTH_SHORT).show()
                         }
                     }
             ) {
@@ -170,24 +171,32 @@ fun AboutScreen(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        text = "Device ID",
+                        text = "User ID",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary
                     )
                     Spacer(Modifier.height(4.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (isSignedIn) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = userId,
+                                style = MaterialTheme.typography.bodySmall,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Icon(
+                                imageVector = Icons.Default.ContentCopy,
+                                contentDescription = "Copy",
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    } else {
                         Text(
-                            text = deviceId,
+                            text = "Sign in to view your ID",
                             style = MaterialTheme.typography.bodySmall,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.weight(1f, fill = false)
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Icon(
-                            imageVector = Icons.Default.ContentCopy,
-                            contentDescription = "Copy",
-                            modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.primary
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }

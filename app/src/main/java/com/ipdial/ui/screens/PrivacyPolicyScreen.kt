@@ -54,28 +54,33 @@ fun PrivacyPolicyScreen(
             
             PrivacySection(
                 title = "Information Collection",
-                content = "IPDial is a VoIP application. We collect minimal information required to provide our services, such as your Device ID for account synchronization. Your SIP account credentials are stored locally and securely on your device; they are never uploaded to our servers or stored in Firestore."
+                content = "IPDial collects limited information needed for app features and Pro synchronization, including a device identifier and, when used, your Google account identifier."
             )
             
             PrivacySection(
                 title = "Permissions",
-                content = "The app requires Microphone access for calls, Contacts access to display your phonebook, and Phone state access to manage calls effectively."
+                content = "Microphone access enables calls, Contacts access displays your phonebook, and Phone state access helps manage call status. Notifications may be used for call and service alerts."
             )
             
             PrivacySection(
                 title = "Data Security",
-                content = "Your SIP credentials and call logs are treated with high priority for security. When using Firestore synchronization, only your pro points and expiration data are stored securely using Firebase's infrastructure. Your SIP credentials remain exclusively on your device."
+                content = "SIP credentials and call logs remain on your device. Pro points and expiration data may be synchronized through Firebase. IPDial does not upload or store SIP passwords in Firestore."
+            )
+
+            PrivacySection(
+                title = "Google Sign-In and Pro Management",
+                content = "Google Sign-In is optional and associates your Pro points and expiration date with your account. Firebase handles authentication; IPDial never receives or stores your Google password."
             )
 
             PrivacySection(
                 title = "Third-Party Services",
-                content = "We use Start.io for advertisements in the free version of the app. These services may collect information used to identify your device for ad delivery."
+                content = "The free version uses Start.io for advertisements. Start.io may process device or usage information for advertising and measurement under its own privacy policy."
             )
             
             Spacer(Modifier.height(32.dp))
             
             Text(
-                text = "Last updated June, 2026",
+                text = "Last updated September, 2026",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.outline,
                 modifier = Modifier.fillMaxWidth()

@@ -79,11 +79,12 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
 
     // Contact matching logic using pre-computed index
     val contact = remember(activeSession.remoteUri, contacts) {
-        val cleanedSessionUriDigits = vm.cleanUri(activeSession.remoteUri).filter { it.isDigit() }
+        val cleanNumber = vm.cleanUri(activeSession.remoteUri)
+        val cleanedSessionUriDigits = cleanNumber.filter { it.isDigit() }
         if (cleanedSessionUriDigits.length < 3) { // Only attempt contact match for numbers with at least 3 digits
             null
         } else {
-            vm.findContactByNumber(activeSession.remoteUri)
+            vm.findContactByNumber(cleanNumber)
         }
     }
     val displayName = contact?.name ?: vm.cleanDisplayName(activeSession.remoteDisplayName, activeSession.remoteUri)

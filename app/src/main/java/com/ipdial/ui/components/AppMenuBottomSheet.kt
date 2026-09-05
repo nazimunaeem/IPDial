@@ -27,8 +27,10 @@ import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Audiotrack
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CardGiftcard
+import androidx.compose.material.icons.filled.Dialpad
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Palette
@@ -79,6 +81,7 @@ import com.ipdial.data.model.RegStatus
 import com.ipdial.ui.SipViewModel
 import com.ipdial.ui.theme.GlassMode
 import com.ipdial.ui.theme.LocalGlassMode
+import coil.compose.AsyncImage
 import java.util.concurrent.TimeUnit
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -192,6 +195,18 @@ fun AppMenuBottomSheet(
                 }
             )
 
+            // 2.5. User Profile (if signed in)
+            val isSignedIn by vm.isSignedIn.collectAsState()
+            val currentUser by vm.currentUser.collectAsState()
+            if (isSignedIn && currentUser != null) {
+                Spacer(Modifier.height(8.dp))
+                UserProfileMini(
+                    name = currentUser?.displayName ?: "User",
+                    email = currentUser?.email ?: "",
+                    photoUrl = currentUser?.photoUrl?.toString()
+                )
+            }
+
             Spacer(Modifier.height(10.dp))
 
             // 3. Quick Actions Section (6 Tiles in 3-Column Grid)
@@ -244,20 +259,20 @@ fun AppMenuBottomSheet(
 
             Spacer(Modifier.height(8.dp))
 
-            // Row 2 of 6 Tiles: Activity Log | Audio Codecs | Appearance
+            // Row 2 of 6 Tiles: Dialpad Style | Audio Codecs | Appearance
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 MenuGridItem(
                     modifier = Modifier.weight(1f),
-                    icon = Icons.AutoMirrored.Filled.List,
-                    title = "Activity Log",
-                    subtitle = "SIP logs",
+                    icon = Icons.Default.Dialpad,
+                    title = "Dialpad Style",
+                    subtitle = "Grid/Rounded/Ring",
                     tint = Color(0xFF64B5F6),
                     onClick = {
                         onDismissRequest()
-                        onNavigate(NavDest.Logs.route)
+                        onNavigate(NavDest.DialpadStyle.route)
                     }
                 )
                 MenuGridItem(
@@ -676,5 +691,67 @@ private fun MenuRowItem(
             modifier = Modifier.size(12.dp),
             tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
         )
+    }
+}
+
+@Composable
+private fun UserProfileMini(
+    name: String,
+    email: String,
+    photoUrl: String?
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (photoUrl != null) {
+                AsyncImage(
+                    model = photoUrl,
+                    contentDescription = "Profile",
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.1f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.AccountCircle,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+            }
+
+            Spacer(Modifier.width(12.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = name,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = email,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
     }
 }
