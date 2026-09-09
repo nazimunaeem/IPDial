@@ -4,7 +4,7 @@
 
 ## Information Collection
 
-IPDial is a VoIP application. We collect minimal information required to provide app features and account synchronization, including a device identifier and, when you sign in, your Google/Firebase account identifier. SIP account credentials are stored locally and securely on your device. SIP credentials are not uploaded to our servers or stored in Firestore.
+IPDial is a VoIP application. We collect minimal information required to provide app features and account synchronization, including a device identifier and, when you sign in, your Google/Firebase account identifier. When you register for Pro, we collect your email address to associate it with your Pro subscription. SIP account credentials are stored locally and securely on your device. SIP credentials are not uploaded to our servers or stored in Firestore.
 
 ## Permissions
 
@@ -19,7 +19,7 @@ Permissions are used only for the related app functionality.
 
 ## Data Stored and Synchronized
 
-SIP credentials and local call logs remain on your device. When account synchronization is used, IPDial may store your Pro points, Pro expiration date, device identifier, and related account metadata in Firebase/Firestore. Google sign-in is used to associate synchronized data with your account.
+SIP credentials and local call logs remain on your device. When account synchronization is used, IPDial may store your email, Pro points, Pro expiration date, device identifier, and related account metadata in Firebase/Firestore. Google sign-in is used to associate synchronized data with your account.
 
 ## Data Security
 

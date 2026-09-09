@@ -11,6 +11,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.foundation.clickable
 import androidx.compose.ui.unit.sp
 import com.ipdial.ui.components.IPDialTopBar
 import com.ipdial.ui.SipViewModel
@@ -54,7 +57,7 @@ fun PrivacyPolicyScreen(
             
             PrivacySection(
                 title = "Information Collection",
-                content = "IPDial collects limited information needed for app features and Pro synchronization, including a device identifier and, when used, your Google account identifier."
+                content = "IPDial collects limited information needed for app features and Pro synchronization, including a device identifier, your email address for Pro registration, and, when used, your Google account identifier."
             )
             
             PrivacySection(
@@ -64,7 +67,7 @@ fun PrivacyPolicyScreen(
             
             PrivacySection(
                 title = "Data Security",
-                content = "SIP credentials and call logs remain on your device. Pro points and expiration data may be synchronized through Firebase. IPDial does not upload or store SIP passwords in Firestore."
+                content = "SIP credentials and call logs remain on your device. Email, Pro points, and expiration data may be synchronized through Firebase. IPDial does not upload or store SIP passwords in Firestore."
             )
 
             PrivacySection(
@@ -84,6 +87,21 @@ fun PrivacyPolicyScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.outline,
                 modifier = Modifier.fillMaxWidth()
+            )
+            
+            Spacer(Modifier.height(8.dp))
+
+            val uriHandler = LocalUriHandler.current
+            Text(
+                text = "View full privacy policy on GitHub",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                textDecoration = TextDecoration.Underline,
+                modifier = Modifier.fillMaxWidth()
+                    .padding(vertical = 4.dp)
+                    .clickable {
+                        uriHandler.openUri("https://github.com/nazimunaeem/IPDial/blob/main/privacy_policy.md")
+                    }
             )
             
             Spacer(Modifier.height(16.dp))
