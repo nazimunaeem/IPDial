@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IPDial — Smart VoIP Dialer</title>
+  <meta name="description" content="IPDial is a modern VoIP dialer for Android. Crystal-clear calls, smart contacts, rotary keypad, and more. Download the latest version." />
+  <meta name="theme-color" content="#1a5e3a" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='48' fill='%231a5e3a'/%3E%3Cpath d='M35 25 l8 12 -7 8 c6 10 14 18 24 24 l8 -7 12 8 c3 2 2 7 -1 9 -10 8 -22 9 -33 3 -16 -8 -30 -22 -38 -38 -6 -11 -5 -23 3 -33 2 -3 7 -4 9 -1 z' fill='%23ffffff'/%3E%3C/svg%3E" />
+  <style>
+    :root {
+      --bg: #0d1f16;
+      --surface: #123524;
+      --surface2: #1a4330;
+      --text: #e8f2ec;
+      --muted: #9dbbaa;
+      --accent: #35d47e;
+      --accent2: #25a866;
+      --danger: #ff6b6b;
+      --radius: 16px;
+      --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: radial-gradient(1200px 600px at 20% -10%, #1a4a30 0%, var(--bg) 55%) fixed;
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: 1040px; margin: 0 auto; padding: 0 20px; }
+
+    /* Nav */
+    nav {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 18px 0;
+    }
+    .logo { display: flex; align-items: center; gap: 12px; font-weight: 700; font-size: 20px; }
+    .logo svg { border-radius: 10px; }
+    .nav-links { display: flex; gap: 24px; color: var(--muted); font-size: 14px; }
+    .nav-links a { color: var(--muted); text-decoration: none; transition: color .15s; }
+    .nav-links a:hover { color: var(--text); }
+    @media (max-width: 640px) { .nav-links { display: none; } }
+
+    /* Hero */
+    header.hero { padding: 64px 0 72px; text-align: center; }
+    .badge {
+      display: inline-block; background: rgba(53, 212, 126, .14); color: var(--accent);
+      border: 1px solid rgba(53, 212, 126, .35); padding: 6px 14px; border-radius: 999px;
+      font-size: 13px; font-weight: 600; margin-bottom: 22px; letter-spacing: .3px;
+    }
+    h1 { font-size: clamp(34px, 6vw, 54px); line-height: 1.12; font-weight: 800; letter-spacing: -.5px; }
+    h1 .grad { background: linear-gradient(90deg, var(--accent), #7be0a8); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .sub { max-width: 640px; margin: 20px auto 34px; color: var(--muted); font-size: 17px; }
+    .cta-row { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 10px;
+      background: var(--accent); color: #04210f; font-weight: 700; font-size: 16px;
+      padding: 14px 26px; border-radius: 999px; text-decoration: none;
+      box-shadow: 0 8px 24px rgba(53, 212, 126, .35); transition: transform .12s, box-shadow .12s;
+    }
+    .btn:hover { transform: translateY(-2px); box-shadow: 0 12px 30px rgba(53, 212, 126, .45); }
+    .btn.ghost { background: transparent; color: var(--text); border: 1px solid rgba(255,255,255,.25); box-shadow: none; }
+    .btn.ghost:hover { border-color: rgba(255,255,255,.5); }
+    .ver-note { margin-top: 16px; font-size: 13px; color: var(--muted); }
+    .ver-note b { color: var(--accent); }
+
+    /* Phone mock */
+    .phone-wrap { margin: 58px auto 0; position: relative; }
+    .phone {
+      width: 260px; height: 520px; margin: 0 auto; border-radius: 44px;
+      background: linear-gradient(160deg, #1d4a33, #0f2a1c);
+      border: 1px solid rgba(255,255,255,.12); box-shadow: var(--shadow);
+      padding: 14px; display: flex; flex-direction: column;
+    }
+    .notch { width: 110px; height: 22px; background: #08140d; border-radius: 20px; margin: 4px auto 12px; }
+    .screen {
+      flex: 1; border-radius: 28px; background: var(--surface); overflow: hidden;
+      display: flex; flex-direction: column; align-items: center; padding: 18px 12px;
+    }
+    .disp { font-size: 22px; letter-spacing: 2px; font-weight: 600; margin: 6px 0 12px; min-height: 30px; }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; width: 100%; }
+    .key {
+      aspect-ratio: 1; border-radius: 50%; background: var(--surface2);
+      display: flex; align-items: center; justify-content: center; font-size: 22px; font-weight: 600;
+      box-shadow: inset 0 -3px 0 rgba(0,0,0,.25);
+    }
+    .key small { display: block; font-size: 9px; color: var(--muted); font-weight: 500; letter-spacing: 1px; }
+    .call-btn {
+      width: 64px; height: 64px; border-radius: 50%; background: var(--accent);
+      margin-top: 16px; display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 6px 20px rgba(53,212,126,.4);
+    }
+    .call-btn svg { width: 28px; height: 28px; }
+
+    /* Features */
+    section.features { padding: 72px 0; }
+    h2 { font-size: clamp(26px, 4vw, 36px); font-weight: 800; text-align: center; letter-spacing: -.3px; }
+    .cards {
+      margin-top: 40px; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 18px;
+    }
+    .card {
+      background: var(--surface); border: 1px solid rgba(255,255,255,.07); border-radius: var(--radius);
+      padding: 26px 24px; transition: transform .15s, border-color .15s;
+    }
+    .card:hover { transform: translateY(-4px); border-color: rgba(53,212,126,.4); }
+    .card .ico {
+      width: 46px; height: 46px; border-radius: 12px; background: rgba(53,212,126,.14);
+      display: flex; align-items: center; justify-content: center; margin-bottom: 16px;
+    }
+    .card h3 { font-size: 17px; margin-bottom: 6px; }
+    .card p { color: var(--muted); font-size: 14.5px; }
+
+    /* Download / versions */
+    section.download { padding: 56px 0; text-align: center; }
+    .panel {
+      background: var(--surface); border: 1px solid rgba(255,255,255,.08);
+      border-radius: 20px; padding: 40px 28px; max-width: 680px; margin: 40px auto 0;
+    }
+    .panel h3 { font-size: 22px; margin-bottom: 10px; }
+    .panel p { color: var(--muted); margin-bottom: 24px; }
+    .chips { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; margin-bottom: 26px; }
+    .chip {
+      background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
+      padding: 8px 16px; border-radius: 999px; font-size: 13px; color: var(--muted);
+    }
+
+    /* Changelog */
+    section.changelog { padding: 56px 0 88px; }
+    .log {
+      max-width: 680px; margin: 34px auto 0; background: var(--surface);
+      border: 1px solid rgba(255,255,255,.07); border-radius: var(--radius); padding: 28px 30px;
+      text-align: left;
+    }
+    .log h4 { font-size: 18px; margin-bottom: 4px; }
+    .log .date { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+    .log ul { list-style: none; }
+    .log li { display: flex; gap: 12px; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,.05); font-size: 15px; }
+    .log li:last-child { border-bottom: none; }
+    .log li em { color: var(--accent); font-style: normal; }
+
+    footer { padding: 34px 0 48px; text-align: center; color: var(--muted); font-size: 13.5px; border-top: 1px solid rgba(255,255,255,.06); }
+    footer a { color: var(--muted); }
+    footer a:hover { color: var(--text); }
+
+    @media (max-width: 640px) {
+      header.hero { padding: 44px 0 56px; }
+      .phone { width: 230px; height: 470px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Nav -->
+  <nav class="wrap">
+    <div class="logo">
+      <svg width="34" height="34" viewBox="0 0 100 100">
+        <circle cx="50" cy="50" r="48" fill="#1a5e3a"/>
+        <path d="M35 25 l8 12 -7 8 c6 10 14 18 24 24 l8 -7 12 8 c3 2 2 7 -1 9 -10 8 -22 9 -33 3 -16 -8 -30 -22 -38 -38 -6 -11 -5 -23 3 -33 2 -3 7 -4 9 -1 z" fill="#fff"/>
+      </svg>
+      IPDial
+    </div>
+    <div class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#download">Download</a>
+      <a href="#changelog">Changelog</a>
+      <a href="https://github.com/nazimunaeem/IPDial">GitHub</a>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <header class="hero wrap">
+    <span class="badge">Now on v1.1.6</span>
+    <h1>Crystal-clear VoIP calls,<br /><span class="grad">right on your dialer.</span></h1>
+    <p class="sub">IPDial is a modern VoIP dialer for Android with a rotary keypad, smart contact suggestions, Pro features, and rock-solid SIP audio.</p>
+    <div class="cta-row">
+      <a class="btn" href="https://github.com/nazimunaeem/IPDial/releases/download/v1.1.6/IPDial-v1.1.6-Universal.apk" target="_blank" rel="noopener">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Download APK
+      </a>
+      <a class="btn ghost" href="#features">See what's new</a>
+    </div>
+    <p class="ver-note">Version <b>1.1.6</b> · 8.8 MB · Android 8.0+ · Free version with optional Pro</p>
+  </header>
+
+  <!-- Phone mockup -->
+  <div class="phone-wrap">
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="disp">555‑0142</div>
+        <div class="grid">
+          <div class="key">1</div><div class="key">2<small>ABC</small></div><div class="key">3<small>DEF</small></div>
+          <div class="key">4<small>GHI</small></div><div class="key">5<small>JKL</small></div><div class="key">6<small>MNO</small></div>
+          <div class="key">7<small>PQRS</small></div><div class="key">8<small>TUV</small></div><div class="key">9<small>WXYZ</small></div>
+          <div class="key">*</div><div class="key">0<small>+</small></div><div class="key">#</div>
+        </div>
+        <div class="call-btn">
+          <svg viewBox="0 0 24 24" fill="#04210f"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.8 21 3 13.2 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.2.2 2.4.6 3.6.1.3 0 .7-.2 1l-2.3 2.2z"/></svg>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Features -->
+  <section class="features wrap" id="features">
+    <h2>Everything you need to call</h2>
+    <div class="cards">
+      <div class="card">
+        <div class="ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#35d47e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 2 .7 2.9a2 2 0 0 1-.5 2.1L8 10a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.9.6 2.9.7a2 2 0 0 1 1.7 2z"/></svg></div>
+        <h3>Crystal-clear SIP audio</h3>
+        <p>Noise cancellation, codec management, and smart audio routing keep every call sharp.</p>
+      </div>
+      <div class="card">
+        <div class="ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#35d47e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>
+        <h3>Rotary keypad &amp; smart dial</h3>
+        <p>A classic rotary dial design with T9 contact search and one-tap call from suggestions.</p>
+      </div>
+      <div class="card">
+        <div class="ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#35d47e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
+        <h3>Multiple SIP accounts</h3>
+        <p>Manage several accounts with per-account balance, status, and Pro management.</p>
+      </div>
+      <div class="card">
+        <div class="ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#35d47e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l9 5-9 5-9-5 9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 17l9 5 9-5"/></svg></div>
+        <h3>Pro features</h3>
+        <p>Call recording, cloud-synced Pro points, and more — synced securely through Firebase.</p>
+      </div>
+      <div class="card">
+        <div class="ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#35d47e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div>
+        <h3>Call log &amp; recordings</h3>
+        <p>Full activity log with recordings (Pro), plus favorites and most-called shortcuts.</p>
+      </div>
+      <div class="card">
+        <div class="ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#35d47e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
+        <h3>Privacy first</h3>
+        <p>SIP credentials stay on your device. Optional Google sign-in syncs only what you choose.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Download -->
+  <section class="download wrap" id="download">
+    <h2>Get IPDial</h2>
+    <div class="panel">
+      <h3>Download the latest version</h3>
+      <p>Install the universal APK on any Android 8.0+ device (arm64 or armeabi-v7a).</p>
+      <div class="chips">
+        <span class="chip">v1.1.6</span>
+        <span class="chip">8.8 MB</span>
+        <span class="chip">Android 8.0+</span>
+        <span class="chip">Signed release</span>
+      </div>
+      <a class="btn" href="https://github.com/nazimunaeem/IPDial/releases/download/v1.1.6/IPDial-v1.1.6-Universal.apk" target="_blank" rel="noopener">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Download IPDial 1.1.6
+      </a>
+      <p style="margin-top:18px; font-size:13px;">
+        Want to update? Just install the new APK over the old one — your accounts and settings are kept.
+      </p>
+    </div>
+  </section>
+
+  <!-- Changelog -->
+  <section class="changelog wrap" id="changelog">
+    <h2>What's new</h2>
+    <div class="log">
+      <h4>v1.1.6</h4>
+      <div class="date">September 2026</div>
+      <ul>
+        <li><em>🆕</em> Rotary Dial Keypad with central call button</li>
+        <li><em>🆕</em> TopBar Balance Chip &amp; Account Indicator</li>
+        <li><em>🆕</em> Floating Pill Navigation Bar &amp; quick-access app menu</li>
+        <li><em>Improve</em> Back navigation across all sub-screens</li>
+        <li><em>Improve</em> Per-account Pro management &amp; volume control</li>
+        <li><em>Privacy</em> Updated policy — email collection for Pro + GitHub link</li>
+        <li><em>Fix</em> Call-screen polish &amp; UI/UX refinements</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer class="wrap">
+    <div>
+      <p>© 2026 IPDial · <a href="https://github.com/nazimunaeem/IPDial/blob/main/privacy_policy.md">Privacy Policy</a> · <a href="https://github.com/nazimunaeem/IPDial">GitHub</a></p>
+    </div>
+  </footer>
+
+</body>
+</html>
