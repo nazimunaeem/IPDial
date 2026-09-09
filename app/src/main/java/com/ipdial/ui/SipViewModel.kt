@@ -3,17 +3,24 @@ package com.ipdial.ui
 import android.app.Application
 import android.content.Context
 import android.content.Intent
+import android.database.ContentObserver
 import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
 import android.widget.Toast
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.gson.Gson
+import com.google.firebase.Timestamp
+import com.google.firebase.firestore.FirebaseFirestore
 import com.ipdial.data.model.AudioDeviceMode
 import com.ipdial.data.model.CallLogEntry
 import com.ipdial.data.model.CallSession
@@ -60,9 +67,12 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     // Firestore sync manager (initialized in init)
     private var firestoreSync: FirestorePointsSync? = null
 
-    // Auth repository (initialized in init)
-    lateinit var authRepo: AuthRepository
-        private set
+    // Auth repository. Initialized on first access (lazy) so R8 constructor
+    // inlining cannot reorder a mid-constructor assignment ahead of its reads.
+    val authRepo: AuthRepository by lazy { AuthRepository(app) }
+
+    // Firestore instance used for single-device session claiming.
+    private val firestore: FirebaseFirestore by lazy { FirebaseFirestore.getInstance() }
 
     val isSignedIn: StateFlow<Boolean>
     val currentUser: StateFlow<com.google.firebase.auth.FirebaseUser?>
@@ -77,7 +87,7 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     private val _hasBluetoothDevice = MutableStateFlow(false)
     val hasBluetoothDevice: StateFlow<Boolean> = _hasBluetoothDevice.asStateFlow()
 
-    private val _callVolume = MutableStateFlow(2.5f)
+    private val _callVolume = MutableStateFlow(com.ipdial.service.SipAudioController.DEFAULT_RX_VOLUME)
     val callVolume: StateFlow<Float> = _callVolume.asStateFlow()
 
     private val _showFullIncomingScreen = MutableStateFlow(false)
@@ -92,10 +102,10 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     val themeMode: StateFlow<ThemeMode> = repo.themeMode
         .stateIn(viewModelScope, SharingStarted.Eagerly, ThemeMode.System)
         
-    val callingCardsEnabled: StateFlow<Boolean> = repo.callingCardsEnabled
-        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
-        
     val dndEnabled: StateFlow<Boolean> = repo.dndEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    val googleSignInBannerDismissed: StateFlow<Boolean> = repo.googleSignInBannerDismissed
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     val globalVibrate: StateFlow<Boolean> = repo.globalVibrate
@@ -125,6 +135,48 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     val deviceId: StateFlow<String> = repo.deviceId.map { it ?: "" }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
+    val userCode: StateFlow<String> = repo.userCode.map { it ?: "" }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+
+    // Assigned in the init block once authRepo is ready.
+    val userEmail: StateFlow<String>
+    val userName: StateFlow<String>
+
+    // Single source of truth for the account ID shown to the user (About screen,
+    // GetPro referral card, profile chip). Uses the account-bound Firestore code
+    // (shortId) once synced, otherwise falls back to the Firebase UID prefix.
+    // Lazy, not lateinit: `isSignedIn`/`deviceId` are assigned in the init block,
+    // and R8 constructor inlining must not reorder this access ahead of them.
+    val userDisplayId: StateFlow<String> by lazy {
+        combine(userCode, isSignedIn, deviceId) { code, signedIn, devId ->
+            when {
+                code.isNotEmpty() -> code
+                signedIn -> authRepo.referralCode
+                else -> devId.take(6)
+            }
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, "")
+    }
+
+    // Whether THIS device is whitelisted to use Pro for the signed-in account.
+    // null = unknown / not signed in; false = signed in but Pro locked on this device.
+    private val _currentDeviceAuthorized = MutableStateFlow<Boolean?>(null)
+    val currentDeviceAuthorized: StateFlow<Boolean?> = _currentDeviceAuthorized.asStateFlow()
+
+    // How many devices are whitelisted for the signed-in account (used to show the
+    // "buy a device slot" row on ALL devices once the account spans > 1 device).
+    private val _authorizedDeviceCount = MutableStateFlow(0)
+    val authorizedDeviceCount: StateFlow<Int> = _authorizedDeviceCount.asStateFlow()
+
+    // How many devices have requested a slot but are not yet whitelisted. Lets the
+    // authorized device(s) know another device wants Pro (shows "buy a device slot").
+    private val _pendingDeviceCount = MutableStateFlow(0)
+    val pendingDeviceCount: StateFlow<Int> = _pendingDeviceCount.asStateFlow()
+
+    private suspend fun refreshDeviceSlots() {
+        _authorizedDeviceCount.value = firestoreSync?.getAuthorizedDeviceCount() ?: 0
+        _pendingDeviceCount.value = firestoreSync?.getPendingDeviceCount() ?: 0
+    }
+
     val proPoints: StateFlow<Int> = repo.proPoints
         .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
         
@@ -138,6 +190,12 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // Pro follows the ACCOUNT's subscription: usable wherever the signed-in
+    // account's expiration is still in the future. Device-slot bookkeeping
+    // (free/purchased whitelisted devices) is informational only — it must never
+    // revoke an already-paid-for expiration, otherwise a single account that
+    // signs in on a second device (or after its deviceId changed) would
+    // inexplicably lose Pro / be nagged to "buy a slot".
     val isPro: StateFlow<Boolean> = combine(proExpiration, _timeTicker) { exp, now ->
         exp > now
     }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
@@ -151,6 +209,14 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     val globalNoiseCancellation: StateFlow<Boolean> = repo.globalNoiseCancellation
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
+    // Global audio processing preferences (applied to all accounts)
+    val globalEcEnabled: StateFlow<Boolean> = repo.globalEcEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+    val globalNsEnabled: StateFlow<Boolean> = repo.globalNsEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+    val globalAgcEnabled: StateFlow<Boolean> = repo.globalAgcEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
     val deviceNoiseCancellationSupported: Boolean = try {
         android.media.audiofx.NoiseSuppressor.isAvailable()
     } catch (_: Throwable) {
@@ -161,9 +227,9 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         repo.setThemeMode(mode)
         if (!isPro.value) triggerAd(context)
     }
-    fun setCallingCards(enabled: Boolean) = viewModelScope.launch { repo.setCallingCards(enabled) }
     fun setDnd(enabled: Boolean) = viewModelScope.launch { repo.setDnd(enabled) }
     fun setGlobalVibrate(enabled: Boolean) = viewModelScope.launch { repo.setGlobalVibrate(enabled) }
+    fun dismissGoogleSignInBanner() = viewModelScope.launch { repo.dismissGoogleSignInBanner() }
     
     fun setFontSize(context: Context, multiplier: Float) = viewModelScope.launch { 
         repo.setFontSizeMultiplier(multiplier)
@@ -192,48 +258,159 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         repo.setGlobalNoiseCancellation(enabled)
         if (!isPro.value) triggerAd(context)
     }
+    fun setGlobalEcEnabled(context: Context, enabled: Boolean) = viewModelScope.launch {
+        repo.setGlobalEcEnabled(enabled)
+        if (!isPro.value) triggerAd(context)
+        reapplyGlobalAudioSettings()
+    }
+    fun setGlobalNsEnabled(context: Context, enabled: Boolean) = viewModelScope.launch {
+        repo.setGlobalNsEnabled(enabled)
+        if (!isPro.value) triggerAd(context)
+        reapplyGlobalAudioSettings()
+    }
+    fun setGlobalAgcEnabled(context: Context, enabled: Boolean) = viewModelScope.launch {
+        repo.setGlobalAgcEnabled(enabled)
+        if (!isPro.value) triggerAd(context)
+        reapplyGlobalAudioSettings()
+    }
+
+    /**
+     * Pushes the global audio-processing preferences into the SIP engine so new
+     * registrations/calls pick them up without requiring a re-registration.
+     */
+    fun reapplyGlobalAudioSettings() {
+        val ec = globalEcEnabled.value
+        val ns = globalNsEnabled.value
+        val agc = globalAgcEnabled.value
+        com.ipdial.service.SipEngine.applyGlobalAudioSettings(ec, ns, agc)
+    }
 
     suspend fun clearCallHistory() {
         logRepo.deleteAll()
     }
 
     fun getReferralCode(): String {
-        // Use Firebase UID short code if signed in, otherwise use deviceId
-        return if (authRepo.isSignedIn) authRepo.referralCode else deviceId.value.take(6)
+        // Use the account-bound 6-char user code if available, otherwise fall back
+        // to Firebase UID prefix or anonymous deviceId prefix.
+        val code = userCode.value
+        if (code.isNotEmpty()) return code
+        if (authRepo.isSignedIn) return authRepo.referralCode
+        return deviceId.value.take(6)
     }
 
     fun signIn(activityContext: Context, onComplete: (Boolean, String) -> Unit) {
         viewModelScope.launch {
             val result = authRepo.signIn(activityContext)
             if (result.isSuccess) {
-                val token = result.getOrNull()!!
-                authRepo.firebaseAuthWithGoogle(token)
+                val token = result.getOrNull().orEmpty()
+                if (token.isBlank()) {
+                    com.ipdial.util.SipLogger.log("SipViewModel", "Sign-in failed: no ID token returned by Credential Manager")
+                    withContext(Dispatchers.Main) { onComplete(false, "Sign-in failed: no ID token returned") }
+                    return@launch
+                }
+
+                // The Google credential was obtained, but Firebase must still
+                // exchange the ID token. If this silently fails (common on
+                // Android 15+ OEM devices such as OnePlus) the user appears
+                // signed-out even though the account picker "completed".
+                val authResult = authRepo.firebaseAuthWithGoogle(token)
+                if (authResult.isFailure) {
+                    val msg = authResult.exceptionOrNull()?.message ?: "unknown error"
+                    com.ipdial.util.SipLogger.log("SipViewModel", "firebaseAuthWithGoogle failed: $msg")
+                    withContext(Dispatchers.Main) { onComplete(false, "Sign-in failed: $msg") }
+                    return@launch
+                }
+
+                val uid = authRepo.currentUser.value?.uid
+                if (uid != null) {
+                    val myDeviceId = repo.getOrCreateDeviceId()
+
+                    // Record this device in the account's device-slot bookkeeping
+                    // (free first slot / optionally purchased slots). This is purely
+                    // bookkeeping: Pro eligibility is the account's expiration, so a
+                    // device that is not whitelisted still keeps Pro. We deliberately
+                    // do NOT claim a "sessions" document — that single-active-session
+                    // mechanism used to force sign-out of the other device, making
+                    // BOTH devices signed-out-but-points-syncing messes.
+                    val canUsePro = firestoreSync?.ensureFreeFirstDevice(myDeviceId) == true
+                    _currentDeviceAuthorized.value = canUsePro
+                    if (canUsePro) {
+                        repo.setProDeviceAuthorized(true, myDeviceId)
+                    } else {
+                        repo.setProDeviceAuthorized(false, null)
+                    }
+                    refreshDeviceSlots()
+
+                    // Generate or retrieve the account-bound 6-char user code and
+                    // upsert the user document (named by the new uid) storing the id,
+                    // device slot number, email and user name. Done after the free
+                    // first-device slot is claimed so the stored device slot is correct.
+                    try {
+                        val code = firestoreSync?.getOrCreateUserCode(uid) ?: ""
+                        if (code.isNotEmpty()) {
+                            repo.setUserCode(code)
+                            com.ipdial.util.SipLogger.log("SipViewModel", "User code: $code")
+                        }
+                    } catch (e: Exception) {
+                        com.ipdial.util.SipLogger.log("SipViewModel", "getOrCreateUserCode failed: ${e.message}")
+                    }
+                }
+
                 // Restart Firestore listening with new UID
                 firestoreSync?.startListening()
                 withContext(Dispatchers.Main) { onComplete(true, "Signed in") }
             } else {
-                withContext(Dispatchers.Main) { onComplete(false, "Sign-in cancelled") }
+                val reason = result.exceptionOrNull()?.message ?: "Sign-in cancelled"
+                com.ipdial.util.SipLogger.log("SipViewModel", "Credential Manager sign-in failed: $reason")
+                withContext(Dispatchers.Main) { onComplete(false, if (reason.isBlank()) "Sign-in cancelled" else reason) }
             }
         }
     }
 
     fun signOut() {
         viewModelScope.launch {
-            authRepo.signOut()
-            repo.setFirebaseUserId(null)
+            val uid = authRepo.currentUser.value?.uid
+            val myDeviceId = repo.deviceId.first().orEmpty()
+
+            if (uid != null && myDeviceId.isNotEmpty()) {
+                // Free this device's pending slot (if any) so the remaining
+                // authorized device(s) stop showing the "buy a slot" row instantly.
+                // uid is passed explicitly because auth is cleared right after.
+                firestoreSync?.removePendingDevice(uid, myDeviceId)
+            }
+
+            forceSignOutLocally()
         }
     }
 
-    fun deleteAccount(onComplete: (Boolean, String) -> Unit) {
+    /**
+     * Local sign-out. Stops cloud listeners, signs out Firebase, and wipes the
+     * locally cached pro points/days/UID so they cannot be carried over. The next
+     * sign-in re-syncs the account's points/expiration from Firestore.
+     */
+    private suspend fun forceSignOutLocally() {
+        _currentDeviceAuthorized.value = null
+        _authorizedDeviceCount.value = 0
+        _pendingDeviceCount.value = 0
+        firestoreSync?.stopListening()
+        authRepo.signOut()
+        repo.clearFirebaseUserData()
+    }
+
+    fun deleteAccount(activityContext: Context?, onComplete: (Boolean, String) -> Unit) {
         viewModelScope.launch {
-            val result = authRepo.deleteAccount()
+            val result = if (activityContext != null) {
+                authRepo.deleteAccount(activityContext)
+            } else {
+                authRepo.deleteAccount()
+            }
             if (result.isSuccess) {
                 repo.setFirebaseUserId(null)
                 repo.setProPoints(0)
                 repo.setProExpiration(0L)
                 withContext(Dispatchers.Main) { onComplete(true, "Account deleted") }
             } else {
-                withContext(Dispatchers.Main) { onComplete(false, "Delete failed") }
+                withContext(Dispatchers.Main) { onComplete(false, result.exceptionOrNull()?.message ?: "Delete failed") }
             }
         }
     }
@@ -275,6 +452,30 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     private val _adCooldownSeconds = MutableStateFlow(0)
     val adCooldownSeconds: StateFlow<Int> = _adCooldownSeconds.asStateFlow()
 
+    /**
+     * Purchase authorization for the CURRENT device to use Pro, at
+     * [FirestorePointsSync.DEVICE_SLOT_COST] points. If successful this device
+     * becomes authorized and can claim the active session.
+     */
+    fun buyDeviceSlot(onComplete: (Boolean, String) -> Unit) {
+        viewModelScope.launch {
+            val myDeviceId = repo.getOrCreateDeviceId()
+            val result = firestoreSync?.purchaseDeviceSlot(myDeviceId)
+            if (result?.success == true) {
+                // Reflect updated points (purchaseDeviceSlot already wrote it).
+                repo.setProDeviceAuthorized(true, myDeviceId)
+                _currentDeviceAuthorized.value = true
+                onComplete(true, result.message ?: "Device authorized")
+                refreshDeviceSlots()
+            } else {
+                onComplete(
+                    false,
+                    result?.message ?: "Could not buy a device slot. Make sure you're signed in and have ${FirestorePointsSync.DEVICE_SLOT_COST} points."
+                )
+            }
+        }
+    }
+
     private fun startAdCooldown() {
         viewModelScope.launch {
             _adCooldownSeconds.value = 5
@@ -287,9 +488,10 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun grantRewardedAdPoint() {
         viewModelScope.launch {
-            val newPoints = proPoints.value + 1
-            repo.setProPoints(newPoints)
-            try { firestoreSync?.incrementPoints(1) } catch (_: Exception) {}
+            try { firestoreSync?.incrementPoints(1) } catch (_: Exception) {
+                // Firestore unavailable — still grant the point locally.
+                repo.setProPoints(maxOf(0, proPoints.value + 1))
+            }
             _isLoadingAd.value = false
             startAdCooldown()
         }
@@ -301,17 +503,17 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (_isLoadingAd.value || _adCooldownSeconds.value > 0) return
         _isLoadingAd.value = true
-        android.util.Log.d("SipViewModel", "Starting rewarded ad flow")
+        android.util.Log.d("SipViewModel", "Starting rewarded video flow")
 
-        val rewardedAd = com.startapp.sdk.adsbase.StartAppAd(context)
-        
-        // Define common success logic for rewarded-video and fallback completion.
         val grantReward = {
-            android.util.Log.d("SipViewModel", "Granting 1 point for rewarded ad")
+            android.util.Log.d("SipViewModel", "Granting 1 point for ad")
             grantRewardedAdPoint()
             onReward()
         }
 
+        // Prefer a rewarded video. If no video is available, fall back to an
+        // interstitial and still grant the reward when it is closed.
+        val rewardedAd = com.startapp.sdk.adsbase.StartAppAd(context)
         rewardedAd.setVideoListener(object : com.startapp.sdk.adsbase.adlisteners.VideoListener {
             override fun onVideoCompleted() {
                 android.util.Log.d("SipViewModel", "Rewarded video completed")
@@ -319,40 +521,60 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
             }
         })
 
-        rewardedAd.loadAd(com.startapp.sdk.adsbase.StartAppAd.AdMode.REWARDED_VIDEO, object : com.startapp.sdk.adsbase.adlisteners.AdEventListener {
-            override fun onReceiveAd(ad: com.startapp.sdk.adsbase.Ad) {
-                android.util.Log.d("SipViewModel", "Rewarded ad received, showing...")
-                val showed = rewardedAd.showAd(object : com.startapp.sdk.adsbase.adlisteners.AdDisplayListener {
-                    override fun adDisplayed(ad: com.startapp.sdk.adsbase.Ad?) {}
-                    override fun adNotDisplayed(ad: com.startapp.sdk.adsbase.Ad?) {
-                        android.util.Log.w("SipViewModel", "Rewarded ad not displayed, trying interstitial fallback")
-                        triggerInterstitialAd(context, ignorePro = true) { success ->
-                            if (success) grantReward()
-                            else _isLoadingAd.value = false
+        rewardedAd.loadAd(
+            com.startapp.sdk.adsbase.StartAppAd.AdMode.REWARDED_VIDEO,
+            object : com.startapp.sdk.adsbase.adlisteners.AdEventListener {
+                override fun onReceiveAd(ad: com.startapp.sdk.adsbase.Ad) {
+                    android.util.Log.d("SipViewModel", "Rewarded video received, showing...")
+                    rewardedAd.showAd(object : com.startapp.sdk.adsbase.adlisteners.AdDisplayListener {
+                        override fun adDisplayed(ad: com.startapp.sdk.adsbase.Ad?) {}
+                        override fun adNotDisplayed(ad: com.startapp.sdk.adsbase.Ad?) {
+                            android.util.Log.w("SipViewModel", "Rewarded video not displayed")
+                            _isLoadingAd.value = false
                         }
-                    }
-                    override fun adClicked(ad: com.startapp.sdk.adsbase.Ad?) {}
-                    override fun adHidden(ad: com.startapp.sdk.adsbase.Ad?) {
-                        // For non-video rewarded ads (if any), handle completion here if VideoListener isn't triggered
-                    }
-                })
-                if (!showed) {
-                    android.util.Log.w("SipViewModel", "showAd() returned false for rewarded, trying interstitial fallback")
-                    triggerInterstitialAd(context, ignorePro = true) { success ->
-                        if (success) grantReward()
-                        else _isLoadingAd.value = false
-                    }
+                        override fun adClicked(ad: com.startapp.sdk.adsbase.Ad?) {}
+                        override fun adHidden(ad: com.startapp.sdk.adsbase.Ad?) {
+                            android.util.Log.d("SipViewModel", "Rewarded video closed")
+                            _isLoadingAd.value = false
+                        }
+                    })
+                }
+                override fun onFailedToReceiveAd(ad: com.startapp.sdk.adsbase.Ad?) {
+                    android.util.Log.w("SipViewModel", "No rewarded video available, falling back to interstitial")
+                    showFallbackInterstitialForReward(context, grantReward)
                 }
             }
-            override fun onFailedToReceiveAd(ad: com.startapp.sdk.adsbase.Ad?) {
-                android.util.Log.w("SipViewModel", "Failed to receive rewarded ad, trying interstitial fallback")
-                // Allow triggerInterstitialAd to run by not being blocked by _isLoadingAd check (which we remove below)
-                triggerInterstitialAd(context, ignorePro = true) { success ->
-                    if (success) grantReward()
-                    else _isLoadingAd.value = false
+        )
+    }
+
+    // Fallback when a rewarded video could not be loaded: show an interstitial
+    // and treat its dismissal as the completed reward gate.
+    private fun showFallbackInterstitialForReward(context: Context, grantReward: () -> Unit) {
+        val interstitial = com.startapp.sdk.adsbase.StartAppAd(context)
+        interstitial.loadAd(
+            com.startapp.sdk.adsbase.StartAppAd.AdMode.OVERLAY,
+            object : com.startapp.sdk.adsbase.adlisteners.AdEventListener {
+                override fun onReceiveAd(ad: com.startapp.sdk.adsbase.Ad) {
+                    android.util.Log.d("SipViewModel", "Fallback interstitial received, showing...")
+                    interstitial.showAd(object : com.startapp.sdk.adsbase.adlisteners.AdDisplayListener {
+                        override fun adDisplayed(ad: com.startapp.sdk.adsbase.Ad?) {}
+                        override fun adNotDisplayed(ad: com.startapp.sdk.adsbase.Ad?) {
+                            android.util.Log.w("SipViewModel", "Fallback interstitial not displayed")
+                            _isLoadingAd.value = false
+                        }
+                        override fun adClicked(ad: com.startapp.sdk.adsbase.Ad?) {}
+                        override fun adHidden(ad: com.startapp.sdk.adsbase.Ad?) {
+                            android.util.Log.d("SipViewModel", "Fallback interstitial closed, granting reward")
+                            grantReward()
+                        }
+                    })
+                }
+                override fun onFailedToReceiveAd(ad: com.startapp.sdk.adsbase.Ad?) {
+                    android.util.Log.e("SipViewModel", "Fallback interstitial also failed to load")
+                    _isLoadingAd.value = false
                 }
             }
-        })
+        )
     }
 
     fun triggerInterstitialAd(context: Context, ignorePro: Boolean = false, onComplete: ((Boolean) -> Unit)? = null) {
@@ -489,6 +711,11 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
 
      private val _pendingCallNumber = MutableStateFlow<String?>(null)
      val pendingCallNumber: StateFlow<String?> = _pendingCallNumber.asStateFlow()
+
+     // Set synchronously the moment the user requests a call, so a rapid double-tap
+     // on the dial button cannot race the asynchronous session creation in
+     // SipEngine.makeCallOnThread (which would spawn two concurrent PJSIP calls).
+     private val _isMakingCall = java.util.concurrent.atomic.AtomicBoolean(false)
 
      private val _isConnected = MutableStateFlow(true)
      val isConnected: StateFlow<Boolean> = _isConnected.asStateFlow()
@@ -641,12 +868,50 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
             repo.getOrCreateDeviceId()
         }
 
-        // Initialize Auth repository
-        authRepo = AuthRepository(app)
+        // Initialize Auth-backed state flows. authRepo itself is lazy (see its
+        // declaration) and initializes on first access here.
         isSignedIn = authRepo.currentUser.map { it != null }
             .stateIn(viewModelScope, SharingStarted.Eagerly, false)
         currentUser = authRepo.currentUser
             .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+        userEmail = authRepo.currentUser.map { it?.email ?: "" }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+        userName = authRepo.currentUser.map { it?.displayName ?: "" }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+
+        // Initialize Firestore sync for points/expiration
+        try {
+            firestoreSync = FirestorePointsSync(repo)
+            // Live device-slot state → UI. Fires from the snapshot listener
+            // whenever authorizedDevices / pendingDevices change, so the
+            // buy-slot row disappears the moment a pending device signs out —
+            // no manual refresh needed.
+            firestoreSync?.onDeviceSlotsChanged = { authorized, pending ->
+                _authorizedDeviceCount.value = authorized.size
+                _pendingDeviceCount.value = pending.size
+                val myDeviceId = deviceId.value
+                if (myDeviceId.isNotEmpty()) {
+                    _currentDeviceAuthorized.value = authorized.contains(myDeviceId)
+                }
+                android.util.Log.d("SipViewModel", "slots: authorized=${authorized.size} pending=${pending.size} me=$myDeviceId authorizedMe=${authorized.contains(myDeviceId)}")
+            }
+            firestoreSync?.startListening()
+        } catch (e: Throwable) {
+            android.util.Log.e("SipViewModel", "FirestorePointsSync init failed", e)
+        }
+
+        // Fast Pro on relaunch: if this device was already whitelisted in a
+        // previous session, unlock it locally right away (before the Firestore
+        // round-trip confirms), so a single-device account gets Pro instantly.
+        viewModelScope.launch {
+            val myDeviceId = repo.getOrCreateDeviceId()
+            val cachedAuthorized = repo.proDeviceAuthorized.first() &&
+                repo.proDeviceAuthorizedFor.first() == myDeviceId
+            if (cachedAuthorized) {
+                _currentDeviceAuthorized.value = true
+            }
+        }
 
         // Check for migration on first sign-in
         viewModelScope.launch {
@@ -659,14 +924,22 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                 firestoreSync?.migrateFromDeviceId(deviceId, firebaseUid)
                 repo.setFirebaseUserId(firebaseUid)
             }
-        }
 
-        // Initialize Firestore sync for points/expiration
-        try {
-            firestoreSync = FirestorePointsSync(repo)
-            firestoreSync?.startListening()
-        } catch (e: Throwable) {
-            android.util.Log.e("SipViewModel", "FirestorePointsSync init failed", e)
+            // If the user is already authenticated (auth persists across launches),
+            // reflect authorization state. `signIn()` also does this on a fresh sign-in.
+            // No "sessions" doc is claimed: Pro follows the account, so multiple
+            // devices can be signed in simultaneously without kicking each other out.
+            if (firebaseUid != null) {
+                val myDeviceId = repo.getOrCreateDeviceId()
+                // ensureFreeFirstDevice() already returns true when this device is
+                // whitelisted, so a separate isDeviceAuthorized round-trip is wasteful.
+                val authorized = firestoreSync?.ensureFreeFirstDevice(myDeviceId) == true
+                _currentDeviceAuthorized.value = authorized
+                if (authorized) {
+                    repo.setProDeviceAuthorized(true, myDeviceId)
+                }
+                refreshDeviceSlots()
+            }
         }
 
         // Clear keypad after call ends
@@ -681,6 +954,167 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
 
     private var callTimeoutJob: Job? = null
 
+    // Device call-volume bridge: the physical volume buttons drive both the app's
+    // PJSIP RX gain (guaranteed audible change) and the device's STREAM_VOICE_CALL
+    // volume (native HUD + OEM fallback), keeping the two in sync in both directions.
+    // On OEM builds (ColorOS/EMUI/MIUI) the system intercepts volume keys before the
+    // Activity ever sees them AND silently drops ContentObserver notifications, so a
+    // lightweight poller samples the streams directly while a call is active and
+    // bridges WHATEVER stream the OS actually moved into the PJSIP listening gain.
+    private var callVolumeObserverRegistered = false
+    @Volatile private var applyingDeviceVolume = false
+    // Timestamp of our own last volume change (hardware press, slider, or mirror).
+    // While we're actively changing volume ourselves the poller/observer must NOT
+    // re-bridge the stream echoes our writes produce, otherwise one press can
+    // apply 2-3 steps at once.
+    @Volatile private var lastSelfVolumeChangeAt = 0L
+    private var lastKnownVoiceVolume = -1
+    private var lastKnownMusicVolume = -1
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var volumePollerJob: Job? = null
+
+    // Map device 0..max -> in-app 0..6 and apply to the listening gain so the
+    // change stays audible even if the OS swallowed the key events.
+    private fun bridgeDeviceVolumeChange(idx: Int, max: Int, which: String) {
+        if (max <= 1) return
+        val factor = (idx.toFloat() / max.toFloat() * 6f).coerceIn(0f, 6f)
+        android.util.Log.d("SipViewModel", "Device volume ($which) changed to $idx/$max -> factor $factor")
+        _callVolume.value = factor
+        SipAudioController.setCallVolume(factor)
+    }
+
+    // Read both streams and bridge whichever changed since the last sample.
+    // Shared by the ContentObserver fast-path and the in-call poller; baselines
+    // guarantee an external change is applied exactly once. Any movement produced
+    // by our own writes within the last 800ms is ignored (baselines still adopt
+    // the values) so an echo can never compound into a multi-step jump.
+    private fun monitorDeviceVolume() {
+        if (applyingDeviceVolume) return
+        val active = callSession.value
+        if (active == null || active.state == CallState.DISCONNECTED) return
+        try {
+            val am = getApplication<Application>().getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val voiceMax = am.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
+            val voiceIdx = am.getStreamVolume(AudioManager.STREAM_VOICE_CALL)
+            val musicMax = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+            val musicIdx = am.getStreamVolume(AudioManager.STREAM_MUSIC)
+
+            if (android.os.SystemClock.elapsedRealtime() - lastSelfVolumeChangeAt < 800) {
+                // Echo of our own write: adopt values, do not re-bridge.
+                lastKnownVoiceVolume = voiceIdx
+                lastKnownMusicVolume = musicIdx
+                return
+            }
+
+            val voiceChanged = voiceMax > 1 && voiceIdx != lastKnownVoiceVolume
+            val musicChanged = musicMax > 1 && musicIdx != lastKnownMusicVolume
+            lastKnownVoiceVolume = voiceIdx
+            lastKnownMusicVolume = musicIdx
+
+            when {
+                voiceChanged -> bridgeDeviceVolumeChange(voiceIdx, voiceMax, "voice")
+                musicChanged -> bridgeDeviceVolumeChange(musicIdx, musicMax, "music")
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("SipViewModel", "Failed to monitor device volume", e)
+        }
+    }
+
+    private inner class VoiceVolumeObserver : ContentObserver(mainHandler) {
+        override fun onChange(selfChange: Boolean) {
+            if (selfChange) return
+            monitorDeviceVolume()
+        }
+    }
+    private val voiceVolumeObserver = VoiceVolumeObserver()
+
+    private fun registerVoiceVolumeObserver() {
+        if (callVolumeObserverRegistered) return
+        callVolumeObserverRegistered = true
+        try {
+            getApplication<Application>().contentResolver
+                .registerContentObserver(Settings.System.CONTENT_URI, true, voiceVolumeObserver)
+            val am = getApplication<Application>().getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            lastKnownVoiceVolume = am.getStreamVolume(AudioManager.STREAM_VOICE_CALL)
+            lastKnownMusicVolume = am.getStreamVolume(AudioManager.STREAM_MUSIC)
+            android.util.Log.d("SipViewModel", "Volume observer registered, voice=$lastKnownVoiceVolume music=$lastKnownMusicVolume")
+        } catch (e: Exception) {
+            android.util.Log.w("SipViewModel", "Failed to register voice-volume observer", e)
+        }
+    }
+
+    // Some OEMs never deliver Settings.System notifications for volume changes, so
+    // the active-call poller is the reliable fast-enough fallback that catches
+    // physical presses on every device.
+    private fun startVolumePoller() {
+        volumePollerJob?.cancel()
+        volumePollerJob = viewModelScope.launch {
+            while (true) {
+                monitorDeviceVolume()
+                kotlinx.coroutines.delay(500)
+            }
+        }
+    }
+
+    private fun stopVolumePoller() {
+        volumePollerJob?.cancel()
+        volumePollerJob = null
+    }
+
+    private fun unregisterVoiceVolumeObserver() {
+        if (!callVolumeObserverRegistered) return
+        callVolumeObserverRegistered = false
+        try {
+            getApplication<Application>().contentResolver
+                .unregisterContentObserver(voiceVolumeObserver)
+        } catch (e: Exception) {
+            android.util.Log.w("SipViewModel", "Failed to unregister voice-volume observer", e)
+        }
+    }
+
+    private fun mirrorToDeviceVoiceVolume(factor: Float) {
+        try {
+            lastSelfVolumeChangeAt = android.os.SystemClock.elapsedRealtime()
+            val am = getApplication<Application>().getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val max = am.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
+            if (max <= 0) return
+            val pjsipLevel = com.ipdial.service.SipAudioController.callVolumeToPjsipLevel(factor)
+            val idx = (pjsipLevel / 2f * max).toInt().coerceIn(0, max)
+            applyingDeviceVolume = true
+            try {
+                // FLAG_SHOW_UI surfaces the system volume panel so it visibly tracks
+                // the change; stream write may be silently ignored by some OEMs.
+                am.setStreamVolume(AudioManager.STREAM_VOICE_CALL, idx, AudioManager.FLAG_SHOW_UI)
+            } finally {
+                applyingDeviceVolume = false
+            }
+            // Adopt the ACTUAL value the system ended up with, not our target. If the
+            // OEM ignored the write this keeps the baseline honest so the in-call
+            // poller never treats our own (failed) write as a physical press.
+            lastKnownVoiceVolume = am.getStreamVolume(AudioManager.STREAM_VOICE_CALL)
+        } catch (e: Exception) {
+            android.util.Log.w("SipViewModel", "Failed to mirror to device voice volume", e)
+        }
+    }
+
+    // Mirrors the physical-button direction into the system's voice-call stream so
+    // the OEM's volume panel/bar visibly rises and falls with each press, then
+    // re-baselines the poller against whatever value the system actually applied.
+    private fun nudgeDeviceVoiceVolume(up: Boolean) {
+        try {
+            lastSelfVolumeChangeAt = android.os.SystemClock.elapsedRealtime()
+            val am = getApplication<Application>().getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            am.adjustStreamVolume(
+                AudioManager.STREAM_VOICE_CALL,
+                if (up) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER,
+                AudioManager.FLAG_SHOW_UI
+            )
+            lastKnownVoiceVolume = am.getStreamVolume(AudioManager.STREAM_VOICE_CALL)
+        } catch (e: Exception) {
+            android.util.Log.w("SipViewModel", "Failed to nudge device voice volume", e)
+        }
+    }
+
     private fun observeCallSession() {
         viewModelScope.launch {
             callSession.collect { session ->
@@ -688,6 +1122,8 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                 callTimeoutJob = null
 
                 if (session != null && session.state != CallState.DISCONNECTED) {
+                    registerVoiceVolumeObserver()
+                    startVolumePoller()
                     _showFullIncomingScreen.value = true
                     if (session.state == CallState.INCOMING || session.state == CallState.CALLING) {
                         // Update bluetooth availability when a call starts/comes in
@@ -715,6 +1151,8 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                         }
                     }
                 } else {
+                    stopVolumePoller()
+                    unregisterVoiceVolumeObserver()
                     _showFullIncomingScreen.value = false
                     // Reset to EARPIECE when call ends
                     _audioDeviceMode.value = AudioDeviceMode.EARPIECE
@@ -869,8 +1307,8 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
              return
          }
 
-         if (callSession.value != null) {
-             com.ipdial.util.SipLogger.log("SipViewModel", "makeCall: call already in progress, ignoring (state=${callSession.value?.state})")
+         if (callSession.value != null || !_isMakingCall.compareAndSet(false, true)) {
+             com.ipdial.util.SipLogger.log("SipViewModel", "makeCall: call already in progress or in-flight, ignoring (state=${callSession.value?.state}, isMakingCall=${_isMakingCall.get()})")
              Toast.makeText(getApplication(), "A call is already in progress", Toast.LENGTH_SHORT).show()
              return
          }
@@ -963,18 +1401,25 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                             "SipViewModel",
                             "Telecom call confirmed - session created (state=${callSession.value?.state})"
                         )
+                        _isMakingCall.set(false)
                     }
                 }
             } else {
                 com.ipdial.util.SipLogger.log("SipViewModel", "Calling direct via SipEngine")
                 launchDirectCall(account, finalUri)
             }
+         } else {
+             // A session appeared between the pre-flight check and dispatch (e.g. a
+             // concurrent incoming call). Release the in-flight latch so calls aren't
+             // permanently blocked.
+             _isMakingCall.set(false)
          }
      }
 
     private fun launchDirectCall(account: SipAccount, uri: String) {
         viewModelScope.launch(Dispatchers.IO) {
             val engineStarted = SipEngine.makeCall(account.id, uri)
+            _isMakingCall.set(false)
             if (!engineStarted) {
                 withContext(Dispatchers.Main) {
                     Toast.makeText(getApplication(), "Call not sent", Toast.LENGTH_SHORT).show()
@@ -1036,9 +1481,30 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
      fun toggleHold() { SipAudioController.holdCall(!(callSession.value?.isOnHold ?: false)) }
 
      fun setCallVolume(factor: Float) {
+         lastSelfVolumeChangeAt = android.os.SystemClock.elapsedRealtime()
          _callVolume.value = factor
          SipAudioController.setCallVolume(factor)
+         // Keep the device's native call-volume stream in sync so the change is
+         // reflected in the system HUD and any OEM that consumes the key events
+         // still produces an audible change.
+         mirrorToDeviceVoiceVolume(factor)
      }
+
+    /**
+     * Adjusts the in-app call volume (PJSIP RX gain) from the physical volume
+     * buttons. Available the moment a call is placed (dialing/ringing/active).
+     */
+    fun adjustCallVolumeByHardware(up: Boolean) {
+        // Consistent ±1 per physical press on the 0..6 in-app scale.
+        val step = 1f
+        val newVol = (if (up) _callVolume.value + step else _callVolume.value - step)
+            .coerceIn(0f, 6f)
+        android.util.Log.d("SipViewModel", "adjustCallVolumeByHardware: up=$up -> ${_callVolume.value} -> $newVol call=${callSession.value?.state}")
+        setCallVolume(newVol)
+        // Nudge the system voice-call stream in the same direction so the OEM's
+        // volume bar/HUD visibly tracks the physical key.
+        nudgeDeviceVoiceVolume(up)
+    }
 
      fun setShowFullIncomingScreen(show: Boolean) {
          _showFullIncomingScreen.value = show
@@ -1114,22 +1580,49 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         val session = callSession.value ?: return
         if (session.isRecording) {
             SipAudioController.stopRecording()
-        } else {
-            // Priority: Internal storage as requested
-            val baseDir = getApplication<Application>().getExternalFilesDir(android.os.Environment.DIRECTORY_MUSIC)
-            val folder = java.io.File(baseDir, "IPDialRecordings")
-            try {
-                if (!folder.exists()) folder.mkdirs()
-                val sdf = java.text.SimpleDateFormat("yyyyMMddHHmmss", java.util.Locale.US)
-                val dateStr = sdf.format(java.util.Date())
-                val num = session.remoteUri.replace("<", "").replace(">", "").removePrefix("sip:").substringBefore("@").substringBefore(";")
-                val cleanNum = num.filter { it.isLetterOrDigit() || it == '+' }
-                val recFile = java.io.File(folder, "IPDial_${cleanNum}_${dateStr}.wav")
-                // Using PJSIP internal WAV recorder (AAC natively locked by SIP mic)
-                SipAudioController.startRecording(recFile.absolutePath)
-            } catch (e: Exception) {
-                android.util.Log.e("SipViewModel", "Recording failed", e)
+            return
+        }
+        listOf(
+            CallState.CALLING, CallState.EARLY, CallState.INCOMING, CallState.CONNECTING
+        ).any { it == session.state } .let { whileDialing ->
+            if (whileDialing) {
+                // Recording armed during dialing/ringing: start once the call is received.
+                startRecordingWhenActive(session)
+            } else {
+                startRecording(session)
             }
+        }
+    }
+
+    private fun startRecording(session: CallSession) {
+        val baseDir = getApplication<Application>().getExternalFilesDir(android.os.Environment.DIRECTORY_MUSIC)
+        val folder = java.io.File(baseDir, "IPDialRecordings")
+        try {
+            if (!folder.exists()) folder.mkdirs()
+            val sdf = java.text.SimpleDateFormat("yyyyMMddHHmmss", java.util.Locale.US)
+            val dateStr = sdf.format(java.util.Date())
+            val num = session.remoteUri.replace("<", "").replace(">", "").removePrefix("sip:").substringBefore("@").substringBefore(";")
+            val cleanNum = num.filter { it.isLetterOrDigit() || it == '+' }
+            val recFile = java.io.File(folder, "IPDial_${cleanNum}_${dateStr}.wav")
+            SipAudioController.startRecording(recFile.absolutePath)
+        } catch (e: Exception) {
+            android.util.Log.e("SipViewModel", "Recording failed", e)
+        }
+    }
+
+    private fun startRecordingWhenActive(session: CallSession) {
+        val baseDir = getApplication<Application>().getExternalFilesDir(android.os.Environment.DIRECTORY_MUSIC)
+        val folder = java.io.File(baseDir, "IPDialRecordings")
+        try {
+            if (!folder.exists()) folder.mkdirs()
+            val sdf = java.text.SimpleDateFormat("yyyyMMddHHmmss", java.util.Locale.US)
+            val dateStr = sdf.format(java.util.Date())
+            val num = session.remoteUri.replace("<", "").replace(">", "").removePrefix("sip:").substringBefore("@").substringBefore(";")
+            val cleanNum = num.filter { it.isLetterOrDigit() || it == '+' }
+            val recFile = java.io.File(folder, "IPDial_${cleanNum}_${dateStr}.wav")
+            SipAudioController.startRecordingWhenActive(recFile.absolutePath)
+        } catch (e: Exception) {
+            android.util.Log.e("SipViewModel", "Recording failed", e)
         }
     }
 

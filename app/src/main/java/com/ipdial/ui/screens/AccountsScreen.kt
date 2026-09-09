@@ -56,12 +56,16 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 
+import com.ipdial.data.model.RegStatus
 import com.ipdial.data.model.SipAccount
 import com.ipdial.data.model.Transport
 import com.ipdial.ui.components.IPDialTopBar
@@ -153,9 +157,10 @@ fun AccountsScreen(
                 vm = vm,
                 existing = editingAccount,
                 defaultDomain = defaultDomain,
-                onSave = { 
-                    vm.saveAccount(it)
-                    showEditSheet = false 
+                onSave = { account ->
+                    vm.saveAccount(account)
+                    // Sheet stays open: it observes live registration status and
+                    // dismisses itself once the account registers successfully.
                 },
                 onDismiss = { showEditSheet = false }
             )
@@ -262,10 +267,53 @@ fun AccountEditSheet(
     var port      by remember { mutableStateOf(existing?.port?.toString() ?: "") }
     var transport by remember { mutableStateOf(existing?.transport ?: Transport.UDP) }
     var userManuallySelectedTransport by remember { mutableStateOf(existing != null) }
-    var ecEnabled by remember { mutableStateOf(existing?.ecEnabled ?: true) }
-    var nsEnabled by remember { mutableStateOf(existing?.nsEnabled ?: true) }
-    var agcEnabled by remember { mutableStateOf(existing?.agcEnabled ?: true) }
     var showPass  by remember { mutableStateOf(false) }
+
+    // Inline validation error states
+    var usernameError by remember { mutableStateOf(false) }
+    var passwordError by remember { mutableStateOf(false) }
+    var domainError  by remember { mutableStateOf(false) }
+
+    // Save/registration feedback
+    var isSaving by remember { mutableStateOf(false) }
+    var regStatusText by remember { mutableStateOf<String?>(null) }
+    var regStatusError by remember { mutableStateOf(false) }
+    var savedAccountId by remember { mutableStateOf<String?>(null) }
+    var lastObservedStatus by remember { mutableStateOf<RegStatus?>(null) }
+
+    val keyboard = LocalSoftwareKeyboardController.current
+
+    // Observe live registration status so the sheet can show progress and auto-close
+    // once the account actually registers (or show the error and let the user fix it).
+    val allAccounts by vm.accounts.collectAsState()
+    LaunchedEffect(savedAccountId, allAccounts) {
+        val id = savedAccountId ?: return@LaunchedEffect
+        val live = allAccounts.firstOrNull { it.id == id } ?: return@LaunchedEffect
+        when (live.regStatus) {
+            RegStatus.REGISTERED -> {
+                // Auto-close only on a transition INTO REGISTERED.
+                // If the account was already registered before this save and nothing
+                // meaningful changed, keep the sheet open so the edit UI stays usable.
+                if (lastObservedStatus != RegStatus.REGISTERED) {
+                    isSaving = false
+                    regStatusText = "Registered"
+                    regStatusError = false
+                    savedAccountId = null
+                    onDismiss()
+                }
+            }
+            RegStatus.ERROR -> {
+                isSaving = false
+                regStatusText = live.regStatusText.ifBlank {
+                    "Registration failed — check username/password"
+                }
+                regStatusError = true
+                savedAccountId = null
+            }
+            else -> {} // REGISTERING / UNREGISTERED: keep waiting
+        }
+        lastObservedStatus = live.regStatus
+    }
 
     val savedLabels by vm.repo.savedLabels.collectAsState(initial = emptyList<String>())
     val savedHosts by vm.repo.savedHosts.collectAsState(initial = emptyList<String>())
@@ -273,8 +321,10 @@ fun AccountEditSheet(
     val suggestedHosts = listOf("103.129.202.202", "103.170.231.10", "sip.amarip.net").plus(savedHosts).distinct()
 
     // Auto-detect transport based on domain, proxy, and port unless user manually changed it
+    // Note: on edit (existing != null) we leave the account's stored transport untouched —
+    // auto-detect only kicks in for newly typed values after the user edits them.
     LaunchedEffect(domain, proxy, port) {
-        if (!userManuallySelectedTransport) {
+        if (!userManuallySelectedTransport && existing == null) {
             val isSips = domain.startsWith("sips:", ignoreCase = true) || proxy.startsWith("sips:", ignoreCase = true) || domain.contains("transport=tls", ignoreCase = true) || proxy.contains("transport=tls", ignoreCase = true)
             val isTcp = domain.contains("transport=tcp", ignoreCase = true) || proxy.contains("transport=tcp", ignoreCase = true)
             val parsedPort = port.toIntOrNull()
@@ -326,6 +376,7 @@ fun AccountEditSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -345,16 +396,24 @@ fun AccountEditSheet(
             )
             SuggestionChips(suggestions = suggestedLabels, current = label) { label = it }
             OutlinedTextField(
-                value = username, onValueChange = { username = it },
+                value = username, onValueChange = { username = it; if (it.isNotBlank()) usernameError = false },
                 label = { Text("SIP Username *") },
                 singleLine = true,
+                isError = usernameError,
+                supportingText = if (usernameError) {
+                    { Text("Username is required") }
+                } else null,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
                 modifier = Modifier.fillMaxWidth()
             )
             OutlinedTextField(
-                value = password, onValueChange = { password = it },
+                value = password, onValueChange = { password = it; if (it.isNotBlank()) passwordError = false },
                 label = { Text("Password *") },
                 singleLine = true,
+                isError = passwordError,
+                supportingText = if (passwordError) {
+                    { Text("Password is required") }
+                } else null,
                 visualTransformation = if (showPass) VisualTransformation.None else PasswordVisualTransformation(),
                 trailingIcon = {
                     IconButton(onClick = { showPass = !showPass }) {
@@ -365,9 +424,13 @@ fun AccountEditSheet(
             )
             OutlinedTextField(
                 value = domain,
-                onValueChange = { domain = it },
+                onValueChange = { domain = it; if (it.isNotBlank()) domainError = false },
                 label = { Text("SIP Domain / Server *") },
                 singleLine = true,
+                isError = domainError,
+                supportingText = if (domainError) {
+                    { Text("Domain is required") }
+                } else null,
                 modifier = Modifier.fillMaxWidth()
             )
             SuggestionChips(suggestions = suggestedHosts, current = domain) { domain = it }
@@ -406,39 +469,59 @@ fun AccountEditSheet(
                 }
             }
 
+            // Audio quality is configured globally in Settings (Call Audio Quality).
+
             Spacer(Modifier.height(8.dp))
 
+            if (regStatusText != null) {
+                Text(
+                    text = regStatusText ?: "",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (regStatusError) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) {
+                OutlinedButton(onClick = { keyboard?.hide(); onDismiss() }, modifier = Modifier.weight(1f)) {
                     Text("Cancel")
                 }
                 Button(
+                    enabled = !isSaving,
                     onClick = {
+                        keyboard?.hide()
                         val trimmedUser = username.trim()
                         val trimmedPass = password.trim()
                         val trimmedDomain = domain.trim()
-                        if (trimmedUser.isNotBlank() && trimmedPass.isNotBlank() && trimmedDomain.isNotBlank()) {
-                            onSave(
-                                (existing ?: SipAccount()).copy(
-                                    label = label.trim(),
-                                    username = trimmedUser,
-                                    password = trimmedPass,
-                                    domain = trimmedDomain,
-                                    proxy = proxy.trim(),
-                                    port = port.trim().toIntOrNull(),
-                                    transport = transport,
-                                    codec = existing?.codec,
-                                    enabledCodecs = existing?.enabledCodecs ?: com.ipdial.data.model.DEFAULT_ENABLED_CODECS,
-                                    ecEnabled = ecEnabled,
-                                    nsEnabled = nsEnabled,
-                                    agcEnabled = agcEnabled
-                                )
-                            )
+                        usernameError = trimmedUser.isBlank()
+                        passwordError = trimmedPass.isBlank()
+                        domainError = trimmedDomain.isBlank()
+                        if (usernameError || passwordError || domainError) return@Button
+
+                        val regAccount = (existing ?: SipAccount()).copy(
+                            label = label.trim(),
+                            username = trimmedUser,
+                            password = trimmedPass,
+                            domain = trimmedDomain,
+                            proxy = proxy.trim(),
+                            port = port.trim().toIntOrNull(),
+                            transport = transport,
+                            codec = existing?.codec,
+                            enabledCodecs = existing?.enabledCodecs ?: com.ipdial.data.model.DEFAULT_ENABLED_CODECS
+                        )
+                        if (existing == null || regAccount != existing) {
+                            isSaving = true
+                            regStatusText = "Registering…"
+                            regStatusError = false
+                            savedAccountId = regAccount.id
+                            lastObservedStatus = null
+                            onSave(regAccount)
                         }
                     },
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text("Register")
+                    Text(if (isSaving) "Saving…" else "Register")
                 }
             }
         }

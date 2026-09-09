@@ -6,6 +6,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
@@ -81,18 +82,27 @@ fun PulsingStateLabel(state: CallState, showShadow: Boolean = false) {
         shadow = if (showShadow) Shadow(Color.Black, Offset(1f, 1f), 4f) else null
     )
 
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            text = label,
-            style = style,
-            color = color.copy(alpha = alpha)
-        )
-        // Fixed width box for dots to prevent layout jitter
-        Box(modifier = Modifier.width(24.dp)) {
-            Row {
-                Text(text = ".", style = style, color = color.copy(alpha = dot1Alpha * alpha))
-                Text(text = ".", style = style, color = color.copy(alpha = dot2Alpha * alpha))
-                Text(text = ".", style = style, color = color.copy(alpha = dot3Alpha * alpha))
+    // Center the label; dots sit immediately to its right without
+    // shifting the label away from center.
+    Box(contentAlignment = Alignment.Center) {
+        Row(
+            modifier = Modifier.width(IntrinsicSize.Min),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Invisible dots on the left to balance the visible ones on the right
+            Box(modifier = Modifier.width(24.dp))
+            Text(
+                text = label,
+                style = style,
+                color = color.copy(alpha = alpha)
+            )
+            // Visible animated dots on the right
+            Box(modifier = Modifier.width(24.dp)) {
+                Row {
+                    Text(text = ".", style = style, color = color.copy(alpha = dot1Alpha * alpha))
+                    Text(text = ".", style = style, color = color.copy(alpha = dot2Alpha * alpha))
+                    Text(text = ".", style = style, color = color.copy(alpha = dot3Alpha * alpha))
+                }
             }
         }
     }

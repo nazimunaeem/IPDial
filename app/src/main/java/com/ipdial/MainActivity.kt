@@ -27,9 +27,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.CardGiftcard
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Contacts
 import androidx.compose.material.icons.filled.Dialpad
 import androidx.compose.material.icons.filled.Home
@@ -89,14 +90,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -105,6 +109,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.ipdial.R
 import com.ipdial.data.model.CallDirection
 import com.ipdial.data.model.CallSession
 import com.ipdial.data.model.CallState
@@ -171,6 +176,60 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        handledVolumeDownTimes.clear()
+    }
+
+    // Volume presses whose ACTION_DOWN was already handled by this activity.
+    // Some OEM builds (ColorOS/EMUI) swallow the ACTION_DOWN of volume buttons
+    // while a call is active and only forward the ACTION_UP, so we fall back to
+    // handling the UP event for presses we never saw a DOWN for. Keyed on
+    // event.downTime so each physical press adjusts exactly once.
+    // Volume presses whose ACTION_DOWN was already handled by this activity.
+    // Some OEM builds (ColorOS/EMUI) swallow the ACTION_DOWN of volume buttons
+    // while a call is active and only forward the ACTION_UP, so we fall back to
+    // handling the UP event for presses we never saw a DOWN for. Keyed on
+    // event.downTime so each physical press adjusts exactly once.
+    private val handledVolumeDownTimes = java.util.Collections.synchronizedCollection(
+        java.util.LinkedHashSet<Long>()
+    )
+
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        // Whenever ANY call screen is visible (incoming, dialing/ringing, or an
+        // active connected call), redirect the physical volume buttons to the
+        // in-app call volume (PJSIP RX gain). Both ACTION_DOWN and ACTION_UP are
+        // consumed so the system never ALSO adjusts the SIP-unused voice-call
+        // stream or pops its volume HUD over the call screen. When no call screen
+        // is visible the event falls through to the default media-volume handling.
+        val isVolumeKey = event.keyCode == android.view.KeyEvent.KEYCODE_VOLUME_UP ||
+            event.keyCode == android.view.KeyEvent.KEYCODE_VOLUME_DOWN
+        if (isVolumeKey && isCallScreenVisible(vm.callSession.value)) {
+            val up = event.keyCode == android.view.KeyEvent.KEYCODE_VOLUME_UP
+            when (event.action) {
+                android.view.KeyEvent.ACTION_DOWN -> {
+                    // Normal devices deliver the DOWN first. Record it so the
+                    // matching UP is not double-counted, then adjust.
+                    handledVolumeDownTimes.add(event.downTime)
+                    vm.adjustCallVolumeByHardware(up)
+                }
+                android.view.KeyEvent.ACTION_UP -> {
+                    // Oplus/OEM builds may never have delivered our DOWN. If we
+                    // never handled this press, adjust now (exactly once).
+                    if (!handledVolumeDownTimes.remove(event.downTime)) {
+                        vm.adjustCallVolumeByHardware(up)
+                    }
+                }
+            }
+            // Keep the down-times set bounded (each entry is one physical press).
+            if (handledVolumeDownTimes.size > 64) {
+                handledVolumeDownTimes.clear()
+            }
+            return true
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
@@ -191,15 +250,11 @@ class MainActivity : ComponentActivity() {
             val callSession by vm.callSession.collectAsState()
             val localView = LocalView.current
             
-            var launchedForCall by remember { mutableStateOf(intent?.action == "com.ipdial.ACTION_INCOMING_CALL" || intent?.action == "com.ipdial.ACTION_SHOW_CALL") }
-            var hasSeenActiveCall by remember { mutableStateOf(false) }
-            
             LaunchedEffect(callSession) {
                 val window = (localView.context as? android.app.Activity)?.window
                 val activity = localView.context as? android.app.Activity
-                val isActiveCall = callSession?.state != null && callSession?.state != CallState.DISCONNECTED
+                val isActiveCall = isCallScreenVisible(callSession)
                 if (isActiveCall) {
-                    hasSeenActiveCall = true
                     activity?.volumeControlStream = android.media.AudioManager.STREAM_VOICE_CALL
                     window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
@@ -219,10 +274,8 @@ class MainActivity : ComponentActivity() {
                         android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
                         android.view.WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
                     )
-                    if (hasSeenActiveCall && launchedForCall) {
-                        launchedForCall = false
-                        activity?.moveTaskToBack(true)
-                    }
+                    // Keep the app in the foreground after hangup so users return
+                    // to the in-app screen instead of being sent to the launcher.
                 }
             }
 
@@ -549,6 +602,28 @@ fun AppScaffold(
             )
         }
 
+        // Sign-in-for-Pro offer for signed-out users — points & Pro only survive
+        // reinstall/data-clear if backed up to their Google account via Firestore.
+        // Shown on Home tab only, until dismissed.
+        if (currentRoute == NavDest.Home.route) {
+            GoogleSignInBackupBanner(
+                vm = vm,
+                onOpenGetPro = {
+                    navController.graph.let { graph ->
+                        navController.navigate(NavDest.GetPro.route) {
+                            popUpTo(graph.findStartDestination().id) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    }
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(bottom = 72.dp, start = 16.dp, end = 16.dp)
+            )
+        }
+
         val showProPopup by vm.showProBlockPopup.collectAsState()
         if (showProPopup) {
             AlertDialog(
@@ -603,6 +678,16 @@ fun AppScaffold(
     }
 }
 
+/**
+ * True while ANY call screen is visible to the user (incoming call screen,
+ * outgoing dialing/ringing screen, or an active connected call screen). This is
+ * the single source of truth used by the call overlay, the volume-button
+ * interception, and the volume-control-stream / keep-screen-on logic so they can
+ * never drift apart.
+ */
+private fun isCallScreenVisible(session: CallSession?): Boolean =
+    session != null && session.state != CallState.DISCONNECTED
+
 @Composable
 fun AppMainContent(
     vm: SipViewModel,
@@ -618,7 +703,7 @@ fun AppMainContent(
     
     // Logic: Always show CallOverlay if there is an active call (incoming OR outgoing)
     // regardless of showFullIncomingScreen flag, as long as it's not disconnected.
-    val hasActiveCall = callSession != null && callSession.state != CallState.DISCONNECTED
+    val hasActiveCall = isCallScreenVisible(callSession)
     
     if (hasActiveCall) {
         CallOverlay(vm, callSession!!)
@@ -798,6 +883,135 @@ fun AppNavHost(
                 onBack = { navController.popBackStack() },
                 onOpenDrawer = onOpenMenu
             )
+        }
+    }
+}
+
+/**
+ * Persistent top banner shown to existing Pro users who haven't signed in with
+ * Google. Their points and Pro subscription only survive reinstall /
+ * data-clear if synced to their Google account via Firestore — so we encourage
+ * them to sign in to avoid losing anything.
+ */
+@Composable
+private fun GoogleSignInBackupBanner(
+    vm: SipViewModel,
+    modifier: Modifier = Modifier,
+    onOpenGetPro: () -> Unit = {}
+) {
+    val isPro by vm.isPro.collectAsState()
+    val isSignedIn by vm.isSignedIn.collectAsState()
+    var dismissed by remember { mutableStateOf(false) }
+    var isSigningIn by remember { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    // Signed-in users don't need the offer; dismissed hides it for this visit.
+    if (dismissed || isSignedIn) return
+
+    val title = if (isPro) {
+        "You're Pro — secure it with Google"
+    } else {
+        "Go Pro free — sign in with Google"
+    }
+    val subtitle = if (isPro) {
+        "Sign in to keep your points & Pro subscription safe on any device. Don't lose them!"
+    } else {
+        "Sign in to earn points, unlock Pro features, and keep them on any device."
+    }
+
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = Color.Transparent,
+        shadowElevation = 6.dp,
+        onClick = onOpenGetPro,
+        modifier = modifier.fillMaxWidth()
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    Brush.horizontalGradient(
+                        colors = listOf(Color(0xFF8E2DE2), Color(0xFF4A00E0))
+                    )
+                )
+                .padding(start = 12.dp, end = 6.dp, top = 8.dp, bottom = 8.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                // Google "G" avatar
+                Surface(
+                    shape = CircleShape,
+                    color = Color.White,
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            painter = painterResource(com.ipdial.R.drawable.ic_google_g),
+                            contentDescription = "Google",
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+
+                Spacer(Modifier.width(12.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                        color = Color.White
+                    )
+                    Text(
+                        subtitle,
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                        color = Color.White.copy(alpha = 0.9f)
+                    )
+                }
+
+                Spacer(Modifier.width(8.dp))
+
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color.White,
+                    onClick = {
+                        if (!isSigningIn) {
+                            isSigningIn = true
+                            vm.signIn(context) { success, msg ->
+                                isSigningIn = false
+                                if (!success && msg.isNotBlank()) {
+                                    android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        }
+                    },
+                    enabled = !isSigningIn
+                ) {
+                    Text(
+                        text = if (isSigningIn) "Signing in..." else "Sign in",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF4A00E0)
+                        ),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    )
+                }
+
+                Spacer(Modifier.width(4.dp))
+
+                IconButton(
+                    onClick = { dismissed = true },
+                    modifier = Modifier.size(28.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Dismiss",
+                        tint = Color.White.copy(alpha = 0.7f),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
         }
     }
 }

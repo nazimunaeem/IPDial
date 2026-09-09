@@ -87,25 +87,32 @@ class SipAudioRouter(
         // is much longer on speakerphone (especially on low-end / Chinese OEM devices
         // with large chassis). 600 ms covers even the worst cases.
         // Only apply if hardware AEC is NOT available to avoid double-processing.
-        try {
-            val hasHwAec = try { android.media.audiofx.AcousticEchoCanceler.isAvailable() } catch(e: Exception) { false }
-            val isEmulator = com.ipdial.util.DeviceUtil.isEmulator()
-            
-            if (!hasHwAec || isEmulator) {
+        val hasHwAec = try { android.media.audiofx.AcousticEchoCanceler.isAvailable() } catch(e: Exception) { false }
+        val isEmulator = com.ipdial.util.DeviceUtil.isEmulator()
+
+        if (!hasHwAec || isEmulator) {
+            // setEcOptions is a pjlib call and MUST run on the registered PJSIP
+            // thread; calling it from an unregistered coroutine thread aborts
+            // pjsua (pj_thread_this() assertion). runOnPjsipThread posts it to
+            // the PJSIP thread where registerCurrentThreadEx() makes it safe.
+            SipEngine.runOnPjsipThread {
+                SipEngine.registerCurrentThreadEx()
                 synchronized(SipEngine.pjsipLock) {
-                    val adm = SipEngine.endpoint?.audDevManager()
-                    if (adm != null) {
-                        // The bundled software EC can crash inside AudioRecord on
-                        // Android devices, so rely on the platform audio path.
-                        adm.setEcOptions(0, 0)
-                        Log.d(TAG, "EC tail set to ${if (on) 600 else 500} ms (speaker=$on)")
+                    try {
+                        val adm = SipEngine.endpoint?.audDevManager()
+                        if (adm != null) {
+                            // The bundled software EC can crash inside AudioRecord on
+                            // Android devices, so rely on the platform audio path.
+                            adm.setEcOptions(0, 0)
+                            Log.d(TAG, "EC tail set to ${if (on) 600 else 500} ms (speaker=$on)")
+                        }
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "Failed to adjust EC tail for speaker=$on: ${e.message}")
                     }
                 }
-            } else {
-                Log.d(TAG, "Hardware AEC active, skipping software EC adjustment for speaker.")
             }
-        } catch (e: Throwable) {
-            Log.w(TAG, "Failed to adjust EC tail for speaker=$on: ${e.message}")
+        } else {
+            Log.d(TAG, "Hardware AEC active, skipping software EC adjustment for speaker.")
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {

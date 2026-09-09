@@ -24,7 +24,10 @@ class IPDialApplication : Application() {
         try {
             @Suppress("DEPRECATION")
             StartAppSDK.init(this, "205857982", true)
-            StartAppSDK.setTestAdsEnabled(false)
+            // Test ads only for local debug builds; production serves real ads.
+            if (com.ipdial.BuildConfig.DEBUG) {
+                StartAppSDK.setTestAdsEnabled(true)
+            }
             @Suppress("DEPRECATION")
             StartAppAd.disableSplash()
         } catch (e: Throwable) {

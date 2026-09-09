@@ -18,25 +18,22 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.graphicsLayer
-import coil.compose.AsyncImage
 import com.ipdial.data.model.CallSession
 import com.ipdial.data.model.CallState
 import com.ipdial.data.model.IncomingCallMode
 import com.ipdial.data.model.ThemeMode
 import com.ipdial.ui.SipViewModel
+import com.ipdial.ui.screens.call.PulsingStateLabel
 import com.ipdial.ui.theme.EndRed
 import com.ipdial.ui.theme.ForestGreen
 import kotlin.math.roundToInt
@@ -61,34 +58,19 @@ fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
     }
     val displayName = contact?.name ?: vm.cleanDisplayName(session.remoteDisplayName, session.remoteUri)
 
-    val callsCardsEnabled by vm.callingCardsEnabled.collectAsState()
+    // Fallback avatar color derived from the caller's name — same palette as the dialing screen.
+    val avatarColors = listOf(
+        Color(0xFF1E6B3C), Color(0xFF1769AA), Color(0xFF8E4A9B), Color(0xFFB05A2B), Color(0xFF4E5D8A)
+    )
+    val avatarColor = avatarColors[(displayName.hashCode() and Int.MAX_VALUE) % avatarColors.size]
+
     val incomingCallMode by vm.incomingCallMode.collectAsState()
     val themeMode by vm.themeMode.collectAsState()
     val isDarkOrObsidian = themeMode == ThemeMode.Dark || themeMode == ThemeMode.Obsidian
-    val isFullScreenPhoto = callsCardsEnabled && contact?.photoUri != null
-    val textColor = if (isFullScreenPhoto) Color.White else MaterialTheme.colorScheme.onBackground
-    val subtitleColor = if (isFullScreenPhoto) Color.White.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant
+    val textColor = MaterialTheme.colorScheme.onBackground
+    val subtitleColor = MaterialTheme.colorScheme.onSurfaceVariant
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        if (isFullScreenPhoto) {
-            AsyncImage(
-                model = contact!!.photoUri,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize().blur(4.dp)
-            )
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        androidx.compose.ui.graphics.Brush.verticalGradient(
-                            colors = listOf(Color.Black.copy(alpha = 0.7f), Color.Black.copy(alpha = 0.3f), Color.Black.copy(alpha = 0.9f))
-                        )
-                    )
-            )
-        } else {
-            Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
-        }
+    Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
 
         Column(
             modifier = Modifier.fillMaxSize(),
@@ -99,9 +81,7 @@ fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
                     text = "Incoming Call via $viaLine",
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        shadow = if (isFullScreenPhoto) Shadow(Color.Black, Offset(1f, 1f), 4f) else null
-                    ),
+                    style = MaterialTheme.typography.titleMedium,
                     color = subtitleColor,
                 )
             }
@@ -112,8 +92,7 @@ fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
                 text = displayName,
                 style = MaterialTheme.typography.displayMedium.copy(
                     fontWeight = FontWeight.SemiBold,
-                    fontSize = if (displayName.length > 12) 30.sp else 40.sp,
-                    shadow = if (isFullScreenPhoto) Shadow(Color.Black, Offset(2f, 2f), 8f) else null
+                    fontSize = if (displayName.length > 12) 30.sp else 40.sp
                 ),
                 textAlign = TextAlign.Center,
                 color = textColor,
@@ -126,22 +105,35 @@ fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
                 Spacer(Modifier.height(12.dp))
                 Text(
                     text = vm.cleanUri(session.remoteUri),
-                    style = MaterialTheme.typography.titleLarge.copy(
-                        shadow = if (isFullScreenPhoto) Shadow(Color.Black, Offset(1f, 1f), 4f) else null
-                    ),
+                    style = MaterialTheme.typography.titleLarge,
                     color = subtitleColor
                 )
             }
 
-            if (!isFullScreenPhoto && contact != null) {
-                Spacer(Modifier.height(48.dp))
+            Spacer(Modifier.height(48.dp))
+
+            // Avatar with the same animated ripple rings as the dialing screen,
+            // shown for every incoming call (fallback avatar for unknown numbers).
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier.size(180.dp)
+            ) {
+                IncomingRippleRings()
                 com.ipdial.ui.components.ContactAvatar(
                     name = displayName,
-                    photoUri = contact.photoUri,
-                    size = 160.dp,
-                    onClick = null
+                    photoUri = contact?.photoUri,
+                    size = 148.dp,
+                    backgroundColor = avatarColor,
+                    contentColor = Color.White,
+                    modifier = Modifier.border(3.dp, Color.White.copy(alpha = 0.7f), CircleShape)
                 )
             }
+
+            Spacer(Modifier.height(24.dp))
+
+            // Pulsing status with animated dots — matches the dialing screen's
+            // "Calling / Ringing" label during the pre-connected phase.
+            PulsingStateLabel(CallState.INCOMING)
         }
 
         if (incomingCallMode == IncomingCallMode.Slider) {
@@ -160,12 +152,7 @@ fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
                         .width(320.dp)
                         .height(80.dp)
                         .clip(RoundedCornerShape(40.dp))
-                        .background(
-                            if (isFullScreenPhoto)
-                                Color.White.copy(alpha = 0.3f)
-                            else
-                                Color.White.copy(alpha = 0.18f)
-                        )
+                        .background(Color.White.copy(alpha = 0.18f))
                         .border(1.dp, Color.White.copy(alpha = 0.35f), RoundedCornerShape(40.dp)),
                     contentAlignment = Alignment.Center
                 ) {
@@ -240,7 +227,6 @@ fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
                                         offsetX < -40 -> EndRed
                                         offsetX > 40 -> ForestGreen
                                         isDarkOrObsidian -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f)
-                                        isFullScreenPhoto -> Color.White.copy(alpha = 0.3f)
                                         else -> MaterialTheme.colorScheme.surfaceVariant
                                     }
                                 )
@@ -309,7 +295,7 @@ fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
                         Text(
                             "Decline",
                             style = MaterialTheme.typography.labelMedium,
-                            color = if (isFullScreenPhoto) Color.White.copy(alpha = 0.7f) else MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -332,11 +318,62 @@ fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
                         Text(
                             "Answer",
                             style = MaterialTheme.typography.labelMedium,
-                            color = if (isFullScreenPhoto) Color.White.copy(alpha = 0.7f) else MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
             }
         }
     }
+}
+
+/**
+ * Animated concentric circular ripples that expand outward from the avatar
+ * while the call is ringing / incoming (before the user answers).
+ */
+@Composable
+private fun IncomingRippleRings() {
+    val transition = rememberInfiniteTransition(label = "incoming_ripple")
+
+    // Ring 1 — expands & fades.
+    val ring1Scale by transition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.9f,
+        animationSpec = infiniteRepeatable(tween(1600), RepeatMode.Restart),
+        label = "ring1_scale"
+    )
+    val ring1Alpha by transition.animateFloat(
+        initialValue = 0.5f,
+        targetValue = 0f,
+        animationSpec = infiniteRepeatable(tween(1600), RepeatMode.Restart),
+        label = "ring1_alpha"
+    )
+    // Ring 2 — staggered 800ms behind Ring 1 for a continuous "ping" effect.
+    val ring2Scale by transition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.9f,
+        animationSpec = infiniteRepeatable(tween(1600, delayMillis = 800), RepeatMode.Restart),
+        label = "ring2_scale"
+    )
+    val ring2Alpha by transition.animateFloat(
+        initialValue = 0.5f,
+        targetValue = 0f,
+        animationSpec = infiniteRepeatable(tween(1600, delayMillis = 800), RepeatMode.Restart),
+        label = "ring2_alpha"
+    )
+
+    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(180.dp)) {
+        IncomingRippleRing(scale = ring1Scale, alpha = ring1Alpha, ringColor = Color(0xFF35B978))
+        IncomingRippleRing(scale = ring2Scale, alpha = ring2Alpha, ringColor = Color(0xFF35B978))
+    }
+}
+
+@Composable
+private fun IncomingRippleRing(scale: Float, alpha: Float, ringColor: Color) {
+    Box(
+        modifier = Modifier
+            .size(148.dp)
+            .scale(scale)
+            .border(3.dp, ringColor.copy(alpha = alpha), CircleShape)
+    )
 }

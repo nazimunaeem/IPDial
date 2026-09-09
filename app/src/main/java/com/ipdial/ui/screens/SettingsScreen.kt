@@ -66,13 +66,22 @@ fun SettingsScreen(
     val fontSizeMultiplier by vm.fontSizeMultiplier.collectAsState()
     val appIconAlias by vm.appIconAlias.collectAsState()
     val keypadDesign by vm.keypadDesign.collectAsState()
-    val globalNoiseCancellation by vm.globalNoiseCancellation.collectAsState()
-    val noiseCancellationSupported = vm.deviceNoiseCancellationSupported
 
     var showRestartDialog by remember { mutableStateOf(false) }
     var showResetDialog by remember { mutableStateOf(false) }
-    var showNoiseCancellationWarning by remember { mutableStateOf(false) }
+    var showCallAudioInfo by remember { mutableStateOf(false) }
 
+    if (showCallAudioInfo) {
+        CallAudioQualityDialog(
+            ecEnabled = vm.globalEcEnabled.collectAsState().value,
+            nsEnabled = vm.globalNsEnabled.collectAsState().value,
+            agcEnabled = vm.globalAgcEnabled.collectAsState().value,
+            onEcChange = { vm.setGlobalEcEnabled(context, it) },
+            onNsChange = { vm.setGlobalNsEnabled(context, it) },
+            onAgcChange = { vm.setGlobalAgcEnabled(context, it) },
+            onDismiss = { showCallAudioInfo = false }
+        )
+    }
     if (showRestartDialog) {
         AlertDialog(
             onDismissRequest = { showRestartDialog = false },
@@ -93,33 +102,6 @@ fun SettingsScreen(
                     }
                     (context as? Activity)?.finishAffinity()
                 }) { Text("OK") }
-            }
-        )
-    }
-    // Noise cancellation warning dialog
-    if (showNoiseCancellationWarning) {
-        AlertDialog(
-            onDismissRequest = { showNoiseCancellationWarning = false },
-            title = { Text("Disable Noise Cancellation?") },
-            text = {
-                Text(
-                    "Noise cancellation helps filter background sounds like traffic, wind, and ambient noise. " +
-                    "Disabling it may result in poor call quality with more background noise."
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        vm.setGlobalNoiseCancellation(context, false)
-                        showNoiseCancellationWarning = false
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) {
-                    Text("Disable")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showNoiseCancellationWarning = false }) { Text("Keep On") }
             }
         )
     }
@@ -388,35 +370,11 @@ fun SettingsScreen(
             }
 
             item {
-                val globalNoiseCancellation by vm.globalNoiseCancellation.collectAsState()
                 SettingsRow(
-                    icon = Icons.Default.NoiseControlOff,
-                    title = "Noise Cancellation",
-                    subtitle = if (!noiseCancellationSupported) "Not supported by this device"
-                    else if (globalNoiseCancellation) "Uses device noise cancellation"
-                    else "Device noise cancellation is off",
-                    trailing = {
-                        Switch(
-                            checked = noiseCancellationSupported && globalNoiseCancellation,
-                            enabled = noiseCancellationSupported,
-                            onCheckedChange = {
-                                if (!noiseCancellationSupported) return@Switch
-                                if (it) {
-                                    vm.setGlobalNoiseCancellation(context, true)
-                                } else {
-                                    showNoiseCancellationWarning = true
-                                }
-                            }
-                        )
-                    },
-                    onClick = {
-                        if (!noiseCancellationSupported) return@SettingsRow
-                        if (globalNoiseCancellation) {
-                            vm.setGlobalNoiseCancellation(context, false)
-                        } else {
-                            showNoiseCancellationWarning = true
-                        }
-                    }
+                    icon = Icons.Default.HeadsetMic,
+                    title = "Call Audio Quality",
+                    subtitle = "How echo, background noise & mic gain are handled",
+                    onClick = { showCallAudioInfo = true }
                 )
             }
 
@@ -489,24 +447,6 @@ fun SettingsScreen(
                         } else {
                             showAppIconDialog = true
                         }
-                    }
-                )
-            }
-
-            item {
-                val callsCardsEnabled by vm.callingCardsEnabled.collectAsState()
-                val isPro by vm.isPro.collectAsState()
-                SettingsRow(
-                    icon = Icons.Default.ContactPage,
-                    title = "Full-Screen Photo",
-                    subtitle = "Show contact photo on calls",
-                    trailing = { Switch(checked = callsCardsEnabled, onCheckedChange = {
-                        if (!isPro) vm.showAdGate { vm.setCallingCards(it) }
-                        else vm.setCallingCards(it)
-                    }) },
-                    onClick = {
-                        if (!isPro) vm.showAdGate { vm.setCallingCards(!callsCardsEnabled) }
-                        else vm.setCallingCards(!callsCardsEnabled)
                     }
                 )
             }
@@ -610,6 +550,91 @@ fun SettingsScreen(
                 )
             }
         }
+    }
+}
+
+@Composable
+fun CallAudioQualityDialog(
+    ecEnabled: Boolean,
+    nsEnabled: Boolean,
+    agcEnabled: Boolean,
+    onEcChange: (Boolean) -> Unit,
+    onNsChange: (Boolean) -> Unit,
+    onAgcChange: (Boolean) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Call Audio Quality") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    "These processing levels apply to all SIP accounts.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                AudioQualityToggleRow(
+                    title = "Noise Suppression",
+                    subtitle = "Reduces background sounds like traffic or wind",
+                    checked = nsEnabled,
+                    onCheckedChange = onNsChange
+                )
+                AudioQualityToggleRow(
+                    title = "Echo Cancellation",
+                    subtitle = "Stops you from hearing your own voice repeated",
+                    checked = ecEnabled,
+                    onCheckedChange = onEcChange
+                )
+                AudioQualityToggleRow(
+                    title = "Auto Gain Control",
+                    subtitle = "Adjusts how loud your voice is picked up",
+                    checked = agcEnabled,
+                    onCheckedChange = onAgcChange
+                )
+                if (nsEnabled || ecEnabled) {
+                    Text(
+                        text = "Warning: noise suppression & echo cancellation can keep the microphone muted/silent on some devices. Turn them off if callers can't hear you.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Done") }
+        }
+    )
+}
+
+@Composable
+private fun AudioQualityToggleRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            if (subtitle.isNotBlank()) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 

@@ -46,7 +46,6 @@ class AccountRepository(private val context: Context) {
     private val dndKey = booleanPreferencesKey("dnd_enabled")
     private val vibrateKey = booleanPreferencesKey("global_vibrate")
     private val themeKey = stringPreferencesKey("theme_mode")
-    private val callingCardsKey = booleanPreferencesKey("calling_cards")
     private val fontSizeKey = stringPreferencesKey("font_size_multiplier")
     private val appIconKey = stringPreferencesKey("app_icon_alias")
     private val keypadDesignKey = stringPreferencesKey("keypad_design")
@@ -62,9 +61,21 @@ class AccountRepository(private val context: Context) {
     private val batteryNoticeShownKey = booleanPreferencesKey("battery_notice_shown")
     private val autoRecordKey = booleanPreferencesKey("auto_record_enabled")
     private val globalNoiseCancellationKey = booleanPreferencesKey("global_noise_cancellation")
+    private val globalEcEnabledKey = booleanPreferencesKey("global_ec_enabled")
+    private val globalNsEnabledKey = booleanPreferencesKey("global_ns_enabled")
+    private val globalAgcEnabledKey = booleanPreferencesKey("global_agc_enabled")
+    private val sipEcEnabledKey = booleanPreferencesKey("sip_ec_enabled")
+    private val sipNsEnabledKey = booleanPreferencesKey("sip_ns_enabled")
+    private val googleSignInBannerDismissedKey = booleanPreferencesKey("google_sign_in_banner_dismissed")
     private val savedLabelsKey = stringPreferencesKey("saved_labels")
     private val savedHostsKey = stringPreferencesKey("saved_hosts")
     private val firebaseUserIdKey = stringPreferencesKey("firebase_user_id")
+    private val userCodeKey = stringPreferencesKey("user_code")
+    // Cached device-slot authorization (which deviceId owns the local Pro slot).
+    // Lets a relaunch on a single authorized device unlock Pro immediately without
+    // waiting for a Firestore round-trip.
+    private val proDeviceAuthorizedKey = booleanPreferencesKey("pro_device_authorized")
+    private val proDeviceAuthorizedForKey = stringPreferencesKey("pro_device_authorized_for")
 
     val savedLabels: Flow<List<String>> = context.dataStore.data.map { prefs ->
         val json = prefs[savedLabelsKey] ?: "[]"
@@ -114,7 +125,6 @@ class AccountRepository(private val context: Context) {
     val themeMode: Flow<ThemeMode> = context.dataStore.data.map { prefs -> 
         try { ThemeMode.valueOf(prefs[themeKey] ?: "System") } catch (_: Exception) { ThemeMode.System }
     }
-    val callingCardsEnabled: Flow<Boolean> = context.dataStore.data.map { prefs -> prefs[callingCardsKey] ?: true }
     val dndEnabled: Flow<Boolean> = context.dataStore.data.map { prefs -> prefs[dndKey] ?: false }
     val globalVibrate: Flow<Boolean> = context.dataStore.data.map { prefs -> prefs[vibrateKey] ?: true }
 
@@ -150,7 +160,19 @@ class AccountRepository(private val context: Context) {
     val recordingCounter: Flow<Int> = context.dataStore.data.map { it[recordingCounterKey] ?: 0 }
     val batteryNoticeShown: Flow<Boolean> = context.dataStore.data.map { it[batteryNoticeShownKey] ?: false }
     val globalNoiseCancellation: Flow<Boolean> = context.dataStore.data.map { it[globalNoiseCancellationKey] ?: true }
+    val globalEcEnabled: Flow<Boolean> = context.dataStore.data.map { it[globalEcEnabledKey] ?: true }
+    val globalNsEnabled: Flow<Boolean> = context.dataStore.data.map { it[globalNsEnabledKey] ?: true }
+    val globalAgcEnabled: Flow<Boolean> = context.dataStore.data.map { it[globalAgcEnabledKey] ?: true }
+
+    // SIP-level audio processing (PJSIP's built-in EC/NS) — default OFF for compatibility
+    // Some devices mute mic when PJSIP's software EC/NS runs. User can enable if it works.
+    val sipEcEnabled: Flow<Boolean> = context.dataStore.data.map { it[sipEcEnabledKey] ?: false }
+    val sipNsEnabled: Flow<Boolean> = context.dataStore.data.map { it[sipNsEnabledKey] ?: false }
     val firebaseUserId: Flow<String?> = context.dataStore.data.map { it[firebaseUserIdKey] }
+    val userCode: Flow<String?> = context.dataStore.data.map { it[userCodeKey] }
+    val proDeviceAuthorized: Flow<Boolean> = context.dataStore.data.map { it[proDeviceAuthorizedKey] ?: false }
+    val proDeviceAuthorizedFor: Flow<String?> = context.dataStore.data.map { it[proDeviceAuthorizedForKey] }
+    val googleSignInBannerDismissed: Flow<Boolean> = context.dataStore.data.map { it[googleSignInBannerDismissedKey] ?: false }
 
     suspend fun getOrCreateDeviceId(): String {
         val current = context.dataStore.data.map { it[deviceIdKey] }.first()
@@ -165,7 +187,6 @@ class AccountRepository(private val context: Context) {
     }
 
     suspend fun setThemeMode(mode: ThemeMode) = context.dataStore.edit { it[themeKey] = mode.name }
-    suspend fun setCallingCards(enabled: Boolean) = context.dataStore.edit { it[callingCardsKey] = enabled }
     suspend fun setDnd(enabled: Boolean) = context.dataStore.edit { it[dndKey] = enabled }
     suspend fun setGlobalVibrate(enabled: Boolean) = context.dataStore.edit { it[vibrateKey] = enabled }
     
@@ -177,8 +198,24 @@ class AccountRepository(private val context: Context) {
     suspend fun setLastDialedNumber(number: String) = context.dataStore.edit { it[lastDialedKey] = number }
     suspend fun setAdsEnabled(enabled: Boolean) = context.dataStore.edit { it[adsEnabledKey] = enabled }
     suspend fun setDeviceId(id: String) = context.dataStore.edit { it[deviceIdKey] = id }
+    suspend fun setUserCode(code: String) = context.dataStore.edit { it[userCodeKey] = code }
     suspend fun setProPoints(points: Int) = context.dataStore.edit { it[proPointsKey] = points }
     suspend fun setProExpiration(expiration: Long) = context.dataStore.edit { it[proExpirationKey] = expiration }
+
+    /**
+     * Persist which device currently holds the local Pro authorization, so a
+     * relaunch on that device unlocks Pro instantly (before the Firestore check
+     * confirms it). Passing a null/false clears the cached grant.
+     */
+    suspend fun setProDeviceAuthorized(authorized: Boolean, forDeviceId: String?) = context.dataStore.edit { prefs ->
+        if (authorized && !forDeviceId.isNullOrBlank()) {
+            prefs[proDeviceAuthorizedKey] = true
+            prefs[proDeviceAuthorizedForKey] = forDeviceId
+        } else {
+            prefs.remove(proDeviceAuthorizedKey)
+            prefs.remove(proDeviceAuthorizedForKey)
+        }
+    }
 
     suspend fun initializeProWelcomeOffer() {
         context.dataStore.edit { prefs ->
@@ -197,9 +234,33 @@ class AccountRepository(private val context: Context) {
     suspend fun setBatteryNoticeShown(shown: Boolean) = context.dataStore.edit { it[batteryNoticeShownKey] = shown }
     suspend fun setAutoRecordEnabled(enabled: Boolean) = context.dataStore.edit { it[autoRecordKey] = enabled }
     suspend fun setGlobalNoiseCancellation(enabled: Boolean) = context.dataStore.edit { it[globalNoiseCancellationKey] = enabled }
+    suspend fun setGlobalEcEnabled(enabled: Boolean) = context.dataStore.edit { it[globalEcEnabledKey] = enabled }
+    suspend fun setGlobalNsEnabled(enabled: Boolean) = context.dataStore.edit { it[globalNsEnabledKey] = enabled }
+    suspend fun setGlobalAgcEnabled(enabled: Boolean) = context.dataStore.edit { it[globalAgcEnabledKey] = enabled }
+
+    suspend fun setSipEcEnabled(enabled: Boolean) = context.dataStore.edit { it[sipEcEnabledKey] = enabled }
+    suspend fun setSipNsEnabled(enabled: Boolean) = context.dataStore.edit { it[sipNsEnabledKey] = enabled }
+    suspend fun dismissGoogleSignInBanner() = context.dataStore.edit { it[googleSignInBannerDismissedKey] = true }
     suspend fun setFirebaseUserId(id: String?) = context.dataStore.edit {
         if (id == null) it.remove(firebaseUserIdKey)
         else it[firebaseUserIdKey] = id
+    }
+
+    /**
+     * Wipe all cloud-account-derived data locally on sign-out so the "transfer of
+     * pro days and points to a fresh local install after signing out" loophole is
+     * closed: pro points, pro expiration and the persisted Firebase UID are all
+     * removed. (Pro state is re-synced from Firestore the next time the user signs
+     * in, keyed by their UID.)
+     */
+    suspend fun clearFirebaseUserData() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(proPointsKey)
+            prefs.remove(proExpirationKey)
+            prefs.remove(firebaseUserIdKey)
+            prefs.remove(proDeviceAuthorizedKey)
+            prefs.remove(proDeviceAuthorizedForKey)
+        }
     }
 
     suspend fun setGlobalRingtone(uri: String?) {
@@ -214,9 +275,8 @@ class AccountRepository(private val context: Context) {
             prefs.remove(themeKey)
             prefs.remove(fontSizeKey)
             prefs.remove(ringtoneKey)
-            prefs.remove(vibrateKey)
-            prefs.remove(callingCardsKey)
             prefs.remove(dndKey)
+            prefs.remove(vibrateKey)
             prefs.remove(keypadDesignKey)
             prefs.remove(appIconKey)
             prefs.remove(incomingCallModeKey)

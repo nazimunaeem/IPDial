@@ -102,6 +102,18 @@ class SipAccountDelegate(
                         return@runOnPjsipThread
                     }
 
+                    // Single active call at a time (one _callSession StateFlow). If any
+                    // native call is already alive, reject the second incoming call with
+                    // 486 Busy Here instead of ringing it over the active one.
+                    if (callMap.any { it.key != callId }) {
+                        log("Rejecting incoming call #$callId with 486 Busy Here — active call(s): ${callMap.keys}", false)
+                        val busyPrm = CallOpParam().apply { statusCode = pjsip_status_code.PJSIP_SC_BUSY_HERE }
+                        try { call.answer(busyPrm) } catch (_: Throwable) {}
+                        synchronized(SipEngine.pjsipLock) { call.delete() }
+                        callMap.remove(callId)
+                        return@runOnPjsipThread
+                    }
+
                     val opPrm = CallOpParam().apply { statusCode = pjsip_status_code.PJSIP_SC_RINGING }
                     try {
                         log("Answering incoming call #$callId with RINGING", false)

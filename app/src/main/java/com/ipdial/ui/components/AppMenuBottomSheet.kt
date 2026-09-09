@@ -54,7 +54,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -135,18 +135,24 @@ fun AppMenuBottomSheet(
         val view = LocalView.current
         if (!view.isInEditMode) {
             val isLight = sheetBgColor.luminance() > 0.5f
-            SideEffect {
-                val window = (view.parent as? DialogWindowProvider)?.window
+            val sheetWindow = remember {
+                (view.parent as? DialogWindowProvider)?.window
                     ?: (view.context as? android.app.Activity)?.window
-                if (window != null) {
-                    @Suppress("DEPRECATION")
-                    window.navigationBarColor = android.graphics.Color.TRANSPARENT
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        window.isNavigationBarContrastEnforced = false
-                    }
-                    val insetsController = WindowInsetsControllerCompat(window, window.decorView)
-                    insetsController.isAppearanceLightNavigationBars = isLight
+            }
+            // Apply navigation-bar styling ONCE per (window, theme) instead of on
+            // every recomposition. Re-applying these window flags while the sheet
+            // scrolls — e.g. when an async balance/regStatus update recomposes the
+            // content — makes ColorOS flash the navigation bar, which reads as the
+            // whole sheet "blinking".
+            androidx.compose.runtime.LaunchedEffect(sheetWindow, isLight) {
+                val window = sheetWindow ?: return@LaunchedEffect
+                @Suppress("DEPRECATION")
+                window.navigationBarColor = android.graphics.Color.TRANSPARENT
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    window.isNavigationBarContrastEnforced = false
                 }
+                val insetsController = WindowInsetsControllerCompat(window, window.decorView)
+                insetsController.isAppearanceLightNavigationBars = isLight
             }
         }
 
@@ -198,12 +204,14 @@ fun AppMenuBottomSheet(
             // 2.5. User Profile (if signed in)
             val isSignedIn by vm.isSignedIn.collectAsState()
             val currentUser by vm.currentUser.collectAsState()
+            val userCode by vm.userCode.collectAsState()
             if (isSignedIn && currentUser != null) {
                 Spacer(Modifier.height(8.dp))
                 UserProfileMini(
                     name = currentUser?.displayName ?: "User",
                     email = currentUser?.email ?: "",
-                    photoUrl = currentUser?.photoUrl?.toString()
+                    photoUrl = currentUser?.photoUrl?.toString(),
+                    userCode = userCode
                 )
             }
 
@@ -698,7 +706,8 @@ private fun MenuRowItem(
 private fun UserProfileMini(
     name: String,
     email: String,
-    photoUrl: String?
+    photoUrl: String?,
+    userCode: String
 ) {
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -751,6 +760,21 @@ private fun UserProfileMini(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+
+                if (userCode.isNotBlank()) {
+                    Spacer(Modifier.height(2.dp))
+                    Surface(
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                        shape = RoundedCornerShape(6.dp)
+                    ) {
+                        Text(
+                            text = "My ID: $userCode",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
             }
         }
     }

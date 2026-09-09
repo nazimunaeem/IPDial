@@ -276,7 +276,7 @@ fun HomeScreen(
                 vm = vm,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(8.dp)
+                    .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 76.dp)
             )
         }
     }

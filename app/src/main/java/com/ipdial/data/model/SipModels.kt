@@ -18,8 +18,11 @@ data class SipAccount(
     // Audio quality settings
     val codec: PreferredCodec? = null,                 // Preferred (priority) codec
     val enabledCodecs: Set<PreferredCodec> = DEFAULT_ENABLED_CODECS, // codecs offered in SDP
-    val ecEnabled: Boolean = true,   // Echo cancellation
-    val nsEnabled: Boolean = true,   // Noise suppression
+    // EC and NS are OFF by default: on some devices these SIP-side effects keep
+    // the microphone muted/silent. The device's own (automatic) audio processing
+    // still applies. AGC stays ON (gain is safe and usually needed).
+    val ecEnabled: Boolean = false,  // Echo cancellation
+    val nsEnabled: Boolean = false,  // Noise suppression
     val agcEnabled: Boolean = true,  // Auto gain control
     val ringtoneUri: String? = null,
 ) {
@@ -63,7 +66,8 @@ data class CallSession(
     val isSpeaker: Boolean = false,
     val isOnHold: Boolean = false,
     val isRecording: Boolean = false,
-    val rxVolume: Float = 2.5f,
+    val isRecordingPending: Boolean = false,
+    val rxVolume: Float = com.ipdial.service.SipAudioController.DEFAULT_RX_VOLUME,
     val negotiatedCodec: String? = null,
     val disconnectCode: Int? = null,
     val disconnectReason: String? = null,

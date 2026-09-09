@@ -70,7 +70,7 @@ fun AboutScreen(
     }
 
     val isSignedIn by vm.isSignedIn.collectAsState()
-    val userId = remember(isSignedIn) { vm.getReferralCode() }
+    val userId by vm.userDisplayId.collectAsState()
 
     val appIconBitmap = remember(context) {
         try {

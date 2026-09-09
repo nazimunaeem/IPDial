@@ -209,12 +209,48 @@ object SipEngine {
     private var currentNsEnabled = true
     private var currentAgcEnabled = true
 
+    @Volatile
+    private var globalEcEnabled = true
+    @Volatile
+    private var globalNsEnabled = true
+    @Volatile
+    private var globalAgcEnabled = true
+
+    /**
+     * Global audio-processing preferences (Echo Cancellation, Noise Suppression,
+     * Auto Gain Control) chosen in Settings.
+     *
+     * The PJSIP wrapper does not expose its AudioRecord session for safely
+     * attaching native effects, so software EC/NS stay off and the platform's
+     * device processing (e.g. hardware AEC, Android NoiseSuppressor) is used.
+     * These preferences are cached and logged here so future engine hooks can
+     * honor them; they also feed the per-account cache below for continuity.
+     */
+    fun applyGlobalAudioSettings(ec: Boolean, ns: Boolean, agc: Boolean) {
+        globalEcEnabled = ec
+        globalNsEnabled = ns
+        globalAgcEnabled = agc
+        // Nothing is re-applied to PJSIP here by design — see class comment.
+        log("Global audio settings: EC=$ec, NS=$ns, AGC=$agc (device processing only)")
+    }
+
     // D5: reliable side-channel for the final SIP disconnect code/reason.
     // StateFlow conflates intermediate values, so the DISCONNECTED-stamped
     // session can be skipped for slow collectors. This field is set on the
     // PJSIP thread right before the session is nulled, and consumed by
     // SipService.observeCallState() when it sees session == null.
     @Volatile internal var pendingDisconnectInfo: Pair<Int?, String?>? = null
+
+    // On disconnect, the session stays alive briefly so the user hears the busy
+    // tone/announcement (2s for 486/487, 500ms otherwise) before the screen closes.
+    // nullSessionIfStale() must not preempt that delay, so SipCallDelegate records a
+    // grace deadline here; the stale-session watchdog skips until it passes.
+    @Volatile internal var disconnectGraceUntilMs: Long = 0L
+
+    /** Mark the current disconnect as holding the session for [delayMs]. */
+    fun beginDisconnectHold(delayMs: Long) {
+        disconnectGraceUntilMs = System.currentTimeMillis() + delayMs
+    }
 
     fun consumeDisconnectInfo(): Pair<Int?, String?>? {
         val v = pendingDisconnectInfo
@@ -748,27 +784,42 @@ object SipEngine {
 
                     // If a call is already active and confirmed, connect its media now.
                     // (New calls will connect in onCallMediaState).
-                    callMap.values.forEach { call ->
-                        try {
-                            val ci = call.info
-                            for (i in 0 until ci.media.size.toInt()) {
-                                val mi = ci.media.get(i)
-                                if (mi.type == pjmedia_type.PJMEDIA_TYPE_AUDIO &&
-                                    mi.status == pjsua_call_media_status.PJSUA_CALL_MEDIA_ACTIVE) {
-                                    val aud = AudioMedia.typecastFromMedia(call.getMedia(mi.index.toLong()))
-                                    aud.startTransmit(rec)
-                                    endpoint?.audDevManager()?.captureDevMedia?.startTransmit(rec)
-                                    log("startRecording: connected active call ${ci.id} media to recorder")
-                                }
-                            }
-                        } catch (e: Throwable) {
-                            log("startRecording: failed to connect call media: ${e.message}", true)
-                        }
-                    }
+                    connectRecordingMedia()
                 } catch (e: Throwable) {
                     log("startRecording failed: ${e.message}", true)
                     recorder = null
                 }
+            }
+        }
+    }
+
+    /**
+     * Starts recording now so that as soon as the outgoing call is received
+     * and its media becomes active, onCallMediaState bridges it into the
+     * recorder without any UI involvement.
+     */
+    fun startRecordingWhenActive(filePath: String) = startRecording(filePath)
+
+    /**
+     * Bridges the active call's media into the recorder. Must be called with
+     * pjsipLock held. New calls connect here in onCallMediaState.
+     */
+    private fun connectRecordingMedia() {
+        callMap.values.forEach { call ->
+            try {
+                val ci = call.info
+                for (i in 0 until ci.media.size.toInt()) {
+                    val mi = ci.media.get(i)
+                    if (mi.type == pjmedia_type.PJMEDIA_TYPE_AUDIO &&
+                        mi.status == pjsua_call_media_status.PJSUA_CALL_MEDIA_ACTIVE) {
+                        val aud = AudioMedia.typecastFromMedia(call.getMedia(mi.index.toLong()))
+                        aud.startTransmit(recorder)
+                        endpoint?.audDevManager()?.captureDevMedia?.startTransmit(recorder)
+                        log("startRecording: connected active call ${ci.id} media to recorder")
+                    }
+                }
+            } catch (e: Throwable) {
+                log("startRecording: failed to connect call media: ${e.message}", true)
             }
         }
     }
@@ -810,6 +861,11 @@ object SipEngine {
     fun nullSessionIfStale() {
         val session = _callSession.value ?: return
         if (session.callId == -1) return
+
+        // During the disconnect grace window the session is intentionally kept alive
+        // so the busy tone/announcement plays before the screen closes. Do not force
+        // cleanup until the hold expires or is consumed.
+        if (System.currentTimeMillis() < disconnectGraceUntilMs) return
 
         val inMap = callMap.containsKey(session.callId)
         log("nullSessionIfStale: session callId=${session.callId} state=${session.state} inCallMap=$inMap callMapKeys=${callMap.keys}")
@@ -1181,8 +1237,10 @@ object SipEngine {
                         val session = _callSession.value
                         val isEmulator = com.ipdial.util.DeviceUtil.isEmulator()
                         val baseGain = if (isEmulator) SipAudioController.MIC_GAIN_EMULATOR else SipAudioController.MIC_GAIN_REAL
-                        aud.adjustTxLevel(if (session?.isMuted == true) 0f else baseGain)
-                        aud.adjustRxLevel(session?.rxVolume ?: 2.5f)
+                        // adjustRxLevel = bridge->call = our mic (TX); adjustTxLevel =
+                        // call->bridge = listening (RX). See SipCallDelegate comment.
+                        aud.adjustRxLevel(if (session?.isMuted == true) 0f else baseGain)
+                        aud.adjustTxLevel(SipAudioController.callVolumeToPjsipLevel(session?.rxVolume ?: SipAudioController.DEFAULT_RX_VOLUME))
 
                         // Recording: bridge both directions into the recorder if active.
                         recorder?.let { rec ->

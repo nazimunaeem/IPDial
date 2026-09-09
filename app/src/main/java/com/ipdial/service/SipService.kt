@@ -80,6 +80,15 @@ class SipService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+
+        // Must call startForeground() before anything else. The service is started
+        // via startForegroundService(), and if we stopSelf() (e.g. missing mic
+        // permission) or do any slow work before calling startForeground(), Android
+        // kills the process with ForegroundServiceDidNotStartInTimeException once the
+        // ~5s timeout elapses (onStartCommand may never even be dispatched).
+        createNotificationChannels(this)
+        startServiceForeground()
+
         if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) !=
             android.content.pm.PackageManager.PERMISSION_GRANTED
         ) {
@@ -101,7 +110,6 @@ class SipService : Service() {
         // Keep CPU awake for background SIP network stack and NAT keepalives
         wakeLockManager.acquireWakeLock()
 
-        createNotificationChannels(this)
         TelecomHelper.registerPhoneAccount(applicationContext)
 
         SipEngine.onIncomingCall = { session ->
@@ -114,15 +122,11 @@ class SipService : Service() {
             stopPushingBanner()
             ringtonePlayer.stopRingtone()
             cancelIncomingNotification(this)
-            
-            // CRITICAL FIX: Force session cleanup when call is disconnected remotely
-            // This prevents the UI from showing a stale call screen
-            val session = SipEngine.callSession.value
-            if (session != null && session.callId == callId) {
-                Log.d("SipService", "onCallDisconnected: forcing session cleanup for callId=$callId")
-                SipEngine.callMap.remove(callId)
-                SipEngine._callSession.value = null
-            }
+
+            // Removed the force-null of SipEngine._callSession here: SipCallDelegate
+            // owns session teardown via scheduleSessionNull(), which keeps the session
+            // alive briefly (2s for 486/487 busy) so the busy tone plays before the
+            // screen closes. Force-nulling here raced that delay and cut it to zero.
         }
 
         scope.launch {
@@ -559,7 +563,13 @@ class SipService : Service() {
                     audioManager.isMicrophoneMute = session.isMuted
 
                     when (session.state) {
-                        CallState.INCOMING -> {
+                        // INCOMING fires on the PJSIP worker thread while the session is
+                        // created on the app PjsipThread; if those race, the StateFlow
+                        // collector can skip INCOMING (180 is answered immediately, so the
+                        // value lands on EARLY). Handle both as "ringing" for an incoming
+                        // call so the ringtone/wake locks/notification are never skipped.
+                        CallState.INCOMING,
+                        CallState.EARLY -> if (session.direction == CallDirection.INCOMING) {
                             if (audioManager.mode != AudioManager.MODE_NORMAL) {
                                 audioManager.mode = AudioManager.MODE_NORMAL
                             }
@@ -573,6 +583,8 @@ class SipService : Service() {
                             if (!com.ipdial.AppState.isForeground && !SipEngine.isDndActive()) {
                                 showCallNotificationStatic(this@SipService, session.remoteDisplayName, session.callId)
                             }
+                        } else {
+                            applyActiveCallProgress(session, stateChanged, speakerChanged)
                         }
                         CallState.CONFIRMED -> {
                             if (audioManager.mode != AudioManager.MODE_IN_COMMUNICATION) {
@@ -614,20 +626,8 @@ class SipService : Service() {
                                 showCallNotificationStatic(this@SipService, session.remoteDisplayName, session.callId)
                             }
                         }
-                        CallState.CALLING, CallState.EARLY, CallState.CONNECTING -> {
-                            if (audioManager.mode != AudioManager.MODE_IN_COMMUNICATION) {
-                                audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-                            }
-                            if (stateChanged || speakerChanged) {
-                                audioRouter.routeAudioToDefault()
-                            }
-                            wakeLockManager.acquireWakeLock()
-                            wakeLockManager.acquireProximityWakeLock()
-                            updateForegroundType(ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)
-
-                            if (!com.ipdial.AppState.isForeground) {
-                                showCallNotificationStatic(this@SipService, session.remoteDisplayName, session.callId)
-                            }
+                        CallState.CALLING, CallState.CONNECTING -> {
+                            applyActiveCallProgress(session, stateChanged, speakerChanged)
                         }
                         else -> {
                             if (speakerChanged) {
@@ -637,6 +637,27 @@ class SipService : Service() {
                     }
                 }
             }
+        }
+    }
+
+    /** Applies the dialing/progress handling for OUTGOING calls (CALLING / EARLY / CONNECTING). */
+    private fun applyActiveCallProgress(
+        session: com.ipdial.data.model.CallSession,
+        stateChanged: Boolean,
+        speakerChanged: Boolean
+    ) {
+        if (audioManager.mode != AudioManager.MODE_IN_COMMUNICATION) {
+            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+        }
+        if (stateChanged || speakerChanged) {
+            audioRouter.routeAudioToDefault()
+        }
+        wakeLockManager.acquireWakeLock()
+        wakeLockManager.acquireProximityWakeLock()
+        updateForegroundType(ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)
+
+        if (!com.ipdial.AppState.isForeground) {
+            showCallNotificationStatic(this@SipService, session.remoteDisplayName, session.callId)
         }
     }
 
@@ -660,41 +681,45 @@ class SipService : Service() {
     }
 
     private fun startServiceForeground() {
-        val notification = buildServiceNotification(this)
-        val initialType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val hasActiveCall = SipEngine.callSession.value?.state != null && SipEngine.callSession.value?.state != CallState.DISCONNECTED
-            if (hasActiveCall) {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
-            } else if (Build.VERSION.SDK_INT >= 34) {
-                1073741824 // ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-            } else {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-            }
-        } else 0
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                    androidx.core.app.ServiceCompat.startForeground(
-                        this,
-                        NOTIF_ID_SERVICE,
-                        notification,
-                        initialType
-                    )
+        try {
+            val notification = buildServiceNotification(this)
+            val initialType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val hasActiveCall = SipEngine.callSession.value?.state != null && SipEngine.callSession.value?.state != CallState.DISCONNECTED
+                if (hasActiveCall) {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
+                } else if (Build.VERSION.SDK_INT >= 34) {
+                    1073741824 // ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
                 } else {
-                    startForeground(NOTIF_ID_SERVICE, notification, initialType)
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
                 }
-                Log.d("SipService", "Started FGS with type $initialType")
-            } catch (e: Exception) {
-                Log.w("SipService", "Failed to start FGS with type $initialType: ${e.message}")
+            } else 0
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 try {
-                    startForeground(NOTIF_ID_SERVICE, notification)
-                } catch (lastEx: Exception) {
-                    Log.e("SipService", "Absolute FGS failure", lastEx)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                        androidx.core.app.ServiceCompat.startForeground(
+                            this,
+                            NOTIF_ID_SERVICE,
+                            notification,
+                            initialType
+                        )
+                    } else {
+                        startForeground(NOTIF_ID_SERVICE, notification, initialType)
+                    }
+                    Log.d("SipService", "Started FGS with type $initialType")
+                } catch (e: Exception) {
+                    Log.w("SipService", "Failed to start FGS with type $initialType: ${e.message}")
+                    try {
+                        startForeground(NOTIF_ID_SERVICE, notification)
+                    } catch (lastEx: Exception) {
+                        Log.e("SipService", "Absolute FGS failure", lastEx)
+                    }
                 }
+            } else {
+                startForeground(NOTIF_ID_SERVICE, notification)
             }
-        } else {
-            startForeground(NOTIF_ID_SERVICE, notification)
+        } catch (e: Throwable) {
+            Log.e("SipService", "startServiceForeground failed", e)
         }
     }
 
@@ -718,7 +743,9 @@ class SipService : Service() {
     }
 
     override fun onDestroy() {
-        wakeLockManager.releaseWakeLock()
+        if (::wakeLockManager.isInitialized) {
+            wakeLockManager.releaseWakeLock()
+        }
         kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
             try {
                 SipEngine.destroy()

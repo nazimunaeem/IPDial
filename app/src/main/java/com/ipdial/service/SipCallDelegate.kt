@@ -88,6 +88,28 @@ class SipCallDelegate(
         log("AUDIO WATCHDOG: stopped", false)
     }
 
+    /**
+     * Null the session after a short delay so the user hears the busy tone or a
+     * remote announcement before the screen closes (Busy 486 / Request Terminated 487
+     * gets 2s, everything else 500ms). Registers a grace deadline on SipEngine so the
+     * 1s stale-session watchdog in the ViewModel does not preempt the hold. The
+     * callId re-check ensures a pending null from an earlier call can never close a
+     * newer call's session.
+     */
+    private fun scheduleSessionNull(callId: Int, statusCode: Int) {
+        val isBusy = statusCode == 486 || statusCode == 487
+        val delayMs = if (isBusy) 2000L else 500L
+        SipEngine.beginDisconnectHold(delayMs)
+        mainHandler.postDelayed({
+            SipEngine.disconnectGraceUntilMs = 0L
+            // Only null if the current session still belongs to this call.
+            if (_callSession.value?.callId == callId) {
+                _callSession.value = null
+                log("scheduleSessionNull: callId=$callId session nulled after ${delayMs}ms", false)
+            }
+        }, delayMs)
+    }
+
     override fun onCallState(prm: OnCallStateParam) {
         val currentCallId = try { getId() } catch (e: Throwable) {
             log("ONCALLSTATE ENTRY: getId() failed: ${e.message}", true)
@@ -154,9 +176,9 @@ class SipCallDelegate(
                 callMap.remove(currentCallId)
                 log("ONCALLSTATE DISCONNECT: callId=$currentCallId removed from callMap, callMapSize=${callMap.size}", false)
 
-                // Null the session immediately
-                _callSession.value = null
-                log("ONCALLSTATE DISCONNECT: callId=$currentCallId session nulled", false)
+                // Keep session alive briefly so user hears busy tone/announcement before screen closes.
+                // Especially important for BUSY (486) and REQUEST TERMINATED (487).
+                scheduleSessionNull(currentCallId, statusCode)
 
                 CoroutineScope(Dispatchers.Main).launch {
                     try {
@@ -327,6 +349,9 @@ class SipCallDelegate(
 
                 if (newState == CallState.CONFIRMED) {
                     log("ONCALLSTATE: Call confirmed, ensuring audio path is active", false)
+                    // A recording armed during dialing starts now that the call is
+                    // received: clear the pending flag so the UI shows "Recording".
+                    _callSession.value = _callSession.value?.copy(isRecordingPending = false)
                     try {
                         SipEngine.reconnectAudioPathForCall(currentCallId)
                         mainHandler.post {
@@ -375,7 +400,9 @@ class SipCallDelegate(
                         }
                         try { SipEngine.onCallDisconnected?.invoke(currentCallId) } catch (_: Throwable) {}
                         callMap.remove(currentCallId)
-                        _callSession.value = null
+                        // Use the shared delayed-null so the busy tone delay is respected here
+                        // too, instead of closing the screen and cutting audio immediately.
+                        scheduleSessionNull(currentCallId, statusCode)
                         // Check localHangupCauses first — if this was a local hangup (BYE/CANCEL sent by us),
                         // use the locally recorded cause instead of always defaulting to REMOTE.
                         val disconnectCause = SipEngine.localHangupCauses.remove(currentCallId)
@@ -439,10 +466,15 @@ class SipCallDelegate(
                         val isEmulator = DeviceUtil.isEmulator()
                         val baseGain = if (isEmulator) SipAudioController.MIC_GAIN_EMULATOR else SipAudioController.MIC_GAIN_REAL
                         val micLevel = if (currentSession?.isMuted == true) 0f else baseGain
-                        val speakerLevel = currentSession?.rxVolume ?: 2.5f
+                        val speakerLevel = currentSession?.rxVolume ?: SipAudioController.DEFAULT_RX_VOLUME
 
-                        aud.adjustTxLevel(micLevel)
-                        aud.adjustRxLevel(speakerLevel)
+                        // PJSIP call-port gain directions:
+                        //   adjustRxLevel -> pjsua_conf_adjust_tx_level (bridge -> call) = our TX (mic) to the remote.
+                        //   adjustTxLevel  -> pjsua_conf_adjust_rx_level (call -> bridge) = our RX (listening) volume.
+                        // Historically these were swapped here, so volume buttons changed
+                        // the OTHER caller's loudness of us while our own volume sat fixed.
+                        aud.adjustRxLevel(micLevel)
+                        aud.adjustTxLevel(SipAudioController.callVolumeToPjsipLevel(speakerLevel))
 
                         // CRITICAL FIX: Ensure bidirectional audio path
                         // 1. Remote audio (RX) -> local speaker

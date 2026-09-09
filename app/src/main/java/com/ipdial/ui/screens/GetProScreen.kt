@@ -50,60 +50,84 @@ fun GetProScreen(
         topBar = {
             IPDialTopBar(accounts = accounts, vm = vm, title = "IPDial Pro", onBack = onBack)
         },
-        bottomBar = {
-            com.ipdial.ui.components.StartIoBanner(
-                vm = vm,
-                modifier = Modifier.fillMaxWidth().padding(8.dp)
-            )
-        }
+        bottomBar = {}
     ) { padding ->
-        LazyColumn(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .background(MaterialTheme.colorScheme.background),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .background(MaterialTheme.colorScheme.background)
         ) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
 
-            item {
-                ProStatusCard(
-                    isPro = isPro,
-                    expiration = proExpiration,
-                    isSignedIn = isSignedIn,
-                    profilePhotoUrl = currentUser?.photoUrl?.toString(),
-                    isSigningIn = isSigningIn,
-                    onSignIn = {
-                        isSigningIn = true
-                        vm.signIn(context) { success, _ ->
-                            isSigningIn = false
+                item {
+                    ProStatusCard(
+                        isPro = isPro,
+                        expiration = proExpiration,
+                        isSignedIn = isSignedIn,
+                        profilePhotoUrl = currentUser?.photoUrl?.toString(),
+                        isSigningIn = isSigningIn,
+                        onSignIn = {
+                            isSigningIn = true
+                            vm.signIn(context) { success, msg ->
+                                isSigningIn = false
+                                if (!success && msg.isNotBlank()) {
+                                    android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        },
+                        onProfileClick = { showProfileMenu = true }
+                    )
+                }
+
+                // Show the "buy a device slot" row ONLY when this device genuinely needs an
+                // additional slot: signed in, not authorized here, and another device is
+                // pending approval. Pro access itself is account-wide, so a solo
+                // authorized device never shows it.
+                item {
+                    val pendingCount by vm.pendingDeviceCount.collectAsState()
+                    val deviceAuth by vm.currentDeviceAuthorized.collectAsState()
+                    if (isSignedIn && deviceAuth == false && pendingCount > 0) {
+                        DeviceSlotRow(proPoints) {
+                            vm.buyDeviceSlot { success, msg ->
+                                android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                            }
                         }
-                    },
-                    onProfileClick = { showProfileMenu = true }
-                )
-            }
-
-            item {
-                val cooldown by vm.adCooldownSeconds.collectAsState()
-                PointsBalanceCard(proPoints, isLoadingAd, cooldown) {
-                    if (!isSignedIn) {
-                        android.widget.Toast.makeText(context, "Please sign in to earn points", android.widget.Toast.LENGTH_SHORT).show()
-                        isSigningIn = true
-                        vm.signIn(context) { _, _ -> isSigningIn = false }
-                        return@PointsBalanceCard
-                    }
-                    vm.watchRewardedAd(context) {
-                        // Reward handled in VM
                     }
                 }
-            }
 
-            item {
-                Text(
-                    "Redeem Points for Pro",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
+                item {
+                    val cooldown by vm.adCooldownSeconds.collectAsState()
+                    PointsBalanceCard(proPoints, isLoadingAd, cooldown) {
+                        if (!isSignedIn) {
+                            android.widget.Toast.makeText(context, "Please sign in to earn points", android.widget.Toast.LENGTH_SHORT).show()
+                            isSigningIn = true
+                            vm.signIn(context) { success, msg ->
+                                isSigningIn = false
+                                if (!success && msg.isNotBlank()) {
+                                    android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
+                                }
+                            }
+                            return@PointsBalanceCard
+                        }
+                        vm.watchRewardedAd(context) {
+                            // Reward handled in VM
+                        }
+                    }
+                }
+
+                item {
+                    Text(
+                        "Redeem Points for Pro",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
             }
 
             item {
@@ -111,7 +135,12 @@ fun GetProScreen(
                     if (!isSignedIn) {
                         android.widget.Toast.makeText(context, "Please sign in to buy Pro", android.widget.Toast.LENGTH_SHORT).show()
                         isSigningIn = true
-                        vm.signIn(context) { _, _ -> isSigningIn = false }
+                        vm.signIn(context) { success, msg ->
+                            isSigningIn = false
+                            if (!success && msg.isNotBlank()) {
+                                android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
+                            }
+                        }
                         return@RedemptionOptions
                     }
                     vm.redeemPoints(days)
@@ -124,6 +153,15 @@ fun GetProScreen(
             item {
                 ProFeaturesList()
             }
+            }
+            // Fixed banner just above the floating pill nav bar so it is never
+            // overlapped by the pill.
+            com.ipdial.ui.components.StartIoBanner(
+                vm = vm,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 76.dp)
+            )
         }
     }
 
@@ -140,7 +178,7 @@ fun GetProScreen(
             },
             onDeleteAccount = {
                 showProfileMenu = false
-                vm.deleteAccount { success, msg ->
+                vm.deleteAccount(context) { success, msg ->
                     android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
                 }
             }
@@ -273,7 +311,7 @@ fun ReferralCard(vm: com.ipdial.ui.SipViewModel) {
     var code by remember { mutableStateOf("") }
     var isSigningIn by remember { mutableStateOf(false) }
     val isSignedIn by vm.isSignedIn.collectAsState()
-    val referralCode = remember(isSignedIn) { vm.getReferralCode() }
+    val referralCode by vm.userDisplayId.collectAsState()
     val glassMode = com.ipdial.ui.theme.LocalGlassMode.current
     val isGlass = glassMode != com.ipdial.ui.theme.GlassMode.None
     val isQuartz = glassMode == com.ipdial.ui.theme.GlassMode.Quartz
@@ -305,7 +343,12 @@ fun ReferralCard(vm: com.ipdial.ui.SipViewModel) {
                             if (!isSignedIn) {
                                 android.widget.Toast.makeText(context, "Please sign in to claim a referral", android.widget.Toast.LENGTH_SHORT).show()
                                 isSigningIn = true
-                                vm.signIn(context) { _, _ -> isSigningIn = false }
+                                vm.signIn(context) { success, msg ->
+                                    isSigningIn = false
+                                    if (!success && msg.isNotBlank()) {
+                                        android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
+                                    }
+                                }
                                 return@Button
                             }
                             vm.claimReferral(code) { success, msg ->
@@ -664,6 +707,58 @@ fun RedemptionOptions(currentPoints: Int, onRedeem: (Int) -> Unit) {
                 if (rowItems.size == 1) {
                     Spacer(Modifier.weight(1f))
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun DeviceSlotRow(proPoints: Int, onBuy: () -> Unit) {
+    val canAfford = proPoints >= com.ipdial.data.repository.FirestorePointsSync.DEVICE_SLOT_COST
+    val glassMode = com.ipdial.ui.theme.LocalGlassMode.current
+    val isGlass = glassMode != com.ipdial.ui.theme.GlassMode.None
+    val isQuartz = glassMode == com.ipdial.ui.theme.GlassMode.Quartz
+    val buttonContentColor = if (isQuartz) MaterialTheme.colorScheme.primary else Color.White
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (isGlass) Modifier.glass() else Modifier),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isGlass) Color.Transparent else MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Add this device to your account",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.error
+                )
+                Text(
+                    text = "Buy a device slot (${com.ipdial.data.repository.FirestorePointsSync.DEVICE_SLOT_COST} points) to add this device to your account. Pro access works on all your devices either way.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Button(
+                onClick = onBuy,
+                enabled = canAfford,
+                shape = RoundedCornerShape(8.dp),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                modifier = Modifier.then(if (isGlass) Modifier.glass(RoundedCornerShape(8.dp)) else Modifier),
+                colors = if (isGlass) ButtonDefaults.buttonColors(containerColor = Color.Transparent, contentColor = buttonContentColor) else ButtonDefaults.buttonColors()
+            ) {
+                Text(
+                    text = "Buy",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (isGlass) buttonContentColor else Color.Unspecified,
+                    fontWeight = FontWeight.SemiBold
+                )
             }
         }
     }

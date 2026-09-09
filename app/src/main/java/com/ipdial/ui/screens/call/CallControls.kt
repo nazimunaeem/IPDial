@@ -1,5 +1,10 @@
 package com.ipdial.ui.screens.call
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,9 +27,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.ipdial.data.model.AudioDeviceMode
@@ -41,52 +48,59 @@ fun CallControls(
     onRecord: () -> Unit,
     audioDeviceMode: AudioDeviceMode = AudioDeviceMode.EARPIECE,
 ) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 24.dp),
-        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceEvenly,
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        CallControlButton(
-            icon = Icons.Default.Dialpad,
-            label = "Keypad",
-            onClick = onKeypad
-        )
-        CallControlButton(
-            icon = if (session.isMuted) Icons.Default.MicOff else Icons.Default.Mic,
-            label = "Mute",
-            active = session.isMuted,
-            enabled = isActive,
-            onClick = onMute
-        )
-
-        // Audio Device Button
-        val audioIcon = when (audioDeviceMode) {
-            AudioDeviceMode.SPEAKER -> Icons.AutoMirrored.Filled.VolumeUp
-            AudioDeviceMode.BLUETOOTH -> Icons.Default.Bluetooth
-            else -> Icons.Default.PhoneInTalk
+        Row(
+            modifier = Modifier
+                .fillMaxWidth(),
+            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            val audioIcon = when (audioDeviceMode) {
+                AudioDeviceMode.SPEAKER -> Icons.AutoMirrored.Filled.VolumeUp
+                AudioDeviceMode.BLUETOOTH -> Icons.Default.Bluetooth
+                else -> Icons.Default.PhoneInTalk
+            }
+            val audioLabel = when (audioDeviceMode) {
+                AudioDeviceMode.SPEAKER -> "Speaker"
+                AudioDeviceMode.BLUETOOTH -> "Bluetooth"
+                else -> "Earpiece"
+            }
+            CallControlButton(Icons.Default.Dialpad, "Keypad", modifier = Modifier.weight(1f), onClick = onKeypad)
+            CallControlButton(
+                icon = if (session.isMuted) Icons.Default.MicOff else Icons.Default.Mic,
+                label = if (session.isMuted) "Unmute" else "Mute",
+                active = session.isMuted,
+                activeColor = Color(0xFF35B978),
+                modifier = Modifier.weight(1f),
+                onClick = onMute
+            )
+            CallControlButton(
+                icon = audioIcon,
+                label = audioLabel,
+                active = audioDeviceMode != AudioDeviceMode.EARPIECE,
+                activeColor = Color(0xFF35B978),
+                modifier = Modifier.weight(1f),
+                onClick = onSpeaker
+            )
+            CallControlButton(
+                icon = Icons.Default.RadioButtonChecked,
+                label = when {
+                    session.isRecording -> "Recording"
+                    session.isRecordingPending -> "Will Record"
+                    else -> "Record"
+                },
+                active = session.isRecording || session.isRecordingPending,
+                activeColor = Color(0xFFE05252),
+                enabled = true,
+                modifier = Modifier.weight(1f),
+                onClick = onRecord
+            )
         }
-        val audioLabel = when (audioDeviceMode) {
-            AudioDeviceMode.SPEAKER -> "Speaker"
-            AudioDeviceMode.BLUETOOTH -> "Bluetooth"
-            else -> "Earpiece"
-        }
-
-        CallControlButton(
-            icon = audioIcon,
-            label = audioLabel,
-            active = audioDeviceMode != AudioDeviceMode.EARPIECE,
-            enabled = true,
-            onClick = onSpeaker
-        )
-
-        CallControlButton(
-            icon = Icons.Default.RadioButtonChecked,
-            label = if (session.isRecording) "Recording" else "Record",
-            active = session.isRecording,
-            enabled = isActive,
-            onClick = onRecord
-        )
     }
 }
 
@@ -96,9 +110,19 @@ fun CallControlButton(
     label: String,
     active: Boolean = false,
     enabled: Boolean = true,
+    activeColor: Color = MaterialTheme.colorScheme.primary,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
+    val transition = rememberInfiniteTransition(label = "control_pulse_$label")
+    val pulse by transition.animateFloat(
+        initialValue = 0.72f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
+        label = "control_alpha"
+    )
     Column(
+        modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
@@ -109,7 +133,7 @@ fun CallControlButton(
                 .background(
                     when {
                         !enabled -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-                        active   -> MaterialTheme.colorScheme.primaryContainer
+                        active   -> activeColor.copy(alpha = if (label == "Recording") pulse else 0.18f)
                         else     -> MaterialTheme.colorScheme.surfaceVariant
                     }
                 )
@@ -120,7 +144,7 @@ fun CallControlButton(
                 contentDescription = label,
                 tint = when {
                     !enabled -> MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)
-                    active   -> MaterialTheme.colorScheme.primary
+                    active   -> activeColor
                     else     -> MaterialTheme.colorScheme.onSurfaceVariant
                 },
                 modifier = Modifier.size(24.dp)
