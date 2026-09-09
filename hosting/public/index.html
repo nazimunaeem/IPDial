@@ -127,6 +127,26 @@
       padding: 8px 16px; border-radius: 999px; font-size: 13px; color: var(--muted);
     }
 
+    /* Screenshots */
+    section.shots { padding: 56px 0 16px; }
+    .shot-grid {
+      margin-top: 40px; display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 22px; justify-items: center;
+    }
+    .shot {
+      width: 190px; border-radius: 26px; overflow: hidden;
+      border: 1px solid rgba(255,255,255,.14);
+      box-shadow: 0 14px 34px rgba(0,0,0,.4);
+      background: #fff; transition: transform .15s, box-shadow .15s;
+    }
+    .shot:hover { transform: translateY(-6px) scale(1.02); box-shadow: 0 20px 44px rgba(0,0,0,.5); }
+    .shot img { display: block; width: 100%; height: auto; }
+    .shot figcaption {
+      padding: 10px 8px; text-align: center; font-size: 13px; color: var(--muted);
+      background: var(--surface2);
+    }
+
     /* Changelog */
     section.changelog { padding: 56px 0 88px; }
     .log {
@@ -164,6 +184,7 @@
     </div>
     <div class="nav-links">
       <a href="#features">Features</a>
+      <a href="#screenshots">Screenshots</a>
       <a href="#download">Download</a>
       <a href="#changelog">Changelog</a>
       <a href="https://github.com/nazimunaeem/IPDial">GitHub</a>
@@ -260,6 +281,20 @@
       <p style="margin-top:18px; font-size:13px;">
         Want to update? Just install the new APK over the old one — your accounts and settings are kept.
       </p>
+    </div>
+  </section>
+
+  <!-- Screenshots -->
+  <section class="shots wrap" id="screenshots">
+    <h2>Screenshots</h2>
+    <div class="shot-grid">
+      <figure class="shot"><img src="screens/home.png" alt="IPDial home screen" loading="lazy" /><figcaption>Home</figcaption></figure>
+      <figure class="shot"><img src="screens/keypad.png" alt="IPDial keypad" loading="lazy" /><figcaption>Keypad</figcaption></figure>
+      <figure class="shot"><img src="screens/keypad_dial.png" alt="IPDial dialing" loading="lazy" /><figcaption>Dialing</figcaption></figure>
+      <figure class="shot"><img src="screens/contacts.png" alt="IPDial contacts" loading="lazy" /><figcaption>Contacts</figcaption></figure>
+      <figure class="shot"><img src="screens/logs.png" alt="IPDial call log" loading="lazy" /><figcaption>Call log</figcaption></figure>
+      <figure class="shot"><img src="screens/accounts.png" alt="IPDial accounts" loading="lazy" /><figcaption>Accounts</figcaption></figure>
+      <figure class="shot"><img src="screens/menu.png" alt="IPDial app menu" loading="lazy" /><figcaption>App menu</figcaption></figure>
     </div>
   </section>
 
