@@ -27,11 +27,13 @@ import com.ipdial.data.model.CallSession
 import com.ipdial.data.model.CallState
 import com.ipdial.data.model.Contact
 import com.ipdial.data.model.IncomingCallMode
+import com.ipdial.data.model.InspectStatus
 import com.ipdial.data.model.KeypadDesign
 import com.ipdial.data.model.RegStatus
 import com.ipdial.data.model.SipAccount
 import com.ipdial.data.model.ThemeMode
 import com.ipdial.data.model.Transport
+import com.ipdial.data.model.TurnTransport
 import com.ipdial.data.repository.AccountRepository
 import com.ipdial.data.repository.CallLogRepository
 import com.ipdial.data.repository.ContactsRepository
@@ -105,6 +107,9 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     val dndEnabled: StateFlow<Boolean> = repo.dndEnabled
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
+    val fullScreenContactPhoto: StateFlow<Boolean> = repo.fullScreenContactPhoto
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
     val googleSignInBannerDismissed: StateFlow<Boolean> = repo.googleSignInBannerDismissed
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
@@ -157,24 +162,35 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         }.stateIn(viewModelScope, SharingStarted.Eagerly, "")
     }
 
-    // Whether THIS device is whitelisted to use Pro for the signed-in account.
-    // null = unknown / not signed in; false = signed in but Pro locked on this device.
-    private val _currentDeviceAuthorized = MutableStateFlow<Boolean?>(null)
-    val currentDeviceAuthorized: StateFlow<Boolean?> = _currentDeviceAuthorized.asStateFlow()
+    // Whether THIS device has Pro access (within first N logged-in devices).
+    // null = unknown / not signed in; false = signed in but no Pro access (beyond slot limit).
+    private val _currentDeviceHasPro = MutableStateFlow<Boolean?>(null)
+    val currentDeviceHasPro: StateFlow<Boolean?> = _currentDeviceHasPro.asStateFlow()
 
-    // How many devices are whitelisted for the signed-in account (used to show the
-    // "buy a device slot" row on ALL devices once the account spans > 1 device).
-    private val _authorizedDeviceCount = MutableStateFlow(0)
-    val authorizedDeviceCount: StateFlow<Int> = _authorizedDeviceCount.asStateFlow()
+    // Total number of device slots the signed-in account can hold (default 2).
+    private val _allowedDeviceCount = MutableStateFlow(2)
+    val allowedDeviceCount: StateFlow<Int> = _allowedDeviceCount.asStateFlow()
 
-    // How many devices have requested a slot but are not yet whitelisted. Lets the
-    // authorized device(s) know another device wants Pro (shows "buy a device slot").
-    private val _pendingDeviceCount = MutableStateFlow(0)
-    val pendingDeviceCount: StateFlow<Int> = _pendingDeviceCount.asStateFlow()
+    // All logged-in devices for this account.
+    private val _loggedInDevices = MutableStateFlow<List<String>>(emptyList())
+    val loggedInDevices: StateFlow<List<String>> = _loggedInDevices.asStateFlow()
+
+    // Number of logged-in devices.
+    val loggedInDeviceCount: StateFlow<Int> = loggedInDevices.map { it.size }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+
+    // Whether this device has Pro access.
+    val currentDeviceHasProFlow: StateFlow<Boolean> = currentDeviceHasPro
+        .map { it == true }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    // Free slots still available = total slots minus logged-in devices.
+    val availableSlots: StateFlow<Int> = combine(allowedDeviceCount, loggedInDeviceCount) { allowed, used ->
+        maxOf(0, allowed - used)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
 
     private suspend fun refreshDeviceSlots() {
-        _authorizedDeviceCount.value = firestoreSync?.getAuthorizedDeviceCount() ?: 0
-        _pendingDeviceCount.value = firestoreSync?.getPendingDeviceCount() ?: 0
+        _allowedDeviceCount.value = firestoreSync?.getAllowedDeviceCount() ?: 2
     }
 
     val proPoints: StateFlow<Int> = repo.proPoints
@@ -217,6 +233,23 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     val globalAgcEnabled: StateFlow<Boolean> = repo.globalAgcEnabled
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
+    // Global NAT traversal (TURN relay) settings — applied to ALL accounts.
+    // Blank username/password means TURN is disabled; ICE+STUN+IPv6 still handle
+    // most NAT types for free.
+    val turnServer: StateFlow<String> = repo.turnServer
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+    val turnUsername: StateFlow<String> = repo.turnUsername
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+    val turnPassword: StateFlow<String> = repo.turnPassword
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+    val turnTransport: StateFlow<TurnTransport> = repo.turnTransport
+        .stateIn(viewModelScope, SharingStarted.Eagerly, TurnTransport.UDP)
+
+    fun setTurnServer(server: String) = viewModelScope.launch { repo.setTurnServer(server) }
+    fun setTurnUsername(username: String) = viewModelScope.launch { repo.setTurnUsername(username) }
+    fun setTurnPassword(password: String) = viewModelScope.launch { repo.setTurnPassword(password) }
+    fun setTurnTransport(tp: TurnTransport) = viewModelScope.launch { repo.setTurnTransport(tp) }
+
     val deviceNoiseCancellationSupported: Boolean = try {
         android.media.audiofx.NoiseSuppressor.isAvailable()
     } catch (_: Throwable) {
@@ -229,6 +262,7 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     }
     fun setDnd(enabled: Boolean) = viewModelScope.launch { repo.setDnd(enabled) }
     fun setGlobalVibrate(enabled: Boolean) = viewModelScope.launch { repo.setGlobalVibrate(enabled) }
+    fun setFullScreenContactPhoto(enabled: Boolean) = viewModelScope.launch { repo.setFullScreenContactPhoto(enabled) }
     fun dismissGoogleSignInBanner() = viewModelScope.launch { repo.dismissGoogleSignInBanner() }
     
     fun setFontSize(context: Context, multiplier: Float) = viewModelScope.launch { 
@@ -332,8 +366,8 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                     // do NOT claim a "sessions" document — that single-active-session
                     // mechanism used to force sign-out of the other device, making
                     // BOTH devices signed-out-but-points-syncing messes.
-                    val canUsePro = firestoreSync?.ensureFreeFirstDevice(myDeviceId) == true
-                    _currentDeviceAuthorized.value = canUsePro
+                    val canUsePro = firestoreSync?.addDeviceAndCheckPro(myDeviceId) == true
+                    _currentDeviceHasPro.value = canUsePro
                     if (canUsePro) {
                         repo.setProDeviceAuthorized(true, myDeviceId)
                     } else {
@@ -369,14 +403,11 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
 
     fun signOut() {
         viewModelScope.launch {
-            val uid = authRepo.currentUser.value?.uid
-            val myDeviceId = repo.deviceId.first().orEmpty()
+            val myDeviceId = repo.getOrCreateDeviceId()
 
-            if (uid != null && myDeviceId.isNotEmpty()) {
-                // Free this device's pending slot (if any) so the remaining
-                // authorized device(s) stop showing the "buy a slot" row instantly.
-                // uid is passed explicitly because auth is cleared right after.
-                firestoreSync?.removePendingDevice(uid, myDeviceId)
+            // Remove this device from the logged-in devices list
+            if (myDeviceId.isNotEmpty()) {
+                firestoreSync?.removeLoggedInDevice(myDeviceId)
             }
 
             forceSignOutLocally()
@@ -389,9 +420,9 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
      * sign-in re-syncs the account's points/expiration from Firestore.
      */
     private suspend fun forceSignOutLocally() {
-        _currentDeviceAuthorized.value = null
-        _authorizedDeviceCount.value = 0
-        _pendingDeviceCount.value = 0
+        _currentDeviceHasPro.value = null
+        _allowedDeviceCount.value = 2
+        _loggedInDevices.value = emptyList()
         firestoreSync?.stopListening()
         authRepo.signOut()
         repo.clearFirebaseUserData()
@@ -457,22 +488,34 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
      * [FirestorePointsSync.DEVICE_SLOT_COST] points. If successful this device
      * becomes authorized and can claim the active session.
      */
-    fun buyDeviceSlot(onComplete: (Boolean, String) -> Unit) {
+    fun removeDevice(onComplete: (Boolean, String) -> Unit) {
+        viewModelScope.launch {
+            val uid = authRepo.currentUser.value?.uid ?: return@launch
+            val myDeviceId = repo.getOrCreateDeviceId()
+            val success = firestoreSync?.removeLoggedInDevice(myDeviceId) ?: false
+            if (success) {
+                onComplete(true, "Device removed and signed out")
+            } else {
+                onComplete(false, "Failed to remove device")
+            }
+        }
+    }
+
+    fun clearAllDevices() {
+        viewModelScope.launch {
+            val uid = authRepo.currentUser.value?.uid ?: return@launch
+            val success = firestoreSync?.clearAllDevices(uid) ?: false
+            if (success) {
+                _currentDeviceHasPro.value = false
+                refreshDeviceSlots()
+            }
+        }
+    }
+
+    fun removeDevice(deviceEntry: String) {
         viewModelScope.launch {
             val myDeviceId = repo.getOrCreateDeviceId()
-            val result = firestoreSync?.purchaseDeviceSlot(myDeviceId)
-            if (result?.success == true) {
-                // Reflect updated points (purchaseDeviceSlot already wrote it).
-                repo.setProDeviceAuthorized(true, myDeviceId)
-                _currentDeviceAuthorized.value = true
-                onComplete(true, result.message ?: "Device authorized")
-                refreshDeviceSlots()
-            } else {
-                onComplete(
-                    false,
-                    result?.message ?: "Could not buy a device slot. Make sure you're signed in and have ${FirestorePointsSync.DEVICE_SLOT_COST} points."
-                )
-            }
+            firestoreSync?.removeLoggedInDevice(deviceEntry)
         }
     }
 
@@ -868,6 +911,16 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
             repo.getOrCreateDeviceId()
         }
 
+        // Initialize default call volume from current system STREAM_VOICE_CALL level
+        try {
+            val am = getApplication<Application>().getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val max = am.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
+            val current = am.getStreamVolume(AudioManager.STREAM_VOICE_CALL)
+            if (max > 0) {
+                _callVolume.value = (current.toFloat() / max.toFloat() * 6f).coerceIn(0f, 6f)
+            }
+        } catch (_: Exception) {}
+
         // Initialize Auth-backed state flows. authRepo itself is lazy (see its
         // declaration) and initializes on first access here.
         isSignedIn = authRepo.currentUser.map { it != null }
@@ -884,32 +937,32 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         try {
             firestoreSync = FirestorePointsSync(repo)
             // Live device-slot state → UI. Fires from the snapshot listener
-            // whenever authorizedDevices / pendingDevices change, so the
-            // buy-slot row disappears the moment a pending device signs out —
-            // no manual refresh needed.
-            firestoreSync?.onDeviceSlotsChanged = { authorized, pending ->
-                _authorizedDeviceCount.value = authorized.size
-                _pendingDeviceCount.value = pending.size
+            // whenever loggedInDevices / allowedDevices change.
+            firestoreSync?.onDeviceSlotsChanged = { loggedIn, pending, allowed ->
+                _loggedInDevices.value = loggedIn
+                _allowedDeviceCount.value = allowed
                 val myDeviceId = deviceId.value
                 if (myDeviceId.isNotEmpty()) {
-                    _currentDeviceAuthorized.value = authorized.contains(myDeviceId)
+                    val hasPro = loggedIn.indexOfFirst { com.ipdial.data.repository.FirestorePointsSync.isSameDevice(it, myDeviceId) }.let { index ->
+                        index >= 0 && index < allowed
+                    }
+                    _currentDeviceHasPro.value = hasPro
                 }
-                android.util.Log.d("SipViewModel", "slots: authorized=${authorized.size} pending=${pending.size} me=$myDeviceId authorizedMe=${authorized.contains(myDeviceId)}")
+                android.util.Log.d("SipViewModel", "slots: allowed=$allowed loggedIn=${loggedIn.size} me=$myDeviceId hasPro=${_currentDeviceHasPro.value}")
             }
             firestoreSync?.startListening()
         } catch (e: Throwable) {
             android.util.Log.e("SipViewModel", "FirestorePointsSync init failed", e)
         }
 
-        // Fast Pro on relaunch: if this device was already whitelisted in a
-        // previous session, unlock it locally right away (before the Firestore
-        // round-trip confirms), so a single-device account gets Pro instantly.
+        // Fast Pro on relaunch: if this device was already in the first N logged-in devices,
+        // unlock it locally right away (before the Firestore round-trip confirms).
         viewModelScope.launch {
             val myDeviceId = repo.getOrCreateDeviceId()
             val cachedAuthorized = repo.proDeviceAuthorized.first() &&
                 repo.proDeviceAuthorizedFor.first() == myDeviceId
             if (cachedAuthorized) {
-                _currentDeviceAuthorized.value = true
+                _currentDeviceHasPro.value = true
             }
         }
 
@@ -931,10 +984,9 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
             // devices can be signed in simultaneously without kicking each other out.
             if (firebaseUid != null) {
                 val myDeviceId = repo.getOrCreateDeviceId()
-                // ensureFreeFirstDevice() already returns true when this device is
-                // whitelisted, so a separate isDeviceAuthorized round-trip is wasteful.
-                val authorized = firestoreSync?.ensureFreeFirstDevice(myDeviceId) == true
-                _currentDeviceAuthorized.value = authorized
+                // addDeviceAndCheckPro() adds this device to logged-in list and returns Pro access status.
+                val authorized = firestoreSync?.addDeviceAndCheckPro(myDeviceId) == true
+                _currentDeviceHasPro.value = authorized
                 if (authorized) {
                     repo.setProDeviceAuthorized(true, myDeviceId)
                 }
@@ -999,13 +1051,6 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
             val musicMax = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
             val musicIdx = am.getStreamVolume(AudioManager.STREAM_MUSIC)
 
-            if (android.os.SystemClock.elapsedRealtime() - lastSelfVolumeChangeAt < 800) {
-                // Echo of our own write: adopt values, do not re-bridge.
-                lastKnownVoiceVolume = voiceIdx
-                lastKnownMusicVolume = musicIdx
-                return
-            }
-
             val voiceChanged = voiceMax > 1 && voiceIdx != lastKnownVoiceVolume
             val musicChanged = musicMax > 1 && musicIdx != lastKnownMusicVolume
             lastKnownVoiceVolume = voiceIdx
@@ -1051,7 +1096,7 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         volumePollerJob = viewModelScope.launch {
             while (true) {
                 monitorDeviceVolume()
-                kotlinx.coroutines.delay(500)
+                kotlinx.coroutines.delay(200)
             }
         }
     }
@@ -1171,6 +1216,59 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                 try {
                     SipEngine.nullSessionIfStale()
                 } catch (_: Throwable) {}
+            }
+        }
+
+        // Media-never-established watchdog for stuck/silent calls. This is the
+        // pjsua2 2.5-only RTP fallback: the binding exposes NO stream packet
+        // counters (StreamInfo.rxPt/txPt are payload types, not counts), so packet
+        // activity can't be polled. Instead, the negotiated audio codec field is
+        // populated only after a media stream goes ACTIVE and getStreamInfo()
+        // succeeds — a CONFIRMED call that never negotiates a codec for 15s+15s
+        // means no RTP direction ever came up (one-way/silent/stuck call). Fail it
+        // explicitly rather than leaving the screen up forever.
+        viewModelScope.launch {
+            var deadMediaCallId = -1
+            while (true) {
+                kotlinx.coroutines.delay(15_000)
+                val s = callSession.value
+                if (s == null || s.callId == -1 || s.state != CallState.CONFIRMED || s.negotiatedCodec != null) {
+                    deadMediaCallId = -1
+                    continue
+                }
+                if (deadMediaCallId == s.callId) {
+                    android.util.Log.w("SipViewModel", "No media negotiated for CONFIRMED call ${s.callId} after 30s — ending stuck call")
+                    hangup()
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(getApplication(), "Call failed — no audio path", Toast.LENGTH_SHORT).show()
+                    }
+                    deadMediaCallId = -1
+                } else {
+                    deadMediaCallId = s.callId
+                }
+            }
+        }
+
+        // Sync device volume on call start
+        viewModelScope.launch {
+            callSession.collect { session ->
+                if (session != null && session.state != CallState.DISCONNECTED) {
+                    try {
+                        val am = getApplication<Application>().getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                        val voiceMax = am.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
+                        val voiceIdx = am.getStreamVolume(AudioManager.STREAM_VOICE_CALL)
+                        if (voiceMax > 0) {
+                            val factor = (voiceIdx.toFloat() / voiceMax.toFloat() * 6f).coerceIn(0f, 6f)
+                            if (Math.abs(_callVolume.value - factor) > 0.01f) {
+                                _callVolume.value = factor
+                                SipAudioController.setCallVolume(factor)
+                                android.util.Log.d("SipViewModel", "Call start: synced device volume $voiceIdx/$voiceMax -> factor $factor")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.w("SipViewModel", "Failed to sync volume on call start", e)
+                    }
+                }
             }
         }
     }
@@ -1421,8 +1519,20 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
             val engineStarted = SipEngine.makeCall(account.id, uri)
             _isMakingCall.set(false)
             if (!engineStarted) {
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(getApplication(), "Call not sent", Toast.LENGTH_SHORT).show()
+                // makeCall may be elided by the engine guard when Telecom already
+                // placed (or is placing) the call. Only warn if no live session exists;
+                // else the CallScreen will dismiss on the active session.
+                val session = SipEngine.callSession.value
+                val callProceeding = session != null && session.state != CallState.DISCONNECTED
+                if (!callProceeding) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(getApplication(), "Call not sent", Toast.LENGTH_SHORT).show()
+                    }
+                } else {
+                    com.ipdial.util.SipLogger.log(
+                        "SipViewModel",
+                        "Direct call elided but session active (callId=${session.callId}, state=${session.state}) — not showing error"
+                    )
                 }
             }
         }
@@ -1470,11 +1580,6 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
         }
-
-        // CRITICAL FIX: Null the session immediately so the CallScreen / IncomingCallScreen
-        // closes right away. Do NOT wait for the PJSIP onCallState(DISCONNECTED) callback,
-        // which can be delayed on slow networks or when the remote doesn't respond promptly.
-        com.ipdial.service.SipEngine._callSession.value = null
     }
      fun toggleMute() { SipAudioController.setMute(!(callSession.value?.isMuted ?: false)) }
      fun toggleSpeaker() { SipAudioController.setSpeaker(!(callSession.value?.isSpeaker ?: false)) }
@@ -1484,9 +1589,6 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
          lastSelfVolumeChangeAt = android.os.SystemClock.elapsedRealtime()
          _callVolume.value = factor
          SipAudioController.setCallVolume(factor)
-         // Keep the device's native call-volume stream in sync so the change is
-         // reflected in the system HUD and any OEM that consumes the key events
-         // still produces an audible change.
          mirrorToDeviceVoiceVolume(factor)
      }
 
@@ -1495,15 +1597,11 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
      * buttons. Available the moment a call is placed (dialing/ringing/active).
      */
     fun adjustCallVolumeByHardware(up: Boolean) {
-        // Consistent ±1 per physical press on the 0..6 in-app scale.
         val step = 1f
         val newVol = (if (up) _callVolume.value + step else _callVolume.value - step)
             .coerceIn(0f, 6f)
         android.util.Log.d("SipViewModel", "adjustCallVolumeByHardware: up=$up -> ${_callVolume.value} -> $newVol call=${callSession.value?.state}")
         setCallVolume(newVol)
-        // Nudge the system voice-call stream in the same direction so the OEM's
-        // volume bar/HUD visibly tracks the physical key.
-        nudgeDeviceVoiceVolume(up)
     }
 
      fun setShowFullIncomingScreen(show: Boolean) {
@@ -1772,5 +1870,190 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
 
     fun onAudioAction(context: Context, onAction: () -> Unit) {
         onAction()
+    }
+
+    // ── Server Inspector ────────────────────────────────────────────
+
+    private val _inspection = MutableStateFlow(com.ipdial.data.model.ServerInspection())
+    val inspection: StateFlow<com.ipdial.data.model.ServerInspection> = _inspection.asStateFlow()
+
+    private val _inspectionRunning = MutableStateFlow(false)
+    val inspectionRunning: StateFlow<Boolean> = _inspectionRunning.asStateFlow()
+
+    /**
+     * Runs a multi-step server inspection: DNS → Registration check → Call Quality → DTMF.
+     *
+     * The call-quality and DTMF steps require an account already registered on the
+     * target host AND an active call to that host. If no matching account is
+     * registered or no call is active, those steps are reported as WARN (not FAIL)
+     * with guidance text for the user.
+     */
+    fun runServerInspection(host: String) {
+        if (_inspectionRunning.value) return
+        _inspectionRunning.value = true
+        val cleanHost = host.trim().removePrefix("sip:").removePrefix("sips://")
+        _inspection.value = com.ipdial.data.model.ServerInspection(
+            host = cleanHost,
+            startedAtMs = System.currentTimeMillis(),
+            dns = com.ipdial.data.model.DnsResult(status = com.ipdial.data.model.InspectStatus.RUNNING, host = cleanHost),
+        )
+
+        viewModelScope.launch(Dispatchers.IO) {
+            // ── Step 1: DNS ─────────────────────────────────────────
+            val dnsResult = runDnsProbe(cleanHost)
+            _inspection.value = _inspection.value.copy(
+                dns = dnsResult,
+                register = com.ipdial.data.model.RegisterResult(status = com.ipdial.data.model.InspectStatus.RUNNING),
+            )
+
+            // ── Step 2: Registration check ──────────────────────────
+            val regResult = runRegisterProbe(cleanHost)
+            _inspection.value = _inspection.value.copy(
+                register = regResult,
+                callQuality = com.ipdial.data.model.CallQualitySnapshot(status = com.ipdial.data.model.InspectStatus.RUNNING),
+            )
+
+            // ── Step 3: Call Quality (requires live call) ───────────
+            val qualityResult = runCallQualityProbe(cleanHost)
+            _inspection.value = _inspection.value.copy(
+                callQuality = qualityResult,
+                dtmf = com.ipdial.data.model.DtmfResult(status = com.ipdial.data.model.InspectStatus.RUNNING),
+            )
+
+            // ── Step 4: DTMF probe (requires live call) ─────────────
+            val dtmfResult = runDtmfProbe(cleanHost)
+            _inspection.value = _inspection.value.copy(
+                dtmf = dtmfResult,
+                finishedAtMs = System.currentTimeMillis(),
+            )
+
+            _inspectionRunning.value = false
+        }
+    }
+
+    private fun runDnsProbe(host: String): com.ipdial.data.model.DnsResult {
+        return try {
+            val hostOnly = host.substringBefore(":").substringBefore(";")
+            val start = System.currentTimeMillis()
+            val addresses = java.net.InetAddress.getAllByName(hostOnly)
+            val elapsed = System.currentTimeMillis() - start
+            val resolved = addresses.firstOrNull()?.hostAddress ?: ""
+            com.ipdial.data.model.DnsResult(
+                status = if (resolved.isNotBlank()) InspectStatus.PASS else InspectStatus.FAIL,
+                host = host,
+                resolvedIp = resolved,
+                latencyMs = elapsed,
+            )
+        } catch (e: Throwable) {
+            com.ipdial.data.model.DnsResult(
+                status = InspectStatus.FAIL,
+                host = host,
+                error = e.message ?: "DNS resolution failed",
+            )
+        }
+    }
+
+    private fun runRegisterProbe(host: String): com.ipdial.data.model.RegisterResult {
+        val acct = accounts.value.firstOrNull {
+            it.isEnabled && it.domain.lowercase().trim().let { d ->
+                d == host.lowercase() || d.startsWith(host.lowercase().substringBefore(":"))
+            }
+        }
+        if (acct == null) {
+            return com.ipdial.data.model.RegisterResult(
+                status = InspectStatus.WARN,
+                statusText = "No account registered on this host. Add an account with domain \"$host\" to test registration.",
+            )
+        }
+        val transport = acct.transport.name
+        return when (acct.regStatus) {
+            com.ipdial.data.model.RegStatus.REGISTERED -> com.ipdial.data.model.RegisterResult(
+                status = InspectStatus.PASS,
+                statusCode = 200,
+                statusText = "REGISTERED (${acct.displayName})",
+                transport = transport,
+            )
+            com.ipdial.data.model.RegStatus.ERROR -> com.ipdial.data.model.RegisterResult(
+                status = InspectStatus.FAIL,
+                statusText = "Registration ERROR: ${acct.regStatusText.ifBlank { "auth or network failure" }}",
+                transport = transport,
+            )
+            com.ipdial.data.model.RegStatus.REGISTERING -> com.ipdial.data.model.RegisterResult(
+                status = InspectStatus.WARN,
+                statusText = "Registration in progress…",
+                transport = transport,
+            )
+            else -> com.ipdial.data.model.RegisterResult(
+                status = InspectStatus.WARN,
+                statusText = "Account is unregistered (disabled or not yet attempted).",
+                transport = transport,
+            )
+        }
+    }
+
+    private fun runCallQualityProbe(host: String): com.ipdial.data.model.CallQualitySnapshot {
+        val session = callSession.value
+        if (session == null || session.state != com.ipdial.data.model.CallState.CONFIRMED) {
+            return com.ipdial.data.model.CallQualitySnapshot(
+                status = InspectStatus.WARN,
+                qualitySummary = "No active call. Place a call to \"$host\" first, then re-run the inspection to capture live quality metrics.",
+            )
+        }
+
+        // Verify the call is to the inspected host
+        val callDomain = accounts.value.firstOrNull { it.id == session.accountId }?.domain?.lowercase()?.trim() ?: ""
+        if (!callDomain.startsWith(host.lowercase().substringBefore(":"))) {
+            return com.ipdial.data.model.CallQualitySnapshot(
+                status = InspectStatus.WARN,
+                qualitySummary = "Active call is on \"$callDomain\", not \"$host\". Place a call to the inspected host for accurate results.",
+            )
+        }
+
+        val snapshot = SipEngine.snapshotCallQuality()
+        if (snapshot == null) {
+            return com.ipdial.data.model.CallQualitySnapshot(
+                status = InspectStatus.FAIL,
+                error = "Failed to read stream info from PJSIP engine.",
+            )
+        }
+
+        val (codec, clockRate, dump) = snapshot
+        val codecClean = codec.trim().uppercase().ifBlank { session.negotiatedCodec ?: "unknown" }
+        val quality = when {
+            codecClean.contains("OPUS") -> "Excellent (Opus, wideband adaptive)"
+            codecClean.contains("G722") -> "Excellent (G.722, wideband 16kHz)"
+            codecClean.contains("PCMA") || codecClean.contains("PCMU") -> "Good (G.711, narrowband 8kHz)"
+            codecClean.contains("G729") -> "Fair (G.729, low-bandwidth 8kHz)"
+            codecClean.contains("GSM") -> "Low (GSM, 13kbps)"
+            else -> "Unknown codec: $codecClean"
+        }
+
+        return com.ipdial.data.model.CallQualitySnapshot(
+            status = InspectStatus.PASS,
+            negotiatedCodec = codecClean,
+            clockRateHz = clockRate,
+            callDurationSec = session.durationSeconds,
+            qualitySummary = quality,
+        )
+    }
+
+    private fun runDtmfProbe(host: String): com.ipdial.data.model.DtmfResult {
+        val session = callSession.value
+        if (session == null || session.state != com.ipdial.data.model.CallState.CONFIRMED) {
+            return com.ipdial.data.model.DtmfResult(
+                status = InspectStatus.WARN,
+                method = "N/A",
+                error = "No active call. Place a call first, then re-run to test DTMF delivery.",
+            )
+        }
+
+        val (method, accepted) = SipEngine.probeDtmf('1')
+        return com.ipdial.data.model.DtmfResult(
+            status = if (accepted) InspectStatus.PASS else InspectStatus.FAIL,
+            method = method,
+            digit = '1',
+            accepted = accepted,
+            error = if (!accepted) "DTMF digit rejected by engine ($method)" else null,
+        )
     }
 }

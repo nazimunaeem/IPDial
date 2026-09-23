@@ -110,6 +110,47 @@ class SipCallDelegate(
         }, delayMs)
     }
 
+    /**
+     * Schedules the optional 2s-delayed native delete once and only once, no matter
+     * which callback (onCallState or onCallTsxState) observes the disconnect first.
+     * Without this, a disconnect seen only by onCallTsxState (e.g. remote BYE where
+     * onCallState's info() throws) would never free the native Call object — and a
+     * second lifecycle would clone the same dialog.
+     */
+    internal fun scheduleNativeDelete(callId: Int) {
+        if (_isDeleteScheduled) return
+        _isDeleteScheduled = true
+        // Delay native delete by 2000ms (2s) so PJSIP worker finishes sending
+        // 200 OK for remote BYE over UDP/TCP before destroying internal C++ struct.
+        // 500ms was too short for unreliable UDP networks; 2s provides
+        // sufficient margin for retransmissions.
+        val callToDelete = this
+        mainHandler.postDelayed({
+            SipEngine.runOnPjsipThread {
+                try {
+                    val ep = SipEngine.endpoint
+                    if (ep == null) {
+                        log("DELAYED DELETE: endpoint already destroyed — skipping native delete for callId=$callId", false)
+                        return@runOnPjsipThread
+                    }
+                    SipEngine.registerCurrentThreadEx()
+                    synchronized(SipEngine.pjsipLock) {
+                        try {
+                            callToDelete.delete()
+                            log("DELAYED DELETE: native call $callId deleted", false)
+                        } catch (e: Throwable) {
+                            // Double-delete from a raced hangup is benign now that the
+                            // shared _isDeleteScheduled guard serializes the schedule.
+                            log("DELAYED DELETE: delete threw for callId=$callId: ${e.message}", true)
+                        }
+                    }
+                } catch (e: Throwable) {
+                    Log.e("SipEngine", "Failed to delete call on PJSIP thread", e)
+                }
+            }
+        }, 2000L)
+    }
+
     override fun onCallState(prm: OnCallStateParam) {
         val currentCallId = try { getId() } catch (e: Throwable) {
             log("ONCALLSTATE ENTRY: getId() failed: ${e.message}", true)
@@ -123,23 +164,17 @@ class SipCallDelegate(
 
             val ci = try { info } catch (e: Throwable) {
                 log("Failed to get call info for call $currentCallId: ${e.message}", true)
-                try { SipEngine.onCallDisconnected?.invoke(currentCallId) } catch (_: Throwable) {}
-                callMap.remove(currentCallId)
-                if (_callSession.value?.callId == currentCallId) {
-                    _callSession.value = null
-                }
-                SipConnectionService.disconnectCall(currentCallId, android.telecom.DisconnectCause.REMOTE)
+                // Don't aggressively clean up here — info() often throws during
+                // remote BYE processing because the call is mid-destruction.
+                // Let onCallTsxState handle the cleanup after SIP transaction completes.
+                log("ONCALLSTATE: info() threw, deferring cleanup to onCallTsxState", false)
                 return
             }
 
             if (ci == null) {
                 log("Call info is null for call $currentCallId", true)
-                try { SipEngine.onCallDisconnected?.invoke(currentCallId) } catch (_: Throwable) {}
-                callMap.remove(currentCallId)
-                if (_callSession.value?.callId == currentCallId) {
-                    _callSession.value = null
-                }
-                SipConnectionService.disconnectCall(currentCallId, android.telecom.DisconnectCause.REMOTE)
+                // Same as above: defer to onCallTsxState
+                log("ONCALLSTATE: ci is null, deferring cleanup to onCallTsxState", false)
                 return
             }
 
@@ -160,6 +195,9 @@ class SipCallDelegate(
                 val statusReason = ci.lastReason
                 log("ONCALLSTATE DISCONNECT BLOCK: callId=$currentCallId state=$newState code=$statusCode reason=$statusReason", false)
                 stopAudioWatchdog()
+                // Clear any DTMF digits still buffered for this call so they are not
+                // replayed into the next call.
+                SipAudioController.clearPendingDtmf()
 
                 // Preserve disconnect code/reason for SipService.observeCallState() to log & toast
                 if (statusCode > 0 || !statusReason.isNullOrBlank()) {
@@ -172,9 +210,19 @@ class SipCallDelegate(
                     log("onCallDisconnected callback failed: ${e.message}", true)
                 }
 
-                // CRITICAL FIX: Remove from callMap BEFORE nulling session to prevent race conditions
-                callMap.remove(currentCallId)
-                log("ONCALLSTATE DISCONNECT: callId=$currentCallId removed from callMap, callMapSize=${callMap.size}", false)
+                // Stamp session DISCONNECTED immediately so UI dismisses.
+                // Do NOT remove from callMap or null _callSession here —
+                // let scheduleSessionNull handle cleanup after grace period.
+                // This ensures the native call object stays alive long enough
+                // for PJSIP to send 200 OK to remote BYE.
+                if (_callSession.value?.callId == currentCallId) {
+                    _callSession.value = _callSession.value?.copy(
+                        state = CallState.DISCONNECTED,
+                        disconnectCode = if (statusCode > 0) statusCode else null,
+                        disconnectReason = statusReason?.takeIf { it.isNotBlank() }
+                    )
+                    log("ONCALLSTATE DISCONNECT: session stamped DISCONNECTED for callId=$currentCallId, UI will dismiss", false)
+                }
 
                 // Keep session alive briefly so user hears busy tone/announcement before screen closes.
                 // Especially important for BUSY (486) and REQUEST TERMINATED (487).
@@ -208,33 +256,7 @@ class SipCallDelegate(
                 log("ONCALLSTATE DISCONNECT: callId=$currentCallId telecomCause=$disconnectCause (wasLocal=${disconnectCause != android.telecom.DisconnectCause.REMOTE})", false)
                 SipConnectionService.disconnectCall(currentCallId, disconnectCause)
 
-                if (!_isDeleteScheduled) {
-                    _isDeleteScheduled = true
-                    val callToDelete = this
-                    // Native delete() must run on the PJSIP thread (serialized), NOT
-                    // on the main thread: the main thread performing a native Call
-                    // delete while the SIP worker is inside transaction processing
-                    // corrupts dialog mutex ownership and aborts the process.
-                    SipEngine.runOnPjsipThread {
-                        try {
-                            // Guard: if the endpoint is already destroyed (e.g. SipEngine.destroy()
-                            // ran from SipService.onDestroy), deleting the native Call would
-                            // SIGSEGV. The native object will be cleaned up by
-                            // SipEngine.destroy() anyway — skip the delete here.
-                            val ep = SipEngine.endpoint
-                            if (ep == null) {
-                                log("ONCALLSTATE DISCONNECT: endpoint already destroyed — skipping native delete for callId=$currentCallId", false)
-                                return@runOnPjsipThread
-                            }
-                            SipEngine.registerCurrentThreadEx()
-                            synchronized(SipEngine.pjsipLock) {
-                                callToDelete.delete()
-                            }
-                        } catch (e: Throwable) {
-                            Log.e("SipEngine", "Failed to delete call on PJSIP thread", e)
-                        }
-                    }
-                }
+                scheduleNativeDelete(currentCallId)
             } else {
                 log("ONCALLSTATE ELSE: callId=$currentCallId newState=$newState sessionBefore=${_callSession.value?.state}", false)
                 if (_callSession.value != null) {
@@ -353,6 +375,16 @@ class SipCallDelegate(
                     // received: clear the pending flag so the UI shows "Recording".
                     _callSession.value = _callSession.value?.copy(isRecordingPending = false)
                     try {
+                        // Restarting the sound device at CONFIRMED time is essential:
+                        // during EARLY→CONFIRMED the Android audio framework may re-route
+                        // or re-open the mic, which silently invalidates the
+                        // startTransmit bridges that onCallMediaState() set up during
+                        // EARLY. Re-selecting the capture/playback device (auto = -1)
+                        // restarts PJSIP's sound device and re-applies EC settings,
+                        // then reconnectAudioPathForCall() re-establishes the bridges
+                        // with fresh media objects against the live capture device.
+                        SipEngine.forceAudioDevicesForCall()
+                        SipEngine.forceEcForCallAudio()
                         SipEngine.reconnectAudioPathForCall(currentCallId)
                         mainHandler.post {
                             SipEngine.audioRouter?.routeAudioToDefault()
@@ -393,6 +425,7 @@ class SipCallDelegate(
                     val session = _callSession.value
                     if (session != null && session.callId == currentCallId) {
                         log("ONCALLTSXSTATE: Disconnect detected for callId=$currentCallId, executing cleanup", false)
+                        SipAudioController.clearPendingDtmf()
                         val statusCode = if (callInfo != null) safeStatusCode(callInfo) else 0
                         val statusReason = callInfo?.lastReason
                         if (statusCode > 0 || !statusReason.isNullOrBlank()) {
@@ -400,6 +433,16 @@ class SipCallDelegate(
                         }
                         try { SipEngine.onCallDisconnected?.invoke(currentCallId) } catch (_: Throwable) {}
                         callMap.remove(currentCallId)
+                        // IMMEDIATELY stamp DISCONNECTED (same as onCallState) so the
+                        // remote call screen dismisses without waiting for the delayed null.
+                        if (session.callId == currentCallId) {
+                            _callSession.value = session.copy(
+                                state = CallState.DISCONNECTED,
+                                disconnectCode = if (statusCode > 0) statusCode else null,
+                                disconnectReason = statusReason?.takeIf { it.isNotBlank() }
+                            )
+                            log("ONCALLTSXSTATE: session stamped DISCONNECTED for callId=$currentCallId, UI will dismiss", false)
+                        }
                         // Use the shared delayed-null so the busy tone delay is respected here
                         // too, instead of closing the screen and cutting audio immediately.
                         scheduleSessionNull(currentCallId, statusCode)
@@ -409,6 +452,11 @@ class SipCallDelegate(
                             ?: android.telecom.DisconnectCause.REMOTE
                         log("ONCALLTSXSTATE: callId=$currentCallId telecomCause=$disconnectCause (wasLocal=${disconnectCause != android.telecom.DisconnectCause.REMOTE})", false)
                         SipConnectionService.disconnectCall(currentCallId, disconnectCause)
+                        // onCallState may have already handled the native delete; the
+                        // guarded scheduleNativeDelete makes this safe either way. When
+                        // this path is the ONLY disconnect signal (onCallState's info()
+                        // threw and deferred), this is what frees the native Call object.
+                        scheduleNativeDelete(currentCallId)
                     }
                 }
             }
@@ -462,19 +510,51 @@ class SipCallDelegate(
                         mi.status == pjsua_call_media_status.PJSUA_CALL_MEDIA_ACTIVE) {
                         val aud = AudioMedia.typecastFromMedia(getMedia(mi.index.toLong()))
 
+                        // NOTE: getMedTransportInfo() was REMOVED entirely — it causes
+                        // a native SIGABRT (pj_sockaddr_get_addr assertion:
+                        // "sa_family == PJ_AF_INET || PJ_AF_INET6") on this PJSIP 2.5
+                        // build no matter when it is called (onCallMediaState OR
+                        // CONFIRMED). The transport's socket address is never fully
+                        // initialized in this build when ICE is enabled, so ANY call
+                        // to getMedTransportInfo() aborts the process. ICE candidate
+                        // diagnostics via this API are therefore impossible; the call
+                        // flow must never touch it.
+
+                        // Local audio-device-open failure signature (task 6):
+                        // media went ACTIVE but the app could not open the
+                        // capture/playback device (AudioRecord/AudioTrack error,
+                        // permission, or a stale sound-device state). This is a
+                        // LOCAL issue — NOT a network/NAT problem — and is a
+                        // candidate cause of two-way silence even when signaling
+                        // and RTP are fine.
+                        if (captureMedia == null || playbackMedia == null) {
+                            val missing = listOfNotNull(
+                                "capture" to (captureMedia == null),
+                                "playback" to (playbackMedia == null)
+                            ).filter { it.second }.joinToString { it.first }
+                            log(
+                                "onCallMediaState: WARNING callId=$currentCallId media stream ACTIVE " +
+                                    "but local audio device is NULL (missing: $missing) — " +
+                                    "this is a local audio-device-open failure, NOT a network/NAT issue. " +
+                                    "Fix the device-open path (AudioRecord/AudioTrack/permissions) — TURN will not fix this.",
+                                true
+                            )
+                        }
+
                         val currentSession = _callSession.value
                         val isEmulator = DeviceUtil.isEmulator()
                         val baseGain = if (isEmulator) SipAudioController.MIC_GAIN_EMULATOR else SipAudioController.MIC_GAIN_REAL
                         val micLevel = if (currentSession?.isMuted == true) 0f else baseGain
                         val speakerLevel = currentSession?.rxVolume ?: SipAudioController.DEFAULT_RX_VOLUME
 
-                        // PJSIP call-port gain directions:
-                        //   adjustRxLevel -> pjsua_conf_adjust_tx_level (bridge -> call) = our TX (mic) to the remote.
-                        //   adjustTxLevel  -> pjsua_conf_adjust_rx_level (call -> bridge) = our RX (listening) volume.
-                        // Historically these were swapped here, so volume buttons changed
-                        // the OTHER caller's loudness of us while our own volume sat fixed.
-                        aud.adjustRxLevel(micLevel)
-                        aud.adjustTxLevel(SipAudioController.callVolumeToPjsipLevel(speakerLevel))
+                        // Empirical pjsua2 gain direction (verified live on OPPO):
+                        //   adjustTxLevel  = mic → remote (what the OTHER caller hears).
+                        //   adjustRxLevel  = remote → us (listening volume).
+                        // v1.1.5 used these exact directions and remote audio worked;
+                        // the 1.1.6 swap broke remote audio. Restoring v1.1.5 mapping
+                        // while keeping the /3 scale mapping on listening side.
+                        aud.adjustTxLevel(micLevel)
+                        aud.adjustRxLevel(SipAudioController.callVolumeToPjsipLevel(speakerLevel))
 
                         // CRITICAL FIX: Ensure bidirectional audio path
                         // 1. Remote audio (RX) -> local speaker
@@ -515,6 +595,49 @@ class SipCallDelegate(
                     }
                 } catch (e: Throwable) {
                     log("Failed to process media state for stream $i: ${e.message}", true)
+                }
+            }
+
+            // Flush any DTMF digits that were keyed while the media was still
+            // being established (CALLING/EARLY). The stream is ACTIVE here, so
+            // RFC2833 can now be sent.
+            SipAudioController.flushPendingDtmf()
+
+            // Task 7 — graceful degradation on media/turn failures.
+            //
+            // When ICE is enabled and a call NEEDS the TURN relay (symmetric NAT,
+            // CGNAT, UDP blocked), media carries its own error state:
+            // PJSUA_CALL_MEDIA_ERROR fires when ICE/TURN allocation or negotiation
+            // fails (e.g. the 20 GB/month quota is exhausted, or TURN is
+            // unreachable). That is exactly the scenario the task calls "silently
+            // hang or stuck call screen" — the call is up in the signaling sense,
+            // but NO media can ever flow.
+            //
+            // Note: we only act on media ERROR (native, tie-lifetime) — we never
+            // touch the established call-disconnect handling in onCallState /
+            // onCallTsxState, and we do NOT treat "capture/playback device null"
+            // as a network error (that is a separate local-audio failure, logged
+            // as WARNING above).
+            if (ci.media.size > 0) {
+                val anyMediaError = (0 until ci.media.size.toInt()).any { idx ->
+                    try {
+                        ci.media.get(idx).status == pjsua_call_media_status.PJSUA_CALL_MEDIA_ERROR
+                    } catch (_: Throwable) { false }
+                }
+                val session = _callSession.value
+                if (anyMediaError && session != null && session.callId == currentCallId) {
+                    log(
+                        "onCallMediaState: MEDIA ERROR callId=$currentCallId — " +
+                            "ICE/TURN transport failed (quota exhausted, relay unreachable, or UDP blocked). " +
+                            "Failing call with user-visible error instead of leaving a stuck call screen.",
+                        true
+                    )
+                    SipEngine.mediaFailureToastShownFor = currentCallId
+                    try {
+                        hangup(CallOpParam(false))
+                    } catch (e: Throwable) {
+                        log("onCallMediaState: hangup after media error failed: ${e.message}", true)
+                    }
                 }
             }
         } catch (e: Throwable) {

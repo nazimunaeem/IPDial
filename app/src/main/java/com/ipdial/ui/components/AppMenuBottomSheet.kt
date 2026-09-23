@@ -31,10 +31,8 @@ import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CardGiftcard
 import androidx.compose.material.icons.filled.Dialpad
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Palette
-import androidx.compose.material.icons.filled.PrivacyTip
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
@@ -44,7 +42,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -159,7 +156,7 @@ fun AppMenuBottomSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp)
+                .padding(horizontal = 14.dp, vertical = 16.dp)
                 .verticalScroll(rememberScrollState())
         ) {
             // Title
@@ -191,29 +188,23 @@ fun AppMenuBottomSheet(
 
             Spacer(Modifier.height(8.dp))
 
-            // 2. Pro Card
-            ProBannerCard(
+            // 2. Pro + Sign-in merged card
+            val isSignedIn by vm.isSignedIn.collectAsState()
+            val currentUser by vm.currentUser.collectAsState()
+            val userCode by vm.userCode.collectAsState()
+            ProUserCard(
                 isPro = isPro,
                 proExpiration = proExpiration,
+                isSignedIn = isSignedIn,
+                displayName = currentUser?.displayName ?: "User",
+                email = currentUser?.email ?: "",
+                photoUrl = currentUser?.photoUrl?.toString(),
+                userCode = userCode,
                 onClick = {
                     onDismissRequest()
                     onNavigate(NavDest.GetPro.route)
                 }
             )
-
-            // 2.5. User Profile (if signed in)
-            val isSignedIn by vm.isSignedIn.collectAsState()
-            val currentUser by vm.currentUser.collectAsState()
-            val userCode by vm.userCode.collectAsState()
-            if (isSignedIn && currentUser != null) {
-                Spacer(Modifier.height(8.dp))
-                UserProfileMini(
-                    name = currentUser?.displayName ?: "User",
-                    email = currentUser?.email ?: "",
-                    photoUrl = currentUser?.photoUrl?.toString(),
-                    userCode = userCode
-                )
-            }
 
             Spacer(Modifier.height(10.dp))
 
@@ -325,31 +316,11 @@ fun AppMenuBottomSheet(
                 Column {
                     MenuRowItem(
                         icon = Icons.Default.Settings,
-                        title = "General Settings",
+                        title = "All Settings",
                         subtitle = "Ringtone, Noise Cancellation, App Icon",
                         onClick = {
                             onDismissRequest()
                             onNavigate(NavDest.Settings.route)
-                        }
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f), modifier = Modifier.padding(horizontal = 16.dp))
-                    MenuRowItem(
-                        icon = Icons.Default.PrivacyTip,
-                        title = "Privacy Policy",
-                        subtitle = "Data usage & permissions",
-                        onClick = {
-                            onDismissRequest()
-                            onNavigate(NavDest.Privacy.route)
-                        }
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f), modifier = Modifier.padding(horizontal = 16.dp))
-                    MenuRowItem(
-                        icon = Icons.Default.Info,
-                        title = "About IPDial",
-                        subtitle = "Version, developer & updates",
-                        onClick = {
-                            onDismissRequest()
-                            onNavigate(NavDest.About.route)
                         }
                     )
                 }
@@ -441,16 +412,16 @@ private fun AccountStatusCard(
     Surface(
         onClick = onClick,
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(14.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
-            modifier = Modifier.padding(14.dp),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .size(44.dp)
+                    .size(32.dp)
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
                 contentAlignment = Alignment.Center
@@ -459,30 +430,29 @@ private fun AccountStatusCard(
                     imageVector = Icons.Default.AccountBalance,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(22.dp)
+                    modifier = Modifier.size(16.dp)
                 )
             }
 
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(8.dp))
 
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = accountName,
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    Spacer(Modifier.width(6.dp))
+                    Spacer(Modifier.width(4.dp))
                     Box(
                         modifier = Modifier
-                            .size(8.dp)
+                            .size(6.dp)
                             .clip(CircleShape)
                             .background(statusColor)
                     )
                 }
-                Spacer(Modifier.height(2.dp))
                 Text(
                     text = "$sipUri • $statusText",
                     style = MaterialTheme.typography.bodySmall,
@@ -495,7 +465,7 @@ private fun AccountStatusCard(
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
                 contentDescription = "Manage",
-                modifier = Modifier.size(14.dp),
+                modifier = Modifier.size(12.dp),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
             )
         }
@@ -503,9 +473,14 @@ private fun AccountStatusCard(
 }
 
 @Composable
-private fun ProBannerCard(
+private fun ProUserCard(
     isPro: Boolean,
     proExpiration: Long,
+    isSignedIn: Boolean,
+    displayName: String,
+    email: String,
+    photoUrl: String?,
+    userCode: String,
     onClick: () -> Unit
 ) {
     val proDaysLeft = remember(proExpiration) {
@@ -532,45 +507,83 @@ private fun ProBannerCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(backgroundBrush)
-                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .padding(horizontal = 12.dp, vertical = 10.dp)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.2f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = if (isPro) Icons.Default.Star else Icons.Default.CardGiftcard,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(20.dp)
+                    if (isSignedIn && photoUrl != null) {
+                        AsyncImage(
+                            model = photoUrl,
+                            contentDescription = "Profile",
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
                         )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(Color.White.copy(alpha = 0.2f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = if (isSignedIn) Icons.Default.AccountCircle else if (isPro) Icons.Default.Star else Icons.Default.CardGiftcard,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
 
                     Spacer(Modifier.width(12.dp))
 
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = if (isSignedIn) displayName else if (isPro) "IPDial Pro Active" else "Upgrade to IPDial Pro",
+                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                color = Color.White,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (isSignedIn && isPro) {
+                                Spacer(Modifier.width(6.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFF69F0AE))
+                                )
+                            }
+                        }
                         Text(
-                            text = if (isPro) "IPDial Pro Active" else "Upgrade to IPDial Pro",
-                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                            color = Color.White
-                        )
-                        Text(
-                            text = if (isPro) "$proDaysLeft days remaining" else "Ad-free experience & premium features",
+                            text = when {
+                                isSignedIn && isPro -> "$proDaysLeft days remaining • $email"
+                                isSignedIn -> "Free Version • $email"
+                                isPro -> "$proDaysLeft days remaining • Sign in to manage"
+                                else -> "Ad-free experience & premium features"
+                            },
                             style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
-                            color = Color.White.copy(alpha = 0.85f)
+                            color = Color.White.copy(alpha = 0.85f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
+                        if (isSignedIn && userCode.isNotBlank()) {
+                            Text(
+                                text = "My ID: $userCode",
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, fontWeight = FontWeight.SemiBold),
+                                color = Color.White.copy(alpha = 0.9f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
 
@@ -699,83 +712,5 @@ private fun MenuRowItem(
             modifier = Modifier.size(12.dp),
             tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
         )
-    }
-}
-
-@Composable
-private fun UserProfileMini(
-    name: String,
-    email: String,
-    photoUrl: String?,
-    userCode: String
-) {
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        shape = RoundedCornerShape(16.dp),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            if (photoUrl != null) {
-                AsyncImage(
-                    model = photoUrl,
-                    contentDescription = "Profile",
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.1f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.AccountCircle,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-            }
-
-            Spacer(Modifier.width(12.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = name,
-                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = email,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-
-                if (userCode.isNotBlank()) {
-                    Spacer(Modifier.height(2.dp))
-                    Surface(
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                        shape = RoundedCornerShape(6.dp)
-                    ) {
-                        Text(
-                            text = "My ID: $userCode",
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
-                    }
-                }
-            }
-        }
     }
 }

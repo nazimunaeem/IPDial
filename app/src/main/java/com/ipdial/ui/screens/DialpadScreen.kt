@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -171,9 +172,12 @@ fun DialpadScreen(
                 }
             }
 
-            // Ad above digit box
+            // Ad above digit box (only when a banner will actually render, otherwise
+            // a PRO/no-ads user sees a blank 90dp gap while showAd is briefly true)
             val showAd by vm.showAd.collectAsState()
-            if (showAd) {
+            val adsEnabled by vm.adsEnabled.collectAsState()
+            val isPro by vm.isPro.collectAsState()
+            if (showAd && adsEnabled && !isPro) {
                 Box(Modifier.height(90.dp).fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
                     StartIoBanner(vm = vm, modifier = Modifier.fillMaxSize())
                 }
@@ -391,12 +395,19 @@ fun DialpadScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.BottomCenter)
-                    .background(MaterialTheme.colorScheme.background),
+                    .background(MaterialTheme.colorScheme.surface),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Ad above digit box
+                HorizontalDivider(
+                    thickness = 0.5.dp,
+                    color = MaterialTheme.colorScheme.outlineVariant
+                )
+                // Ad above digit box (only when a banner will actually render, otherwise
+                // a PRO/no-ads user sees a blank 90dp gap while showAd is briefly true)
                 val showAd by vm.showAd.collectAsState()
-                if (showAd) {
+                val adsEnabled by vm.adsEnabled.collectAsState()
+                val isPro by vm.isPro.collectAsState()
+                if (showAd && adsEnabled && !isPro) {
                     Box(Modifier.height(90.dp).fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
                         StartIoBanner(vm = vm, modifier = Modifier.fillMaxSize())
                     }

@@ -10,6 +10,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CardGiftcard
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.automirrored.filled.Login
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.VideoLibrary
@@ -86,19 +87,15 @@ fun GetProScreen(
                     )
                 }
 
-                // Show the "buy a device slot" row ONLY when this device genuinely needs an
-                // additional slot: signed in, not authorized here, and another device is
-                // pending approval. Pro access itself is account-wide, so a solo
-                // authorized device never shows it.
+                // Show device management row when signed in and there are logged-in devices
                 item {
-                    val pendingCount by vm.pendingDeviceCount.collectAsState()
-                    val deviceAuth by vm.currentDeviceAuthorized.collectAsState()
-                    if (isSignedIn && deviceAuth == false && pendingCount > 0) {
-                        DeviceSlotRow(proPoints) {
-                            vm.buyDeviceSlot { success, msg ->
-                                android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
-                            }
-                        }
+                    val loggedInCount by vm.loggedInDeviceCount.collectAsState()
+                    val allowedCount by vm.allowedDeviceCount.collectAsState()
+                    val availableSlots by vm.availableSlots.collectAsState()
+                    val hasPro by vm.currentDeviceHasProFlow.collectAsState()
+                    if (isSignedIn) {
+                        // Show device management with slot info
+                        ManageDevicesRow(vm)
                     }
                 }
 
@@ -310,6 +307,8 @@ fun ReferralCard(vm: com.ipdial.ui.SipViewModel) {
     val context = LocalContext.current
     var code by remember { mutableStateOf("") }
     var isSigningIn by remember { mutableStateOf(false) }
+    var claimMessage by remember { mutableStateOf("") }
+    var claimIsError by remember { mutableStateOf(false) }
     val isSignedIn by vm.isSignedIn.collectAsState()
     val referralCode by vm.userDisplayId.collectAsState()
     val glassMode = com.ipdial.ui.theme.LocalGlassMode.current
@@ -351,11 +350,17 @@ fun ReferralCard(vm: com.ipdial.ui.SipViewModel) {
                                 }
                                 return@Button
                             }
+                            claimMessage = ""
                             vm.claimReferral(code) { success, msg ->
+                                claimIsError = !success
+                                claimMessage = msg
                                 try {
                                     android.widget.Toast.makeText(context.applicationContext, msg, android.widget.Toast.LENGTH_SHORT).show()
                                 } catch (_: Exception) {}
                             }
+                        } else {
+                            claimIsError = true
+                            claimMessage = "Please enter a referral code first."
                         }
                     }, 
                     modifier = Modifier.weight(1f).then(if (isGlass) Modifier.glass(ButtonDefaults.shape) else Modifier),
@@ -414,6 +419,31 @@ fun ReferralCard(vm: com.ipdial.ui.SipViewModel) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                }
+            }
+
+            // Persistent inline feedback so the user understands why the points
+            // were (or were not) credited — toasts alone are easy to miss.
+            if (claimMessage.isNotEmpty()) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (claimIsError) {
+                        MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f)
+                    } else {
+                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = claimMessage,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (claimIsError) {
+                            MaterialTheme.colorScheme.onErrorContainer
+                        } else {
+                            MaterialTheme.colorScheme.onPrimaryContainer
+                        },
+                        modifier = Modifier.padding(10.dp)
+                    )
                 }
             }
         }
@@ -708,6 +738,124 @@ fun RedemptionOptions(currentPoints: Int, onRedeem: (Int) -> Unit) {
                     Spacer(Modifier.weight(1f))
                 }
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ManageDevicesRow(vm: com.ipdial.ui.SipViewModel) {
+    val context = LocalContext.current
+    var showDevices by remember { mutableStateOf(false) }
+    val loggedInDevices by vm.loggedInDevices.collectAsState()
+    val allowedCount by vm.allowedDeviceCount.collectAsState()
+    val availableSlots by vm.availableSlots.collectAsState()
+    val hasPro by vm.currentDeviceHasProFlow.collectAsState()
+    val isProString = if (hasPro) "Pro" else "No Pro"
+    
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Logged in devices", style = MaterialTheme.typography.bodyMedium)
+                    Text("Total slots: $allowedCount • Available: $availableSlots • This device: $isProString", style = MaterialTheme.typography.labelSmall)
+                }
+                FilledTonalButton(onClick = { showDevices = true }) {
+                    Text("Manage")
+                }
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                DeviceStatChip(
+                    modifier = Modifier.weight(1f),
+                    value = allowedCount.toString(),
+                    label = "Total Slots"
+                )
+                DeviceStatChip(
+                    modifier = Modifier.weight(1f),
+                    value = vm.loggedInDeviceCount.value.toString(),
+                    label = "Logged In"
+                )
+                DeviceStatChip(
+                    modifier = Modifier.weight(1f),
+                    value = availableSlots.toString(),
+                    label = "Free"
+                )
+            }
+        }
+    }
+    
+    if (showDevices) {
+        ModalBottomSheet(onDismissRequest = { showDevices = false }) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("Logged In Devices", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(16.dp))
+                loggedInDevices.forEachIndexed { index, deviceEntry ->
+                    val parts = deviceEntry.split("||")
+                    val brand = parts.getOrNull(0)?.takeIf { it.isNotBlank() } ?: "Unknown"
+                    val model = parts.getOrNull(1)?.takeIf { it.isNotBlank() }
+                    val displayLabel = if (model != null) "$brand $model" else brand
+                    val hasProAccess = index < allowedCount // First N slots get Pro
+                    
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(displayLabel, modifier = Modifier.weight(1f))
+                        if (hasProAccess) {
+                            Box(
+                                modifier = Modifier.padding(end = 8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("Pro", style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, color = Color(0xFF4CAF50)))
+                            }
+                        }
+                        IconButton(onClick = { vm.removeDevice(deviceEntry) }) {
+                            Icon(Icons.Default.Close, contentDescription = "Remove")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DeviceStatChip(modifier: Modifier = Modifier, value: String, label: String) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f),
+        shape = RoundedCornerShape(10.dp),
+        modifier = modifier
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = value,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            )
         }
     }
 }

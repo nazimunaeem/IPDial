@@ -27,6 +27,9 @@ firestore.indexes.json
 firebase-debug.log
 .firebase-debug.log
 
+# Firebase hosting admin console (contains Firebase config keys and admin scripts)
+hostingAdmin/
+
 # Local configuration
 local.properties
 gradle.properties

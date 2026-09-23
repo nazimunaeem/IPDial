@@ -1,5 +1,18 @@
 {
   "projects": {
     "default": "ipdial"
-  }
+  },
+  "targets": {
+    "ipdial": {
+      "hosting": {
+        "admin": [
+          "ipdial-admin"
+        ],
+        "app": [
+          "ipdial"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }

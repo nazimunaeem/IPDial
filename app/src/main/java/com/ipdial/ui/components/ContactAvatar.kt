@@ -106,7 +106,7 @@ fun ContactItem(
         },
         supportingContent = {
             Column {
-                contact.numbers.take(2).forEach { number ->
+                contact.numbers.forEach { number ->
                     Text(
                         text = number,
                         style = MaterialTheme.typography.bodySmall,

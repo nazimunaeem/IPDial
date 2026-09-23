@@ -21,6 +21,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -36,6 +38,8 @@ import com.ipdial.ui.SipViewModel
 import com.ipdial.ui.screens.call.PulsingStateLabel
 import com.ipdial.ui.theme.EndRed
 import com.ipdial.ui.theme.ForestGreen
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 @Composable
@@ -66,11 +70,43 @@ fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
 
     val incomingCallMode by vm.incomingCallMode.collectAsState()
     val themeMode by vm.themeMode.collectAsState()
+    val fullScreenPhotoEnabled by vm.fullScreenContactPhoto.collectAsState()
     val isDarkOrObsidian = themeMode == ThemeMode.Dark || themeMode == ThemeMode.Obsidian
-    val textColor = MaterialTheme.colorScheme.onBackground
-    val subtitleColor = MaterialTheme.colorScheme.onSurfaceVariant
 
-    Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+    // Resolve the caller's hi-res photo for full-screen mode off the main thread.
+    // Full-screen shows only when the setting is ON and a hi-res photo exists.
+    val context = LocalContext.current
+    var fullScreenPhotoUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    LaunchedEffect(contact?.id, fullScreenPhotoEnabled) {
+        fullScreenPhotoUri = if (contact != null && fullScreenPhotoEnabled) {
+            withContext(Dispatchers.IO) {
+                com.ipdial.util.ContactPhotoUtil.resolveFullScreenUri(context, contact.id)
+            }
+        } else null
+    }
+    val showFullScreenPhoto = fullScreenPhotoEnabled && fullScreenPhotoUri != null
+
+    val textColor = if (showFullScreenPhoto) Color.White else MaterialTheme.colorScheme.onBackground
+    val subtitleColor = if (showFullScreenPhoto) Color.White.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        // Background: full-screen hi-res contact photo when enabled, else the theme
+        // background. A scrim keeps name/number and the answer controls readable.
+        if (showFullScreenPhoto) {
+            coil.compose.AsyncImage(
+                model = fullScreenPhotoUri,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.4f))
+            )
+        } else {
+            Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
+        }
 
         Column(
             modifier = Modifier.fillMaxSize(),
@@ -114,22 +150,27 @@ fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
 
             // Avatar with the same animated ripple rings as the dialing screen,
             // shown for every incoming call (fallback avatar for unknown numbers).
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier.size(180.dp)
-            ) {
-                IncomingRippleRings()
-                com.ipdial.ui.components.ContactAvatar(
-                    name = displayName,
-                    photoUri = contact?.photoUri,
-                    size = 148.dp,
-                    backgroundColor = avatarColor,
-                    contentColor = Color.White,
-                    modifier = Modifier.border(3.dp, Color.White.copy(alpha = 0.7f), CircleShape)
-                )
-            }
+            // Hidden in full-screen photo mode — the photo is already the background.
+            if (!showFullScreenPhoto) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.size(180.dp)
+                ) {
+                    IncomingRippleRings()
+                    com.ipdial.ui.components.ContactAvatar(
+                        name = displayName,
+                        photoUri = contact?.photoUri,
+                        size = 148.dp,
+                        backgroundColor = avatarColor,
+                        contentColor = Color.White,
+                        modifier = Modifier.border(3.dp, Color.White.copy(alpha = 0.7f), CircleShape)
+                    )
+                }
 
-            Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(24.dp))
+            } else {
+                Spacer(Modifier.height(8.dp))
+            }
 
             // Pulsing status with animated dots — matches the dialing screen's
             // "Calling / Ringing" label during the pre-connected phase.

@@ -43,7 +43,7 @@ class FirestorePointsSync(private val repo: AccountRepository) {
     // authorizedDevices / pendingDevices lists change — kept null until a consumer
     // (the ViewModel) registers. Lets the UI drop the "buy a slot" row the instant
     // a pending device signs out, without waiting for a manual refresh.
-    @Volatile var onDeviceSlotsChanged: ((authorized: List<String>, pending: List<String>) -> Unit)? = null
+    @Volatile var onDeviceSlotsChanged: ((authorized: List<String>, pending: List<String>, allowed: Int) -> Unit)? = null
 
     private suspend fun getEffectiveUserId(): String? {
         return auth.currentUser?.uid
@@ -73,7 +73,8 @@ class FirestorePointsSync(private val repo: AccountRepository) {
                         // before the continuous listener delivers its first snapshot.
                         val authorized = (data?.get("authorizedDevices") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
                         val pending = (data?.get("pendingDevices") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
-                        onDeviceSlotsChanged?.invoke(authorized, pending)
+                        val allowed = (data?.get("allowedDevices") as? Number)?.toInt()?.coerceAtLeast(authorized.size) ?: 1
+                        onDeviceSlotsChanged?.invoke(authorized, pending, allowed)
 
                         val local = repo.proPoints.first()
                         val serverUpdatedAt = (data?.get("updatedAt") as? com.google.firebase.Timestamp)?.toDate()?.time ?: 0L
@@ -128,7 +129,8 @@ class FirestorePointsSync(private val repo: AccountRepository) {
                         // another device joins (pending) or signs out (pending removed).
                         val authorized = (data["authorizedDevices"] as? List<*>)?.filterIsInstance<String>() ?: emptyList()
                         val pending = (data["pendingDevices"] as? List<*>)?.filterIsInstance<String>() ?: emptyList()
-                        onDeviceSlotsChanged?.invoke(authorized, pending)
+                        val allowed = (data["allowedDevices"] as? Number)?.toInt()?.coerceAtLeast(authorized.size) ?: 1
+                        onDeviceSlotsChanged?.invoke(authorized, pending, allowed)
                         // push to DataStore via repo
                         scope.launch {
                             try {
@@ -386,6 +388,12 @@ class FirestorePointsSync(private val repo: AccountRepository) {
     /**
      * Attempt to claim a referral code. The code is expected to be a 6-char shortId.
      * If the referral doc exists and hasn't been used by this user, we increment both parties by 50 points.
+     *
+     * Anti-abuse measures:
+     * - Self-referral blocked (code == own shortId)
+     * - Double-claim blocked (referredBy field already set)
+     * - Mutual referral blocked (referrer was already referred by claimer)
+     * - Referral count cap (referrer can't refer more than MAX_REFERRALS_PER_USER users)
      */
     fun claimReferral(refCode: String, onComplete: (Boolean, String) -> Unit) {
         scope.launch {
@@ -397,7 +405,7 @@ class FirestorePointsSync(private val repo: AccountRepository) {
                 val shortId = userId.take(6)
 
                 if (refCode.isBlank() || refCode == shortId) {
-                    withContext(Dispatchers.Main) { onComplete(false, "Invalid code") }
+                    withContext(Dispatchers.Main) { onComplete(false, "Invalid code — you can\u2019t use your own referral code") }
                     return@launch
                 }
 
@@ -405,7 +413,7 @@ class FirestorePointsSync(private val repo: AccountRepository) {
                 val meDoc = firestore.collection("users").document(userId)
                 val meSnapshot = com.google.android.gms.tasks.Tasks.await(meDoc.get())
                 if (meSnapshot.exists() && meSnapshot.contains("referredBy")) {
-                    withContext(Dispatchers.Main) { onComplete(false, "Referral already claimed") }
+                    withContext(Dispatchers.Main) { onComplete(false, "You already claimed a referral — the +50 points were credited to your account") }
                     return@launch
                 }
 
@@ -417,16 +425,34 @@ class FirestorePointsSync(private val repo: AccountRepository) {
                 val querySnapshot = com.google.android.gms.tasks.Tasks.await(query)
 
                 if (querySnapshot.isEmpty) {
-                    withContext(Dispatchers.Main) { onComplete(false, "Referral code not found") }
+                    withContext(Dispatchers.Main) { onComplete(false, "Referral code not found — check the code is exactly right (6 characters)") }
                     return@launch
                 }
 
                 val refDoc = querySnapshot.documents[0].reference
+                val referrerId = querySnapshot.documents[0].id
 
-                // 3. Atomically award +50 points to both docs in a transaction and
-                // write absolute values. FieldValue.increment() is rejected by the
-                // security rules (evaluated as a different write type), so we read
-                // both balances first and store the summed result via set+merge.
+                // 3. Pre-flight checks on the referrer's document (outside the
+                //    transaction — fast reads, cheap if they fail).
+                val refSnapshot = com.google.android.gms.tasks.Tasks.await(refDoc.get())
+                val referrerReferredBy = refSnapshot.getString("referredBy")
+                // Mutual referral: the referrer was already referred by the claimer
+                // → A→B and B→A would give both 100 pts for free.
+                if (referrerReferredBy == userId) {
+                    withContext(Dispatchers.Main) { onComplete(false, "Cannot use a referral from someone you already referred") }
+                    return@launch
+                }
+                // Referral count cap: prevents one code from being used unlimited times.
+                val referralCount = (refSnapshot.get("referralCount") as? Number)?.toInt() ?: 0
+                if (referralCount >= MAX_REFERRALS_PER_USER) {
+                    withContext(Dispatchers.Main) { onComplete(false, "This referral code has reached its usage limit") }
+                    return@launch
+                }
+
+                // 4. Atomically award +50 points to both docs in a transaction and
+                //    write absolute values. FieldValue.increment() is rejected by the
+                //    security rules (evaluated as a different write type), so we read
+                //    both balances first and store the summed result via set+merge.
                 val task = firestore.runTransaction(
                     object : com.google.firebase.firestore.Transaction.Function<Long> {
                         override fun apply(transaction: com.google.firebase.firestore.Transaction): Long {
@@ -434,12 +460,14 @@ class FirestorePointsSync(private val repo: AccountRepository) {
                             val meSnap = transaction.get(meDoc)
                             val refPoints = ((refSnap.get("points") as? Number)?.toLong() ?: 0L) + 50L
                             val myPoints = ((meSnap.get("points") as? Number)?.toLong() ?: 0L) + 50L
+                            val newRefCount = ((refSnap.get("referralCount") as? Number)?.toInt() ?: 0) + 1
 
                             transaction.set(
                                 refDoc,
                                 mapOf(
                                     "shortId" to refCode,
                                     "points" to refPoints,
+                                    "referralCount" to newRefCount,
                                     "updatedAt" to FieldValue.serverTimestamp()
                                 ),
                                 com.google.firebase.firestore.SetOptions.merge()
@@ -450,7 +478,7 @@ class FirestorePointsSync(private val repo: AccountRepository) {
                                 mapOf(
                                     "shortId" to shortId,
                                     "points" to myPoints,
-                                    "referredBy" to refDoc.id,
+                                    "referredBy" to referrerId,
                                     "userId" to userId,
                                     "uid" to userId,
                                     "name" to profileName,
@@ -484,6 +512,9 @@ class FirestorePointsSync(private val repo: AccountRepository) {
         /** Cost in points to authorize one additional device beyond the free slot. */
         const val DEVICE_SLOT_COST = 100
 
+        /** Maximum number of users a single referral code can be used by. */
+        const val MAX_REFERRALS_PER_USER = 50
+
         /** Characters allowed in a 6-char user code: uppercase letters + digits. */
         private const val CODE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
@@ -491,259 +522,177 @@ class FirestorePointsSync(private val repo: AccountRepository) {
         fun generateUserCode(): String = buildString(6) {
             repeat(6) { append(CODE_CHARS[Random.nextInt(CODE_CHARS.length)]) }
         }
+
+        /**
+         * Stores each logged-in device as "Brand||Model||uuid" so the device
+         * management UI can show a friendly name. Every consumer that needs the
+         * anonymous id (Pro-slot math, remove, sign-out) matches on the trailing
+         * uuid segment via [deviceIdOf]/[isSameDevice], so legacy plain-uuid
+         * entries already in Firestore keep working unchanged.
+         */
+        fun buildDeviceEntry(deviceId: String): String {
+            val brand = android.os.Build.MANUFACTURER.trim().ifBlank { "Unknown" }
+            val model = android.os.Build.MODEL.trim().ifBlank { "Device" }
+            return "${brand.replace("||", " ")}||${model.replace("||", " ")}||$deviceId"
+        }
+
+        /** Extracts a device's anonymous id from a stored entry (handles legacy plain ids). */
+        fun deviceIdOf(entry: String): String = entry.substringAfterLast("||").ifBlank { entry }
+
+        /** True if a stored [entry] refers to [deviceId] (branded or legacy plain entry). */
+        fun isSameDevice(entry: String, deviceId: String): Boolean =
+            entry == deviceId || deviceIdOf(entry) == deviceId
     }
 
     /**
-     * Authorizes the current device if a slot is available.
+     * Adds the current device to the logged-in devices list if there's room.
+     * Returns true if the device gets Pro access (within first [allowedDevices] devices).
      */
-    suspend fun tryAuthorizeThisDevice(deviceId: String): Boolean = withContext(Dispatchers.IO) {
+    suspend fun addLoggedInDevice(deviceId: String): Boolean = withContext(Dispatchers.IO) {
         val userId = getEffectiveUserId() ?: return@withContext false
         val ref = firestore.collection("users").document(userId)
-        
+        val entry = buildDeviceEntry(deviceId)
+
         try {
             com.google.android.gms.tasks.Tasks.await(firestore.runTransaction { transaction ->
                 val snapshot = transaction.get(ref)
-                val allowed = (snapshot.get("allowedDevices") as? Number)?.toInt() ?: 1
-                val authorized = (snapshot.get("authorizedDevices") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
-                
-                if (authorized.contains(deviceId)) return@runTransaction true
-                if (authorized.size < allowed) {
-                    transaction.update(ref, "authorizedDevices", FieldValue.arrayUnion(deviceId))
-                    return@runTransaction true
-                }
-                false
+                val allowed = (snapshot.get("allowedDevices") as? Number)?.toInt() ?: 2
+                val loggedIn = (snapshot.get("loggedInDevices") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+
+                // If already logged in (branded or legacy entry), just return true
+                if (loggedIn.any { isSameDevice(it, deviceId) }) return@runTransaction true
+
+                // Add to logged in devices list
+                val newList = loggedIn + entry
+                transaction.set(
+                    ref,
+                    mapOf(
+                        "loggedInDevices" to newList,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    ),
+                    com.google.firebase.firestore.SetOptions.merge()
+                )
+                true
             })
             true
         } catch (e: Exception) {
-            Log.e("FirestorePointsSync", "tryAuthorizeThisDevice failed", e)
+            Log.e("FirestorePointsSync", "addLoggedInDevice failed", e)
             false
         }
     }
 
     /**
-     * Returns how many devices are currently whitelisted for this account.
-     * 0 when not signed in, the doc is missing, or no devices are authorized.
+     * Removes a device from the logged-in devices list.
+     * This effectively signs out that device from the account.
      */
-    suspend fun getAuthorizedDeviceCount(): Int = withContext(Dispatchers.IO) {
-        val userId = getEffectiveUserId() ?: return@withContext 0
+    suspend fun removeLoggedInDevice(deviceId: String): Boolean = withContext(Dispatchers.IO) {
+        val userId = getEffectiveUserId() ?: return@withContext false
+        val ref = firestore.collection("users").document(userId)
         try {
-            val snapshot = com.google.android.gms.tasks.Tasks.await(
-                firestore.collection("users").document(userId).get()
+            // Resolve the exact stored entry (branded or legacy plain) so arrayRemove
+            // matches the persisted string; a caller may pass either form.
+            val target = getLoggedInDevices().firstOrNull { isSameDevice(it, deviceId) }
+                ?: return@withContext true
+            com.google.android.gms.tasks.Tasks.await(
+                ref.update(
+                    "loggedInDevices", FieldValue.arrayRemove(target),
+                    "updatedAt", FieldValue.serverTimestamp()
+                )
             )
-            if (!snapshot.exists()) return@withContext 0
-            ((snapshot.get("authorizedDevices") as? List<*>)?.size ?: 0).coerceAtLeast(0)
+            true
         } catch (e: Exception) {
-            Log.e("FirestorePointsSync", "getAuthorizedDeviceCount failed", e)
-            0
+            Log.e("FirestorePointsSync", "removeLoggedInDevice failed", e)
+            false
         }
     }
 
     /**
-     * Returns how many devices have requested (but not yet obtained) a slot for
-     * this account. Used to show the "buy a device slot" row on the authorized
-     * device(s) whenever another device wants access.
+     * Returns the list of all logged-in devices for this account.
      */
-    suspend fun getPendingDeviceCount(): Int = withContext(Dispatchers.IO) {
-        val userId = getEffectiveUserId() ?: return@withContext 0
+    suspend fun getLoggedInDevices(): List<String> = withContext(Dispatchers.IO) {
+        val userId = getEffectiveUserId() ?: return@withContext emptyList()
         try {
             val snapshot = com.google.android.gms.tasks.Tasks.await(
                 firestore.collection("users").document(userId).get()
             )
-            if (!snapshot.exists()) return@withContext 0
-            ((snapshot.get("pendingDevices") as? List<*>)?.size ?: 0).coerceAtLeast(0)
+            if (!snapshot.exists()) return@withContext emptyList()
+            ((snapshot.get("loggedInDevices") as? List<*>)?.filterIsInstance<String>() ?: emptyList())
         } catch (e: Exception) {
-            Log.e("FirestorePointsSync", "getPendingDeviceCount failed", e)
-            0
+            Log.e("FirestorePointsSync", "getLoggedInDevices failed", e)
+            emptyList()
         }
     }
 
     /**
-     * Returns true if [deviceId] is already whitelisted on the signed-in account.
+     * Returns the number of device slots the account can hold (default 2).
      */
-    suspend fun isDeviceAuthorized(deviceId: String): Boolean = withContext(Dispatchers.IO) {
+    suspend fun getAllowedDeviceCount(): Int = withContext(Dispatchers.IO) {
+        val userId = getEffectiveUserId() ?: return@withContext 2
+        try {
+            val snapshot = com.google.android.gms.tasks.Tasks.await(
+                firestore.collection("users").document(userId).get()
+            )
+            if (!snapshot.exists()) return@withContext 2
+            ((snapshot.get("allowedDevices") as? Number)?.toInt() ?: 2)
+        } catch (e: Exception) {
+            Log.e("FirestorePointsSync", "getAllowedDeviceCount failed", e)
+            2
+        }
+    }
+
+    /**
+     * Clears all logged-in devices for a user.
+     */
+    suspend fun clearAllDevices(userId: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val ref = firestore.collection("users").document(userId)
+            com.google.android.gms.tasks.Tasks.await(
+                ref.update(
+                    mapOf(
+                        "loggedInDevices" to emptyList<String>(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+            )
+            true
+        } catch (e: Exception) {
+            Log.e("FirestorePointsSync", "clearAllDevices failed", e)
+            false
+        }
+    }
+
+    /**
+     * Checks if the current device has Pro access (is within first [allowedDevices] devices).
+     */
+    suspend fun hasProAccess(deviceId: String): Boolean = withContext(Dispatchers.IO) {
         val userId = getEffectiveUserId() ?: return@withContext false
         try {
             val snapshot = com.google.android.gms.tasks.Tasks.await(
                 firestore.collection("users").document(userId).get()
             )
             if (!snapshot.exists()) return@withContext false
-            (snapshot.get("authorizedDevices") as? List<*>)?.map { it.toString() }?.contains(deviceId) ?: false
+            val loggedIn = (snapshot.get("loggedInDevices") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+            val allowed = (snapshot.get("allowedDevices") as? Number)?.toInt() ?: 2
+            loggedIn.indexOfFirst { isSameDevice(it, deviceId) }.let { index ->
+                index >= 0 && index < allowed
+            }
         } catch (e: Exception) {
-            Log.e("FirestorePointsSync", "isDeviceAuthorized failed", e)
+            Log.e("FirestorePointsSync", "hasProAccess failed", e)
             false
         }
     }
 
     /**
-     * Claims the single free first device slot for `deviceId` if the account has
-     * not yet used it. Atomic (transaction). Returns true if this device is
-     * authorized afterwards (already authorized, or free claim succeeded).
+     * Adds the current device to the logged-in devices list and returns whether it has Pro access.
+     * Replaces the old ensureFreeFirstDevice with simplified logic.
      */
-    suspend fun ensureFreeFirstDevice(deviceId: String): Boolean {
-        val userId = getEffectiveUserId() ?: return false
-        return try {
-            withContext(Dispatchers.IO) {
-                val task = firestore.runTransaction(
-                    object : com.google.firebase.firestore.Transaction.Function<Boolean> {
-                        override fun apply(transaction: com.google.firebase.firestore.Transaction): Boolean {
-                            val ref = firestore.collection("users").document(userId)
-                            val snapshot = transaction.get(ref)
-                            val existing = if (snapshot.exists()) {
-                                (snapshot.get("authorizedDevices") as? List<*>)?.map { it.toString() } ?: emptyList()
-                            } else {
-                                emptyList()
-                            }
-                            if (existing.contains(deviceId)) {
-                                // Already authorized; make sure it is not pending anymore.
-                                transaction.update(ref, "pendingDevices", FieldValue.arrayRemove(deviceId))
-                                return true
-                            }
-                            val freeUsed = if (snapshot.exists()) {
-                                (snapshot.get("freeSlotsUsed") as? Number)?.toInt() ?: 0
-                            } else {
-                                0
-                            }
-                            if (freeUsed > 0) {
-                                // Free slot already consumed -> this device is NOT authorized.
-                                // Record it as pending so all the account's devices (including the
-                                // authorized one) know another device wants a slot.
-                                transaction.update(ref, "pendingDevices", FieldValue.arrayUnion(deviceId))
-                                return false
-                            }
-                            val newList = existing + deviceId
-                            transaction.set(
-                                ref,
-                                mapOf(
-                                    "authorizedDevices" to newList,
-                                    "freeSlotsUsed" to 1,
-                                    "pendingDevices" to FieldValue.arrayRemove(deviceId),
-                                    // Slot counts are written here (and in
-                                    // purchaseDeviceSlot) because the generic
-                                    // profile/points writes are not allowed to
-                                    // touch these fields by the security rules.
-                                    "deviceSlot" to newList.size,
-                                    "allowedDevices" to 1,
-                                    "updatedAt" to FieldValue.serverTimestamp()
-                                ),
-                                com.google.firebase.firestore.SetOptions.merge()
-                            )
-                            return true
-                        }
-                    }
-                )
-                com.google.android.gms.tasks.Tasks.await(task)
-            }
-        } catch (e: Exception) {
-            Log.e("FirestorePointsSync", "ensureFreeFirstDevice failed", e)
+    suspend fun addDeviceAndCheckPro(deviceId: String): Boolean = withContext(Dispatchers.IO) {
+        val added = addLoggedInDevice(deviceId)
+        if (!added) {
             false
-        }
-    }
-
-    /**
-     * Purchase a device slot for `deviceId` at [DEVICE_SLOT_COST] points. Atomic
-     * transaction: aborts unless the account has >= cost points and the device is
-     * not already authorized; otherwise appends the device and deducts exactly
-     * [DEVICE_SLOT_COST] points.
-     *
-     * @return a [SlotPurchaseResult] with the remaining points on success and a
-     *         human-readable reason on failure (no more blind "could not buy").
-     */
-    suspend fun purchaseDeviceSlot(deviceId: String): SlotPurchaseResult {
-        val userId = getEffectiveUserId()
-            ?: return SlotPurchaseResult(false, message = "Sign in to buy a device slot")
-        return try {
-            withContext(Dispatchers.IO) {
-                val task = firestore.runTransaction(
-                    object : com.google.firebase.firestore.Transaction.Function<Long> {
-                        override fun apply(transaction: com.google.firebase.firestore.Transaction): Long {
-                            val ref = firestore.collection("users").document(userId)
-                            val snapshot = transaction.get(ref)
-                            if (!snapshot.exists()) {
-                                throw com.google.firebase.firestore.FirebaseFirestoreException(
-                                    "Your account record doesn't exist in Firestore yet. Sign out and sign in again.",
-                                    com.google.firebase.firestore.FirebaseFirestoreException.Code.ABORTED
-                                )
-                            }
-                            val existing = (snapshot.get("authorizedDevices") as? List<*>)?.map { it.toString() } ?: emptyList()
-                            val allowedSoFar = (snapshot.get("allowedDevices") as? Number)?.toInt() ?: 1
-                            if (existing.contains(deviceId)) {
-                                // Already authorized; no charge needed.
-                                transaction.update(ref, "pendingDevices", FieldValue.arrayRemove(deviceId))
-                                return (snapshot.get("points") as? Number)?.toLong() ?: 0L
-                            }
-                            val points = (snapshot.get("points") as? Number)?.toLong() ?: 0L
-                            if (points < DEVICE_SLOT_COST) {
-                                throw com.google.firebase.firestore.FirebaseFirestoreException(
-                                    "Not enough points (you have $points, need $DEVICE_SLOT_COST)",
-                                    com.google.firebase.firestore.FirebaseFirestoreException.Code.ABORTED
-                                )
-                            }
-                            val remaining = points - DEVICE_SLOT_COST
-                            // IMPORTANT: write the absolute points value via set+merge.
-                            // FieldValue.increment() is evaluated as a different write
-                            // type by the security rules and rejected with
-                            // PERMISSION_DENIED (see incrementPoints()). The device-slot
-                            // keys are allowed only through this transaction path.
-                            transaction.set(
-                                ref,
-                                accountIdentityFields(userId) + mapOf(
-                                    "authorizedDevices" to (existing + deviceId),
-                                    "points" to remaining,
-                                    "pendingDevices" to FieldValue.arrayRemove(deviceId),
-                                    "deviceSlot" to existing.size + 1,
-                                    "allowedDevices" to (allowedSoFar + 1).coerceAtLeast(existing.size + 1),
-                                    "updatedAt" to FieldValue.serverTimestamp()
-                                ),
-                                com.google.firebase.firestore.SetOptions.merge()
-                            )
-                            return remaining
-                        }
-                    }
-                )
-                val remaining = com.google.android.gms.tasks.Tasks.await(task)
-                // Reflect the new points locally after a successful purchase.
-                repo.setProPoints(remaining.toInt())
-                // Stamp the watermark so a stale (pre-deduction) snapshot cannot roll
-                // the balance back up.
-                lastLocalPointsWriteAt = System.currentTimeMillis()
-                SlotPurchaseResult(true, remainingPoints = remaining.toInt(), message = "Device authorized")
-            }
-        } catch (e: com.google.firebase.firestore.FirebaseFirestoreException) {
-            Log.w("FirestorePointsSync", "purchaseDeviceSlot failed", e)
-            val reason = when (e.code) {
-                com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED ->
-                    "Permission denied — Firestore rules need to be deployed"
-                else -> e.message ?: "Purchase failed"
-            }
-            SlotPurchaseResult(false, message = reason)
-        } catch (e: Exception) {
-            Log.w("FirestorePointsSync", "purchaseDeviceSlot failed", e)
-            SlotPurchaseResult(false, message = e.message ?: "Purchase failed")
-        }
-    }
-
-    /**
-     * Removes `deviceId` from the account's pendingDevices list. Called when a
-     * device signs out without ever buying a slot, so the remaining authorized
-     * device(s) stop showing the "buy a slot" row immediately. [userId] is passed
-     * in explicitly because sign-out clears the auth user right after this fires,
-     * so we can't rely on getEffectiveUserId() inside the coroutine.
-     */
-    fun removePendingDevice(userId: String, deviceId: String) {
-        if (userId.isBlank() || deviceId.isBlank()) return
-        scope.launch {
-            try {
-                val ref = firestore.collection("users").document(userId)
-                Log.d("FirestorePointsSync", "removePendingDevice: removing $deviceId for users/$userId")
-                com.google.android.gms.tasks.Tasks.await(
-                    ref.update(
-                        "pendingDevices", FieldValue.arrayRemove(deviceId),
-                        "updatedAt", FieldValue.serverTimestamp()
-                    )
-                )
-            } catch (e: Exception) {
-                Log.w("FirestorePointsSync", "removePendingDevice failed", e)
-            }
+        } else {
+            // Check if this device is within the allowed slots
+            hasProAccess(deviceId)
         }
     }
 

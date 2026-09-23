@@ -32,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.ipdial.data.model.AudioDeviceMode
@@ -47,6 +48,7 @@ fun CallControls(
     onSpeaker: () -> Unit,
     onRecord: () -> Unit,
     audioDeviceMode: AudioDeviceMode = AudioDeviceMode.EARPIECE,
+    photoMode: Boolean = false
 ) {
     Column(
         modifier = Modifier
@@ -70,13 +72,14 @@ fun CallControls(
                 AudioDeviceMode.BLUETOOTH -> "Bluetooth"
                 else -> "Earpiece"
             }
-            CallControlButton(Icons.Default.Dialpad, "Keypad", modifier = Modifier.weight(1f), onClick = onKeypad)
+            CallControlButton(Icons.Default.Dialpad, "Keypad", modifier = Modifier.weight(1f), photoMode = photoMode, onClick = onKeypad)
             CallControlButton(
                 icon = if (session.isMuted) Icons.Default.MicOff else Icons.Default.Mic,
                 label = if (session.isMuted) "Unmute" else "Mute",
                 active = session.isMuted,
                 activeColor = Color(0xFF35B978),
                 modifier = Modifier.weight(1f),
+                photoMode = photoMode,
                 onClick = onMute
             )
             CallControlButton(
@@ -85,6 +88,7 @@ fun CallControls(
                 active = audioDeviceMode != AudioDeviceMode.EARPIECE,
                 activeColor = Color(0xFF35B978),
                 modifier = Modifier.weight(1f),
+                photoMode = photoMode,
                 onClick = onSpeaker
             )
             CallControlButton(
@@ -98,6 +102,7 @@ fun CallControls(
                 activeColor = Color(0xFFE05252),
                 enabled = true,
                 modifier = Modifier.weight(1f),
+                photoMode = photoMode,
                 onClick = onRecord
             )
         }
@@ -112,6 +117,7 @@ fun CallControlButton(
     enabled: Boolean = true,
     activeColor: Color = MaterialTheme.colorScheme.primary,
     modifier: Modifier = Modifier,
+    photoMode: Boolean = false,
     onClick: () -> Unit
 ) {
     val transition = rememberInfiniteTransition(label = "control_pulse_$label")
@@ -121,6 +127,9 @@ fun CallControlButton(
         animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
         label = "control_alpha"
     )
+    val glassMode = com.ipdial.ui.theme.LocalGlassMode.current
+    val isGlass = glassMode != com.ipdial.ui.theme.GlassMode.None
+    val applyGlass = isGlass && photoMode
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -130,19 +139,40 @@ fun CallControlButton(
             modifier = Modifier
                 .size(60.dp)
                 .clip(CircleShape)
-                .background(
-                    when {
-                        !enabled -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-                        active   -> activeColor.copy(alpha = if (label == "Recording") pulse else 0.18f)
-                        else     -> MaterialTheme.colorScheme.surfaceVariant
-                    }
-                )
                 .then(if (enabled) Modifier.clickableNoRipple { onClick() } else Modifier)
         ) {
+            if (applyGlass) {
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(Color.White.copy(alpha = 0.25f))
+                        .blur(16.dp) // Apple-style Glassmorphism (Translucency + Blur)
+                )
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(com.ipdial.ui.theme.LocalGlassMode.current.let { mode ->
+                            if (mode == com.ipdial.ui.theme.GlassMode.Quartz) Color.White.copy(alpha = 0.35f) else Color(0xFF1C1C1E).copy(alpha = 0.35f)
+                        })
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(
+                            when {
+                                !enabled -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                                active   -> activeColor.copy(alpha = if (label == "Recording") pulse else 0.18f)
+                                else     -> MaterialTheme.colorScheme.surfaceVariant
+                            }
+                        )
+                )
+            }
             Icon(
                 imageVector = icon,
                 contentDescription = label,
                 tint = when {
+                    applyGlass -> if (active) activeColor else Color.White
                     !enabled -> MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)
                     active   -> activeColor
                     else     -> MaterialTheme.colorScheme.onSurfaceVariant

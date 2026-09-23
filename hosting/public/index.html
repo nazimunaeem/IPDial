@@ -6,7 +6,7 @@
   <title>IPDial — Smart VoIP Dialer</title>
   <meta name="description" content="IPDial is a modern VoIP dialer for Android. Crystal-clear calls, smart contacts, rotary keypad, and more. Download the latest version." />
   <meta name="theme-color" content="#1a5e3a" />
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='48' fill='%231a5e3a'/%3E%3Cpath d='M35 25 l8 12 -7 8 c6 10 14 18 24 24 l8 -7 12 8 c3 2 2 7 -1 9 -10 8 -22 9 -33 3 -16 -8 -30 -22 -38 -38 -6 -11 -5 -23 3 -33 2 -3 7 -4 9 -1 z' fill='%23ffffff'/%3E%3C/svg%3E" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
   <style>
     :root {
       --bg: #0d1f16;
@@ -34,140 +34,155 @@
     /* Nav */
     nav {
       display: flex; align-items: center; justify-content: space-between;
-      padding: 18px 0;
+      padding: 14px 0;
     }
-    .logo { display: flex; align-items: center; gap: 12px; font-weight: 700; font-size: 20px; }
+    .logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; }
     .logo svg { border-radius: 10px; }
-    .nav-links { display: flex; gap: 24px; color: var(--muted); font-size: 14px; }
+    .nav-links { display: flex; gap: 18px; color: var(--muted); font-size: 13.5px; }
     .nav-links a { color: var(--muted); text-decoration: none; transition: color .15s; }
     .nav-links a:hover { color: var(--text); }
-    @media (max-width: 640px) { .nav-links { display: none; } }
 
     /* Hero */
-    header.hero { padding: 64px 0 72px; text-align: center; }
+    header.hero { padding: 40px 0 44px; text-align: center; }
     .badge {
       display: inline-block; background: rgba(53, 212, 126, .14); color: var(--accent);
-      border: 1px solid rgba(53, 212, 126, .35); padding: 6px 14px; border-radius: 999px;
-      font-size: 13px; font-weight: 600; margin-bottom: 22px; letter-spacing: .3px;
+      border: 1px solid rgba(53, 212, 126, .35); padding: 5px 13px; border-radius: 999px;
+      font-size: 12px; font-weight: 600; margin-bottom: 16px; letter-spacing: .3px;
     }
-    h1 { font-size: clamp(34px, 6vw, 54px); line-height: 1.12; font-weight: 800; letter-spacing: -.5px; }
+    h1 { font-size: clamp(30px, 5.2vw, 46px); line-height: 1.12; font-weight: 800; letter-spacing: -.5px; }
     h1 .grad { background: linear-gradient(90deg, var(--accent), #7be0a8); -webkit-background-clip: text; background-clip: text; color: transparent; }
-    .sub { max-width: 640px; margin: 20px auto 34px; color: var(--muted); font-size: 17px; }
-    .cta-row { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+    .sub { max-width: 600px; margin: 14px auto 24px; color: var(--muted); font-size: 15.5px; }
+    .cta-row { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
     .btn {
       display: inline-flex; align-items: center; gap: 10px;
-      background: var(--accent); color: #04210f; font-weight: 700; font-size: 16px;
-      padding: 14px 26px; border-radius: 999px; text-decoration: none;
+      background: var(--accent); color: #04210f; font-weight: 700; font-size: 15px;
+      padding: 12px 24px; border-radius: 999px; text-decoration: none;
       box-shadow: 0 8px 24px rgba(53, 212, 126, .35); transition: transform .12s, box-shadow .12s;
     }
     .btn:hover { transform: translateY(-2px); box-shadow: 0 12px 30px rgba(53, 212, 126, .45); }
     .btn.ghost { background: transparent; color: var(--text); border: 1px solid rgba(255,255,255,.25); box-shadow: none; }
     .btn.ghost:hover { border-color: rgba(255,255,255,.5); }
-    .ver-note { margin-top: 16px; font-size: 13px; color: var(--muted); }
+    .ver-note { margin-top: 14px; font-size: 12.5px; color: var(--muted); }
     .ver-note b { color: var(--accent); }
 
     /* Phone mock */
-    .phone-wrap { margin: 58px auto 0; position: relative; }
+    .phone-wrap { margin: 34px auto 0; position: relative; }
     .phone {
-      width: 260px; height: 520px; margin: 0 auto; border-radius: 44px;
+      width: 240px; margin: 0 auto; border-radius: 40px;
       background: linear-gradient(160deg, #1d4a33, #0f2a1c);
       border: 1px solid rgba(255,255,255,.12); box-shadow: var(--shadow);
-      padding: 14px; display: flex; flex-direction: column;
+      padding: 12px; display: flex; flex-direction: column;
     }
-    .notch { width: 110px; height: 22px; background: #08140d; border-radius: 20px; margin: 4px auto 12px; }
+    .notch { width: 96px; height: 20px; background: #08140d; border-radius: 20px; margin: 3px auto 10px; }
     .screen {
-      flex: 1; border-radius: 28px; background: var(--surface); overflow: hidden;
-      display: flex; flex-direction: column; align-items: center; padding: 18px 12px;
+      border-radius: 26px; background: var(--surface); overflow: hidden;
+      display: flex; align-items: center; justify-content: center;
     }
-    .disp { font-size: 22px; letter-spacing: 2px; font-weight: 600; margin: 6px 0 12px; min-height: 30px; }
-    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; width: 100%; }
-    .key {
-      aspect-ratio: 1; border-radius: 50%; background: var(--surface2);
-      display: flex; align-items: center; justify-content: center; font-size: 22px; font-weight: 600;
-      box-shadow: inset 0 -3px 0 rgba(0,0,0,.25);
-    }
-    .key small { display: block; font-size: 9px; color: var(--muted); font-weight: 500; letter-spacing: 1px; }
-    .call-btn {
-      width: 64px; height: 64px; border-radius: 50%; background: var(--accent);
-      margin-top: 16px; display: flex; align-items: center; justify-content: center;
-      box-shadow: 0 6px 20px rgba(53,212,126,.4);
-    }
-    .call-btn svg { width: 28px; height: 28px; }
+    .screen-shot { display: block; width: 100%; height: auto; object-fit: cover; }
 
     /* Features */
-    section.features { padding: 72px 0; }
-    h2 { font-size: clamp(26px, 4vw, 36px); font-weight: 800; text-align: center; letter-spacing: -.3px; }
+    section.features { padding: 44px 0; }
+    h2 { font-size: clamp(24px, 3.4vw, 32px); font-weight: 800; text-align: center; letter-spacing: -.3px; }
     .cards {
-      margin-top: 40px; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      gap: 18px;
+      margin-top: 28px; display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+      gap: 14px;
     }
     .card {
       background: var(--surface); border: 1px solid rgba(255,255,255,.07); border-radius: var(--radius);
-      padding: 26px 24px; transition: transform .15s, border-color .15s;
+      padding: 20px 18px; transition: transform .15s, border-color .15s;
     }
-    .card:hover { transform: translateY(-4px); border-color: rgba(53,212,126,.4); }
+    .card:hover { transform: translateY(-3px); border-color: rgba(53,212,126,.4); }
     .card .ico {
-      width: 46px; height: 46px; border-radius: 12px; background: rgba(53,212,126,.14);
-      display: flex; align-items: center; justify-content: center; margin-bottom: 16px;
+      width: 40px; height: 40px; border-radius: 11px; background: rgba(53,212,126,.14);
+      display: flex; align-items: center; justify-content: center; margin-bottom: 12px;
     }
-    .card h3 { font-size: 17px; margin-bottom: 6px; }
-    .card p { color: var(--muted); font-size: 14.5px; }
+    .card h3 { font-size: 16px; margin-bottom: 5px; }
+    .card p { color: var(--muted); font-size: 13.5px; }
 
-    /* Download / versions */
-    section.download { padding: 56px 0; text-align: center; }
+
+    /* Download */
+    section.download { padding: 36px 0; text-align: center; }
     .panel {
       background: var(--surface); border: 1px solid rgba(255,255,255,.08);
-      border-radius: 20px; padding: 40px 28px; max-width: 680px; margin: 40px auto 0;
+      border-radius: 18px; padding: 26px 22px; max-width: 560px; margin: 22px auto 0;
     }
-    .panel h3 { font-size: 22px; margin-bottom: 10px; }
-    .panel p { color: var(--muted); margin-bottom: 24px; }
-    .chips { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; margin-bottom: 26px; }
+    .panel h3 { font-size: 19px; margin-bottom: 8px; }
+    .panel p { color: var(--muted); margin-bottom: 16px; font-size: 14px; }
+    .chips { display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
     .chip {
       background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
-      padding: 8px 16px; border-radius: 999px; font-size: 13px; color: var(--muted);
+      padding: 5px 12px; border-radius: 999px; font-size: 12px; color: var(--muted);
+    }
+
+    /* Featured call screen (below download) */
+    section.showcase { padding: 8px 0 44px; text-align: center; }
+    .showcase-grid {
+      margin-top: 22px; display: flex; align-items: center; justify-content: center;
+      gap: 36px; flex-wrap: wrap;
+    }
+    .showcase-shot {
+      width: 200px; border-radius: 24px; overflow: hidden;
+      border: 1px solid rgba(255,255,255,.14);
+      box-shadow: 0 14px 34px rgba(0,0,0,.4);
+      background: #fff; transition: transform .15s;
+    }
+    .showcase-shot:hover { transform: translateY(-5px) scale(1.02); }
+    .showcase-shot img { display: block; width: 100%; height: auto; }
+    .showcase-text { max-width: 420px; text-align: left; }
+    .showcase-text h3 { font-size: 21px; margin-bottom: 8px; }
+    .showcase-text p { color: var(--muted); font-size: 14.5px; }
+    .showcase-text .badge-tag {
+      display: inline-block; background: rgba(53,212,126,.14); color: var(--accent);
+      border: 1px solid rgba(53,212,126,.35); padding: 3px 10px; border-radius: 999px;
+      font-size: 11px; font-weight: 600; margin-bottom: 12px; letter-spacing: .3px;
     }
 
     /* Screenshots */
-    section.shots { padding: 56px 0 16px; }
+    section.shots { padding: 40px 0 12px; }
     .shot-grid {
-      margin-top: 40px; display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 22px; justify-items: center;
+      margin-top: 24px; display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 14px; justify-items: center;
     }
     .shot {
-      width: 190px; border-radius: 26px; overflow: hidden;
+      width: 160px; border-radius: 20px; overflow: hidden;
       border: 1px solid rgba(255,255,255,.14);
-      box-shadow: 0 14px 34px rgba(0,0,0,.4);
+      box-shadow: 0 12px 28px rgba(0,0,0,.4);
       background: #fff; transition: transform .15s, box-shadow .15s;
     }
-    .shot:hover { transform: translateY(-6px) scale(1.02); box-shadow: 0 20px 44px rgba(0,0,0,.5); }
+    .shot:hover { transform: translateY(-4px) scale(1.02); box-shadow: 0 18px 38px rgba(0,0,0,.5); }
     .shot img { display: block; width: 100%; height: auto; }
     .shot figcaption {
-      padding: 10px 8px; text-align: center; font-size: 13px; color: var(--muted);
+      padding: 7px 8px; text-align: center; font-size: 12px; color: var(--muted);
       background: var(--surface2);
     }
 
     /* Changelog */
-    section.changelog { padding: 56px 0 88px; }
+    section.changelog { padding: 40px 0 64px; }
     .log {
-      max-width: 680px; margin: 34px auto 0; background: var(--surface);
-      border: 1px solid rgba(255,255,255,.07); border-radius: var(--radius); padding: 28px 30px;
+      max-width: 620px; margin: 22px auto 0; background: var(--surface);
+      border: 1px solid rgba(255,255,255,.07); border-radius: var(--radius); padding: 22px 24px;
       text-align: left;
     }
-    .log h4 { font-size: 18px; margin-bottom: 4px; }
-    .log .date { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+    .log h4 { font-size: 16px; margin-bottom: 3px; }
+    .log .date { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
     .log ul { list-style: none; }
-    .log li { display: flex; gap: 12px; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,.05); font-size: 15px; }
+    .log li { display: flex; gap: 10px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,.05); font-size: 14px; }
     .log li:last-child { border-bottom: none; }
     .log li em { color: var(--accent); font-style: normal; }
 
-    footer { padding: 34px 0 48px; text-align: center; color: var(--muted); font-size: 13.5px; border-top: 1px solid rgba(255,255,255,.06); }
+    footer { padding: 26px 0 36px; text-align: center; color: var(--muted); font-size: 12.5px; border-top: 1px solid rgba(255,255,255,.06); }
     footer a { color: var(--muted); }
     footer a:hover { color: var(--text); }
 
+    /* Mobile-responsive */
     @media (max-width: 640px) {
-      header.hero { padding: 44px 0 56px; }
-      .phone { width: 230px; height: 470px; }
+      header.hero { padding: 32px 0 36px; }
+      .phone { width: 200px; }
+      .showcase-grid { gap: 22px; }
+      .showcase-text { text-align: center; }
+      .wrap { padding: 0 14px; }
+      .nav-links { display: none; }
     }
   </style>
 </head>
@@ -176,10 +191,7 @@
   <!-- Nav -->
   <nav class="wrap">
     <div class="logo">
-      <svg width="34" height="34" viewBox="0 0 100 100">
-        <circle cx="50" cy="50" r="48" fill="#1a5e3a"/>
-        <path d="M35 25 l8 12 -7 8 c6 10 14 18 24 24 l8 -7 12 8 c3 2 2 7 -1 9 -10 8 -22 9 -33 3 -16 -8 -30 -22 -38 -38 -6 -11 -5 -23 3 -33 2 -3 7 -4 9 -1 z" fill="#fff"/>
-      </svg>
+      <img src="icon.svg" alt="IPDial logo" width="34" height="34" style="border-radius:8px" />
       IPDial
     </div>
     <div class="nav-links">
@@ -187,40 +199,31 @@
       <a href="#screenshots">Screenshots</a>
       <a href="#download">Download</a>
       <a href="#changelog">Changelog</a>
-      <a href="https://github.com/nazimunaeem/IPDial">GitHub</a>
+      <a href="https://github.com/nazimunaeem/IPDial/" target="_blank" rel="noopener">GitHub</a>
     </div>
   </nav>
 
   <!-- Hero -->
   <header class="hero wrap">
-    <span class="badge">Now on v1.1.6</span>
+    <span class="badge">Free &amp; Open Source</span>
     <h1>Crystal-clear VoIP calls,<br /><span class="grad">right on your dialer.</span></h1>
     <p class="sub">IPDial is a modern VoIP dialer for Android with a rotary keypad, smart contact suggestions, Pro features, and rock-solid SIP audio.</p>
     <div class="cta-row">
-      <a class="btn" href="https://github.com/nazimunaeem/IPDial/releases/download/v1.1.6/IPDial-v1.1.6-Universal.apk" target="_blank" rel="noopener">
+      <a class="btn" href="https://github.com/nazimunaeem/IPDial/releases/latest/download/IPDial.apk" target="_blank" rel="noopener">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         Download APK
       </a>
       <a class="btn ghost" href="#features">See what's new</a>
     </div>
-    <p class="ver-note">Version <b>1.1.6</b> · 8.8 MB · Android 8.0+ · Free version with optional Pro</p>
+    <p class="ver-note">8.8 MB · Android 8.0+ · Free version with optional Pro</p>
   </header>
 
-  <!-- Phone mockup -->
+  <!-- Phone mockup (real screenshot) -->
   <div class="phone-wrap">
     <div class="phone">
       <div class="notch"></div>
       <div class="screen">
-        <div class="disp">555‑0142</div>
-        <div class="grid">
-          <div class="key">1</div><div class="key">2<small>ABC</small></div><div class="key">3<small>DEF</small></div>
-          <div class="key">4<small>GHI</small></div><div class="key">5<small>JKL</small></div><div class="key">6<small>MNO</small></div>
-          <div class="key">7<small>PQRS</small></div><div class="key">8<small>TUV</small></div><div class="key">9<small>WXYZ</small></div>
-          <div class="key">*</div><div class="key">0<small>+</small></div><div class="key">#</div>
-        </div>
-        <div class="call-btn">
-          <svg viewBox="0 0 24 24" fill="#04210f"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.8 21 3 13.2 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.2.2 2.4.6 3.6.1.3 0 .7-.2 1l-2.3 2.2z"/></svg>
-        </div>
+        <img src="screens/keypad.png" alt="IPDial keypad screenshot" class="screen-shot" />
       </div>
     </div>
   </div>
@@ -247,7 +250,7 @@
       <div class="card">
         <div class="ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#35d47e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l9 5-9 5-9-5 9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 17l9 5 9-5"/></svg></div>
         <h3>Pro features</h3>
-        <p>Call recording, cloud-synced Pro points, and more — synced securely through Firebase.</p>
+        <p>Call recording, device-slot management, and a points system — all managed in-app.</p>
       </div>
       <div class="card">
         <div class="ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#35d47e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div>
@@ -257,7 +260,7 @@
       <div class="card">
         <div class="ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#35d47e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
         <h3>Privacy first</h3>
-        <p>SIP credentials stay on your device. Optional Google sign-in syncs only what you choose.</p>
+        <p>SIP credentials and call history stay on your device — nothing is synced, no tracking, no ads.</p>
       </div>
     </div>
   </section>
@@ -266,21 +269,35 @@
   <section class="download wrap" id="download">
     <h2>Get IPDial</h2>
     <div class="panel">
-      <h3>Download the latest version</h3>
+      <h3>Download IPDial</h3>
       <p>Install the universal APK on any Android 8.0+ device (arm64 or armeabi-v7a).</p>
       <div class="chips">
-        <span class="chip">v1.1.6</span>
         <span class="chip">8.8 MB</span>
         <span class="chip">Android 8.0+</span>
         <span class="chip">Signed release</span>
+        <span class="chip">Open source</span>
       </div>
-      <a class="btn" href="https://github.com/nazimunaeem/IPDial/releases/download/v1.1.6/IPDial-v1.1.6-Universal.apk" target="_blank" rel="noopener">
+      <a class="btn" href="https://github.com/nazimunaeem/IPDial/releases/latest/download/IPDial.apk" target="_blank" rel="noopener">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        Download IPDial 1.1.6
+        Download IPDial
       </a>
       <p style="margin-top:18px; font-size:13px;">
         Want to update? Just install the new APK over the old one — your accounts and settings are kept.
       </p>
+    </div>
+  </section>
+
+  <!-- Featured call screen -->
+  <section class="showcase wrap" id="call-screen">
+    <div class="showcase-grid">
+      <figure class="showcase-shot">
+        <img src="screens/call_screen.png" alt="IPDial in-call screen with controls" loading="lazy" />
+      </figure>
+      <div class="showcase-text">
+        <span class="badge-tag">In-call experience</span>
+        <h3>Every call, beautifully handled</h3>
+        <p>A clean in-call screen with contact photo, call timer, mute, speaker, hold, keypad, and recording controls — all one tap away. Works with the system Dialer UI too, so incoming calls look native.</p>
+      </div>
     </div>
   </section>
 
@@ -291,6 +308,7 @@
       <figure class="shot"><img src="screens/home.png" alt="IPDial home screen" loading="lazy" /><figcaption>Home</figcaption></figure>
       <figure class="shot"><img src="screens/keypad.png" alt="IPDial keypad" loading="lazy" /><figcaption>Keypad</figcaption></figure>
       <figure class="shot"><img src="screens/keypad_dial.png" alt="IPDial dialing" loading="lazy" /><figcaption>Dialing</figcaption></figure>
+      <figure class="shot"><img src="screens/call_screen.png" alt="IPDial call screen" loading="lazy" /><figcaption>In call</figcaption></figure>
       <figure class="shot"><img src="screens/contacts.png" alt="IPDial contacts" loading="lazy" /><figcaption>Contacts</figcaption></figure>
       <figure class="shot"><img src="screens/logs.png" alt="IPDial call log" loading="lazy" /><figcaption>Call log</figcaption></figure>
       <figure class="shot"><img src="screens/accounts.png" alt="IPDial accounts" loading="lazy" /><figcaption>Accounts</figcaption></figure>
@@ -302,7 +320,7 @@
   <section class="changelog wrap" id="changelog">
     <h2>What's new</h2>
     <div class="log">
-      <h4>v1.1.6</h4>
+      <h4>Latest update</h4>
       <div class="date">September 2026</div>
       <ul>
         <li><em>🆕</em> Rotary Dial Keypad with central call button</li>
@@ -310,15 +328,15 @@
         <li><em>🆕</em> Floating Pill Navigation Bar &amp; quick-access app menu</li>
         <li><em>Improve</em> Back navigation across all sub-screens</li>
         <li><em>Improve</em> Per-account Pro management &amp; volume control</li>
-        <li><em>Privacy</em> Updated policy — email collection for Pro + GitHub link</li>
-        <li><em>Fix</em> Call-screen polish &amp; UI/UX refinements</li>
+        <li><em>Fix</em> Call silent issue &amp; full-screen contact photo</li>
+        <li><em>Privacy</em> Updated policy — email collection for Pro</li>
       </ul>
     </div>
   </section>
 
   <footer class="wrap">
     <div>
-      <p>© 2026 IPDial · <a href="https://github.com/nazimunaeem/IPDial/blob/main/privacy_policy.md">Privacy Policy</a> · <a href="https://github.com/nazimunaeem/IPDial">GitHub</a></p>
+      <p>© 2026 IPDial · <a href="https://github.com/nazimunaeem/IPDial/blob/main/privacy_policy.md" target="_blank" rel="noopener">Privacy Policy</a> · <a href="https://github.com/nazimunaeem/IPDial/" target="_blank" rel="noopener">GitHub</a></p>
     </div>
   </footer>
 

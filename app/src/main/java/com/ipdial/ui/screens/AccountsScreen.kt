@@ -16,12 +16,16 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.foundation.layout.FlowRow
@@ -71,6 +75,7 @@ import com.ipdial.data.model.Transport
 import com.ipdial.ui.components.IPDialTopBar
 import com.ipdial.ui.components.RegStatusIndicator
 import com.ipdial.ui.SipViewModel
+import androidx.compose.ui.platform.LocalUriHandler
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -470,6 +475,8 @@ fun AccountEditSheet(
             }
 
             // Audio quality is configured globally in Settings (Call Audio Quality).
+            // NAT traversal / TURN is ALSO configured globally (Settings → Network),
+            // so there is nothing per-account here beyond the SIP transport above.
 
             Spacer(Modifier.height(8.dp))
 

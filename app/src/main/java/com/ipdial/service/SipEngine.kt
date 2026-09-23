@@ -152,6 +152,9 @@ object SipEngine {
     internal val registeredThreads = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
     internal val localHangupCauses = java.util.concurrent.ConcurrentHashMap<Int, Int>()
 
+    /** Track the native call object for a pending outgoing call (callId == -1) so we can cancel it if user hangs up before makeCall returns. */
+    @Volatile internal var pendingOutgoingCall: SipCallDelegate? = null
+
     private val transportManager = SipTransportManager()
 
     internal lateinit var audioManager: AudioManager
@@ -234,12 +237,81 @@ object SipEngine {
         log("Global audio settings: EC=$ec, NS=$ns, AGC=$agc (device processing only)")
     }
 
+    // ------------------------------------------------------------------
+    // Global NAT traversal (TURN relay) settings — universal, applies to ALL
+    // accounts (configured once in Settings → Network). ICE + STUN + IPv6 handle
+    // most NAT types for free; TURN is only a fallback for symmetric/CGNAT where
+    // no amount of STUN tuning helps. Credentials are user-supplied, never baked
+    // into the app.
+    // ------------------------------------------------------------------
+    @Volatile
+    private var globalTurnServer: String? = null
+    @Volatile
+    private var globalTurnUsername: String? = null
+    @Volatile
+    private var globalTurnPassword: String? = null
+    @Volatile
+    private var globalTurnTransport: TurnTransport = TurnTransport.UDP
+
+    /**
+     * Called by SipService whenever the global NAT settings change. Re-applies
+     * them by re-adding all enabled accounts so the new TURN config takes effect
+     * without a restart.
+     */
+    fun updateGlobalNatSettings(server: String?, username: String?, password: String?, transport: TurnTransport) {
+        val changed = globalTurnServer != server ||
+                globalTurnUsername != username ||
+                globalTurnPassword != password ||
+                globalTurnTransport != transport
+        globalTurnServer = server
+        globalTurnUsername = username
+        globalTurnPassword = password
+        globalTurnTransport = transport
+        log(
+            "Global NAT settings updated: TURN server=${server ?: "(none)"} transport=$transport " +
+                "→ re-adding enabled accounts",
+            false
+        )
+        if (!changed) return
+        val accounts = accountMap.keys.toList()
+        val fresh = accountConfigs.values.toList()
+        // Re-add every account currently configured so ICE/TURN negotiation picks
+        // up the new global values.
+        if (accounts.isNotEmpty()) {
+            runOnPjsipThread {
+                fresh.forEach { reAddAccountIfNeeded(it) }
+            }
+        }
+    }
+
+    private fun reAddAccountIfNeeded(account: SipAccount) {
+        if (!account.isEnabled) return
+        val had = accountMap.containsKey(account.id)
+        if (had) {
+            try {
+                removeAccount(account.id)
+            } catch (_: Throwable) {}
+        }
+        addAccount(account)
+    }
+
+    private fun resultOrNull(server: String?): String? = server?.trim()?.ifBlank { null }
+
     // D5: reliable side-channel for the final SIP disconnect code/reason.
     // StateFlow conflates intermediate values, so the DISCONNECTED-stamped
     // session can be skipped for slow collectors. This field is set on the
     // PJSIP thread right before the session is nulled, and consumed by
     // SipService.observeCallState() when it sees session == null.
     @Volatile internal var pendingDisconnectInfo: Pair<Int?, String?>? = null
+
+    // Task 7 — TURN/media failure graceful degradation.
+    // Set (on the PJSIP thread) when a call is torn down because its media
+    // transport hit PJSUA_CALL_MEDIA_ERROR (ICE/TURN allocation failure, e.g.
+    // relay quota exhausted or UDP blocked). Consumed by
+    // SipService.observeCallState() to show a user-visible toast instead of a
+    // silent hang/stuck call screen. Only affects calls that actually needed the
+    // relay — direct-connect calls never set it.
+    @Volatile internal var mediaFailureToastShownFor: Int = -1
 
     // On disconnect, the session stays alive briefly so the user hears the busy
     // tone/announcement (2s for 486/487, 500ms otherwise) before the screen closes.
@@ -411,12 +483,21 @@ object SipEngine {
                             userAgent = "IPDial/1.1 (Android)"
                             maxCalls = 4
 
-                            // Q5: STUN for NAT traversal so the far end can reach our RTP.
-                            // ICE stays disabled; STUN alone is safe behind most routers.
+                            // STUN servers for NAT traversal (ICE candidate gathering).
+                            // Two public servers for redundancy — if one is unreachable
+                            // on a given network, ICE still gets srflx candidates from
+                            // the other. Even with STUN+ICE, symmetric/CGNAT networks
+                            // structurally require a TURN relay (user-configurable in
+                            // Settings → Network).
                             try {
                                 stunServer.add("stun.l.google.com:19302")
                             } catch (_: Throwable) {
-                                log("Failed to add STUN server", isError = true)
+                                log("Failed to add Google STUN server", isError = true)
+                            }
+                            try {
+                                stunServer.add("stun.cloudflare.com:3478")
+                            } catch (_: Throwable) {
+                                log("Failed to add Cloudflare STUN server", isError = true)
                             }
                         }
                     }
@@ -581,12 +662,36 @@ object SipEngine {
                         pjmedia_srtp_use.PJMEDIA_SRTP_DISABLED
                 }
 
-                natConfig.iceEnabled = false
-                natConfig.turnEnabled = false
-                natConfig.sipStunUse = pjsua_stun_use.PJSUA_STUN_USE_DEFAULT
-                natConfig.contactRewriteUse = 1
-                natConfig.sipOutboundUse = 0
-                natConfig.udpKaIntervalSec = 15
+                natConfig.apply {
+                    // ICE and IPv6 media are DISABLED by default.
+                    //
+                    // In this PJSIP 2.5 build, enabling ICE (iceEnabled=true,
+                    // iceAggressiveNomination=true) and IPv6 media candidates
+                    // (AccountMediaConfig.ipv6Use) changes the SDP offer in a way that
+                    // several SIP providers silently drop — the outgoing INVITE gets no
+                    // response and the call stays on "CALLING" forever with no ringing,
+                    // and hangup then waits for the CANCEL to time out (20-30s).
+                    // v1.1.5/v1.1.6 shipped with iceEnabled=false and call signaling
+                    // works on the vast majority of providers.
+                    iceEnabled = false
+
+                    // TURN stays wired in (Settings → Network) as an opt-in relay for
+                    // symmetric/CGNAT callers, but it is ignored here because TURN
+                    // relaying requires ICE negotiation to be enabled. Kept dormant so
+                    // future ICE opt-in can reuse the same credentials.
+                    turnEnabled = false
+                    val gServer = resultOrNull(globalTurnServer)
+                    if (gServer != null && globalTurnUsername != null) {
+                        log(
+                            "INFO: TURN server configured but ICE is disabled — TURN ignored. Enable ICE to use the relay.",
+                            isError = false
+                        )
+                    }
+                    sipStunUse = pjsua_stun_use.PJSUA_STUN_USE_DEFAULT
+                    contactRewriteUse = 1
+                    sipOutboundUse = 0
+                    udpKaIntervalSec = 15
+                }
             }
 
             val pjAcc = SipAccountDelegate(
@@ -894,6 +999,19 @@ object SipEngine {
 
     private fun makeCallOnThread(accountId: String, destination: String): Boolean {
         return try {
+            // GUARD: never place a second INVITE while a call session is already
+            // active. Direct-to-engine calls (Telecom 3s fallback) and late Telecom
+            // deliveries both route through here; without this check two INVITEs for
+            // the same destination get fired and the failed second one tears the
+            // first (successful) call's session/UI down.
+            val existingSession = _callSession.value
+            if (existingSession != null && existingSession.state != CallState.DISCONNECTED) {
+                log("makeCall blocked: active session already exists (callId=${existingSession.callId}, state=${existingSession.state})", true)
+                return false
+            }
+            // Fresh outgoing call must not replay DTMF digits buffered from a
+            // previously connected/aborted call.
+            SipAudioController.clearPendingDtmf()
             val pjAcc = accountMap[accountId] ?: run {
                 log("makeCall failed: accountId $accountId not found in accountMap.", true)
                 return false
@@ -927,20 +1045,23 @@ object SipEngine {
                 opt.videoCount = 0
             }
 
-            try {
-                call.makeCall(destUri, prm)
-                val realId: Int
+            pendingOutgoingCall = call
                 try {
-                    realId = call.getId()
-                } catch (e: Throwable) {
-                    log("makeCall: getId() failed after makeCall returned: ${e.message}", true)
-                    callMap.entries.removeAll { it.value === call }
-                    _callSession.value = null
-                    return false
-                }
+                    call.makeCall(destUri, prm)
+                    val realId: Int
+                    try {
+                        realId = call.getId()
+                    } catch (e: Throwable) {
+                        log("makeCall: getId() failed after makeCall returned: ${e.message}", true)
+                        callMap.entries.removeAll { it.value === call }
+                        _callSession.value = null
+                        pendingOutgoingCall = null
+                        return false
+                    }
 
-                callMap[realId] = call
-                log("call.makeCall returned successfully. assigned call ID = $realId")
+                    pendingOutgoingCall = null
+                    callMap[realId] = call
+                    log("call.makeCall returned successfully. assigned call ID = $realId")
 
                 val currentSession = _callSession.value
                 if (currentSession == null || currentSession.state == CallState.DISCONNECTED) {
@@ -995,8 +1116,19 @@ object SipEngine {
     private fun hangupCallOnThread(callId: Int) {
         val id = if (callId >= 0) callId else _callSession.value?.callId ?: return
         log("Hangup requested for callId=$id")
-        val call = callMap[id]
+        
+        // Handle pending outgoing call (callId == -1 while INVITE is in-flight)
+        val pendingCall = if (id == -1) pendingOutgoingCall else null
+        val call = callMap[id] ?: pendingCall
+        
         if (call != null) {
+            val actualId = if (id == -1 && pendingCall != null) {
+                // The native call doesn't have a callId yet, but we can still hang it up
+                log("Hangup: cancelling pending outgoing call (callId not yet assigned)")
+                true
+            } else {
+                false
+            }
             try {
                 val stateText = try { call.info.stateText } catch (_: Throwable) { "Unknown" }
                 val session = _callSession.value
@@ -1019,14 +1151,47 @@ object SipEngine {
                 log("hangupCall: call.hangup() sent successfully for callId=$id (sipStatusCode=$sipStatusCode, telecomCause=$telecomCause)")
             } catch (e: Throwable) {
                 log("hangupCall failed: ${e.message}", true)
-                // Force immediate local cleanup if native call.hangup threw an exception
-                callMap.remove(id)
-                if (_callSession.value?.callId == id) {
+                val session = _callSession.value
+
+                // Pending outgoing call that never received a real native callId
+                // (callId == -1): no delegate callback is guaranteed to fire and the
+                // zombie watchdog (nullSessionIfStale) explicitly skips callId == -1,
+                // so clean the session up directly. delete() on a pending INVITE makes
+                // PJSIP send a CANCEL for us.
+                if (session != null && session.callId == -1 && id == -1) {
+                    pendingOutgoingCall = null
+                    try { call.delete() } catch (_: Throwable) {}
                     _callSession.value = null
+                    try { onCallDisconnected?.invoke(id) } catch (_: Throwable) {}
+                    SipConnectionService.disconnectCall(id, CallHangupResolver.resolveDisconnectCause(session))
+                    return
+                }
+
+                // Established call: do NOT force-clear callMap / null the session here.
+                // hangup() throws most often when the call is ALREADY disconnecting —
+                // double hangup (framework onDisconnect + ViewModel.hangup), or our
+                // local BYE racing the remote BYE. Force-cleaning now removes the
+                // SipCallDelegate from callMap before PJSIP has finished the
+                // BYE/CANCEL transaction, so the 200 OK never reaches the remote and
+                // the far-end call screen stalls — the IPDial↔IPDial hangup bug. Let
+                // onCallState / onCallTsxState own teardown: stamp DISCONNECTED here so
+                // the UI dismisses, hold the zombie watchdog off for the native-delete
+                // window, and always schedule the (idempotent) native delete so a
+                // genuinely dead call can never leak.
+                if (session != null && session.callId >= 0) {
+                    if (_callSession.value?.callId == session.callId) {
+                        _callSession.value = session.copy(state = CallState.DISCONNECTED)
+                    }
+                    SipEngine.beginDisconnectHold(2000)
+                    call.scheduleNativeDelete(id)
                 }
                 try { onCallDisconnected?.invoke(id) } catch (_: Throwable) {}
-                SipConnectionService.disconnectCall(id, CallHangupResolver.resolveDisconnectCause(_callSession.value))
+                SipConnectionService.disconnectCall(
+                    if (id >= 0) id else session?.callId ?: -1,
+                    CallHangupResolver.resolveDisconnectCause(session)
+                )
             }
+            pendingOutgoingCall = null
         } else {
             // H2 fix: never leave native calls alive when the requested callId is
             // missing from callMap. A stale/ghost session must not survive a hangup
@@ -1046,6 +1211,7 @@ object SipEngine {
                     }
                 }
             }
+            pendingOutgoingCall = null
             if (_callSession.value != null && (_callSession.value?.callId == id || id == -1)) {
                 _callSession.value = null
             }
@@ -1091,6 +1257,7 @@ object SipEngine {
             //  G.711U -> 170 (narrowband, universally supported)
             //  G.729 ->  160 (narrowband low-bitrate, software BCG729)
             //  GSM  ->  140 (fallback)
+            //  telephone-event -> 100 (RFC 4733/2833 DTMF — MUST stay enabled)
             //  everything else -> 0 (disabled — keeps the SIP INVITE compact)
             for (i in 0 until codecs.size.toInt()) {
                 val codec = codecs.get(i)
@@ -1098,6 +1265,11 @@ object SipEngine {
                 val nameLower = codecId.lowercase()
 
                 val base: Int = when {
+                    // RFC 4733/2833 telephone-event MUST stay enabled or DTMF
+                    // (call.dialDtmf) has no negotiated RTP channel and keypad
+                    // presses are silently dropped. Priority sits below every
+                    // audio codec, mirroring PJSIP's default ordering.
+                    nameLower.contains("telephone-event") || nameLower.contains("telephone_event") -> 100
                     nameLower.startsWith("opus") -> 260
                     nameLower.startsWith("g722") -> 220
                     nameLower.startsWith("pcma") -> 180
@@ -1139,16 +1311,16 @@ object SipEngine {
      * Ensures the sound device is open and capture is routed through the platform's
      * WORKING audio driver, without hard-coding a specific driver.
      *
-     * History: this previously forced the "Java Audio (Android)" driver at call time
-     * as a Samsung workaround. That override breaks mic capture on devices (and
-     * emulators) where the OpenSL ES driver is the one that actually provides usable
-     * capture — the far end hears only DTMF/RFC2833 but no speech. Linphone, which
-     * works on those same platforms, lets PJSIP auto-select the sound device.
+     * Forcing the "Java Audio (Android JNI)" driver breaks mic capture on devices
+     * (and emulators) where the OpenSL ES driver is the one that actually provides
+     * usable capture — the far end hears only DTMF/RFC2833 but no speech.
+     * Linphone, which works on those same platforms, lets PJSIP auto-select the
+     * sound device.
      *
      * So: we let PJSIP auto-select capture/playback (its default device is the one
      * the platform/media framework actually provides), and only restart the sound
-     * device if it isn't active, so the media bridge in onCallMediaState() operates
-     * against a valid, live capture device.
+     * device so the media bridge in onCallMediaState() operates against a valid,
+     * live capture device.
      */
     fun forceAudioDevicesForCall() {
         runOnPjsipThread {
@@ -1161,19 +1333,14 @@ object SipEngine {
                         val info = try { devs.get(i) } catch (_: Throwable) { null }
                         "${i}:${info?.name}"
                     }.joinToString(", ")
-                    val preferredDevice = if (DeviceUtil.isEmulator()) {
-                        -1
-                    } else {
-                        (0 until devs.size.toInt()).firstOrNull { i ->
-                            val name = try { devs.get(i)?.name ?: "" } catch (_: Throwable) { "" }
-                            name.contains("Android JNI", ignoreCase = true)
-                        } ?: -1
-                    }
-                    // Re-selecting the device also reopens capture after Telecom or an
-                    // OEM audio policy has taken over the microphone.
-                    adm.setCaptureDev(preferredDevice)
-                    adm.setPlaybackDev(preferredDevice)
-                    log("Call audio: selected device=$preferredDevice. Available: [$names]", false)
+                    // Restart the sound device with auto-selection. Calling
+                    // setCaptureDev/setPlaybackDev restarts the PJSIP sound device
+                    // even when the same value (-1) is re-applied, which re-opens
+                    // the mic and ensures the conference-bridge startTransmit()
+                    // bridges operate against a live capture device.
+                    adm.setCaptureDev(-1)
+                    adm.setPlaybackDev(-1)
+                    log("Call audio: restarted sound device (auto-select). Available: [$names]", false)
                 } catch (e: Throwable) {
                     log("forceAudioDevicesForCall failed: ${e.message}", true)
                 }
@@ -1237,10 +1404,10 @@ object SipEngine {
                         val session = _callSession.value
                         val isEmulator = com.ipdial.util.DeviceUtil.isEmulator()
                         val baseGain = if (isEmulator) SipAudioController.MIC_GAIN_EMULATOR else SipAudioController.MIC_GAIN_REAL
-                        // adjustRxLevel = bridge->call = our mic (TX); adjustTxLevel =
-                        // call->bridge = listening (RX). See SipCallDelegate comment.
-                        aud.adjustRxLevel(if (session?.isMuted == true) 0f else baseGain)
-                        aud.adjustTxLevel(SipAudioController.callVolumeToPjsipLevel(session?.rxVolume ?: SipAudioController.DEFAULT_RX_VOLUME))
+                        // Empirical pjsua2 gain direction (verified live): adjustTxLevel =
+                        // mic → remote; adjustRxLevel = remote → us (listening). Matches v1.1.5.
+                        aud.adjustTxLevel(if (session?.isMuted == true) 0f else baseGain)
+                        aud.adjustRxLevel(SipAudioController.callVolumeToPjsipLevel(session?.rxVolume ?: SipAudioController.DEFAULT_RX_VOLUME))
 
                         // Recording: bridge both directions into the recorder if active.
                         recorder?.let { rec ->
@@ -1267,6 +1434,11 @@ object SipEngine {
                     } catch (e: Throwable) {
                         log("reconnectAudioPathForCall: codec refresh failed: ${e.message}", true)
                     }
+
+                    // Media is ACTIVE again — flush any DTMF keyed during CALLING/EARLY
+                    // or while the call was on hold (dialDtmf is dropped without an
+                    // active audio stream otherwise).
+                    SipAudioController.flushPendingDtmf()
                 } catch (e: Throwable) {
                     log("reconnectAudioPathForCall failed for callId=$callId: ${e.message}", true)
                 }
@@ -1425,5 +1597,107 @@ object SipEngine {
         } else {
             "sip:$number"
         }
+    }
+
+    // ── Server Inspection helpers ────────────────────────────────────
+
+    /**
+     * Snapshot the negotiated codec and call state for the currently active call.
+     * Safe to call from any thread (serialized through pjsipLock).
+     * Returns a triple of (codecName, clockRateHz, dumpText) or null if no active call.
+     */
+    fun snapshotCallQuality(): Triple<String, Int, String>? {
+        return runOnPjsipThreadAndWait {
+            registerCurrentThreadEx()
+            synchronized(pjsipLock) {
+                val session = _callSession.value ?: return@synchronized null
+                val call = callMap[session.callId] ?: return@synchronized null
+                try {
+                    val ci = call.info
+                    var codecName = ""
+                    var clockRate = 0
+                    for (i in 0 until ci.media.size.toInt()) {
+                        val mi = ci.media.get(i)
+                        if (mi.type != pjmedia_type.PJMEDIA_TYPE_AUDIO) continue
+                        val streamInfo = try { call.getStreamInfo(mi.index.toLong()) } catch (_: Throwable) { null }
+                        if (streamInfo != null) {
+                            codecName = streamInfo.codecName ?: ""
+                            clockRate = try { streamInfo.codecClockRate.toInt() } catch (_: Throwable) { 0 }
+                        }
+                        break
+                    }
+                    // call.dump() gives the full SDP + media path info
+                    val dump = try { call.dump(true, "") } catch (_: Throwable) { "" }
+                    Triple(codecName, clockRate, dump)
+                } catch (e: Throwable) {
+                    log("snapshotCallQuality failed: ${e.message}", true)
+                    null
+                }
+            }
+        }
+    }
+
+    /**
+     * Attempt to send a single DTMF digit using the same logic as [SipAudioController.sendDtmf]
+     * but returns a diagnostic result (method used, success/failure).
+     */
+    fun probeDtmf(digit: Char): Pair<String, Boolean> {
+        return runOnPjsipThreadAndWait {
+            registerCurrentThreadEx()
+            val session = _callSession.value
+                ?: return@runOnPjsipThreadAndWait "NO_SESSION" to false
+            val call = callMap[session.callId]
+                ?: return@runOnPjsipThreadAndWait "NO_CALL" to false
+
+            // Check if media is active
+            val mediaActive = try {
+                val ci = call.info
+                (0 until ci.media.size.toInt()).any { idx ->
+                    val mi = ci.media.get(idx)
+                    mi.type == pjmedia_type.PJMEDIA_TYPE_AUDIO &&
+                        mi.status == pjsua_call_media_status.PJSUA_CALL_MEDIA_ACTIVE
+                }
+            } catch (_: Throwable) { false }
+
+            if (!mediaActive) {
+                return@runOnPjsipThreadAndWait "BUFFERED" to false
+            }
+
+            // Detect if this domain needs SIP-INFO
+            val domain = accountConfigs[session.accountId]?.domain?.lowercase()?.trim() ?: ""
+            val forceSipInfo = SipAudioController.SIP_INFO_ONLY_DOMAINS_PUBLIC.any { domain == it }
+
+            if (forceSipInfo) {
+                try {
+                    val prm = CallSendRequestParam().apply { method = "INFO" }
+                    prm.txOption = SipTxOption().apply {
+                        contentType = "application/dtmf-relay"
+                        msgBody = "Signal=$digit\r\nDuration=160"
+                    }
+                    call.sendRequest(prm)
+                    return@runOnPjsipThreadAndWait "SIP-INFO" to true
+                } catch (e: Throwable) {
+                    return@runOnPjsipThreadAndWait "SIP-INFO" to false
+                }
+            }
+
+            // Try RFC 2833 first, fall back to SIP-INFO
+            try {
+                call.dialDtmf(digit.toString())
+                "RFC2833" to true
+            } catch (_: Throwable) {
+                try {
+                    val prm = CallSendRequestParam().apply { method = "INFO" }
+                    prm.txOption = SipTxOption().apply {
+                        contentType = "application/dtmf-relay"
+                        msgBody = "Signal=$digit\r\nDuration=160"
+                    }
+                    call.sendRequest(prm)
+                    "SIP-INFO" to true
+                } catch (e2: Throwable) {
+                    "FAILED" to false
+                }
+            }
+        } ?: ("NO_ENGINE" to false)
     }
 }

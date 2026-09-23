@@ -51,6 +51,7 @@ import androidx.compose.material.icons.filled.Dialpad
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.PrivacyTip
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
@@ -130,6 +131,7 @@ import com.ipdial.ui.screens.IncomingCallScreen
 import com.ipdial.ui.screens.IncomingCallSettingsScreen
 import com.ipdial.ui.screens.PrivacyPolicyScreen
 import com.ipdial.ui.screens.RecordingsScreen
+import com.ipdial.ui.screens.ServerInspectorScreen
 import com.ipdial.ui.screens.SettingsScreen
 import com.ipdial.ui.screens.ThemeSettingsScreen
 import com.ipdial.ui.theme.IPDialTheme
@@ -196,12 +198,16 @@ class MainActivity : ComponentActivity() {
     )
 
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
-        // Whenever ANY call screen is visible (incoming, dialing/ringing, or an
-        // active connected call), redirect the physical volume buttons to the
-        // in-app call volume (PJSIP RX gain). Both ACTION_DOWN and ACTION_UP are
-        // consumed so the system never ALSO adjusts the SIP-unused voice-call
+        // Whenever ANY call screen is visible (incoming, dialing/ringing CALLING,
+        // EARLY, or an active connected call), redirect the physical volume buttons
+        // to the in-app call volume (PJSIP RX gain). Both ACTION_DOWN and ACTION_UP
+        // are consumed so the system never ALSO adjusts the SIP-unused voice-call
         // stream or pops its volume HUD over the call screen. When no call screen
         // is visible the event falls through to the default media-volume handling.
+        // This also makes the volume keys work during the CALLING phase (before the
+        // media stream is ACTIVE): adjustCallVolumeByHardware stores the new factor
+        // on the session, and onCallMediaState applies rxVolume the instant the
+        // audio path is established.
         val isVolumeKey = event.keyCode == android.view.KeyEvent.KEYCODE_VOLUME_UP ||
             event.keyCode == android.view.KeyEvent.KEYCODE_VOLUME_DOWN
         if (isVolumeKey && isCallScreenVisible(vm.callSession.value)) {
@@ -237,7 +243,10 @@ class MainActivity : ComponentActivity() {
         volumeControlStream = android.media.AudioManager.STREAM_MUSIC
         
         requestRequiredPermissions()
-        startSipServiceIfPermitted()
+        // SipService is started from IPDialApplication.onCreate() so that
+        // startForeground() runs before Android's 5-second FGS timeout expires.
+        // The service checks RECORD_AUDIO permission itself and stops if missing;
+        // startSipServiceIfPermitted() restarts it once permission is granted.
 
         handleIntent(intent)
 
@@ -255,7 +264,22 @@ class MainActivity : ComponentActivity() {
                 val activity = localView.context as? android.app.Activity
                 val isActiveCall = isCallScreenVisible(callSession)
                 if (isActiveCall) {
-                    activity?.volumeControlStream = android.media.AudioManager.STREAM_VOICE_CALL
+                    // Route volume keys based on what's actually audible:
+                    //  - INCOMING ringing: the app's ringtone plays on STREAM_RING,
+                    //    so buttons control ring/ringer volume (a press also silences
+                    //    the ringer on most devices).
+                    //  - Outgoing CALLING/EARLY: ringback/early media comes over the
+                    //    voice RTP path (MODE_IN_COMMUNICATION) — STREAM_VOICE_CALL.
+                    //  - CONFIRMED: in-call audio — STREAM_VOICE_CALL.
+                    val isIncomingRinging =
+                        callSession?.direction == com.ipdial.data.model.CallDirection.INCOMING &&
+                            (callSession?.state == com.ipdial.data.model.CallState.INCOMING ||
+                                callSession?.state == com.ipdial.data.model.CallState.EARLY)
+                    activity?.volumeControlStream = if (isIncomingRinging) {
+                        android.media.AudioManager.STREAM_RING
+                    } else {
+                        android.media.AudioManager.STREAM_VOICE_CALL
+                    }
                     window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
                         activity?.setTurnScreenOn(true)
@@ -449,6 +473,7 @@ sealed class NavDest(val route: String, val label: String, val icon: ImageVector
     object ThemeSettings : NavDest("theme_settings", "Theme", Icons.Default.Settings)
     object IncomingCallStyle : NavDest("incoming_call_style", "Incoming Call Style", Icons.Default.Call)
     object DialpadStyle : NavDest("dialpad_style", "Dialpad Style", Icons.Default.Dialpad)
+    object ServerInspector : NavDest("server_inspector", "Server Inspector", Icons.Default.NetworkCheck)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -812,7 +837,10 @@ fun AppNavHost(
                 onNavigateToLogs = { navController.navigate(NavDest.Logs.route) },
                 onNavigateToCodecs = { navController.navigate(NavDest.AudioCodecs.route) },
                 onNavigateToTheme = { navController.navigate(NavDest.ThemeSettings.route) },
-                onNavigateToIncomingCallStyle = { navController.navigate(NavDest.IncomingCallStyle.route) }
+                onNavigateToIncomingCallStyle = { navController.navigate(NavDest.IncomingCallStyle.route) },
+                onNavigateToPrivacy = { navController.navigate(NavDest.Privacy.route) },
+                onNavigateToAbout = { navController.navigate(NavDest.About.route) },
+                onNavigateToServerInspector = { navController.navigate(NavDest.ServerInspector.route) }
             ) 
         }
         composable(NavDest.ThemeSettings.route) {
@@ -882,6 +910,12 @@ fun AppNavHost(
                 vm = vm,
                 onBack = { navController.popBackStack() },
                 onOpenDrawer = onOpenMenu
+            )
+        }
+        composable(NavDest.ServerInspector.route) {
+            ServerInspectorScreen(
+                vm = vm,
+                onBack = { navController.popBackStack() }
             )
         }
     }

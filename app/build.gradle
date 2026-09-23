@@ -13,9 +13,8 @@ android {
         applicationId "com.ipdial"
         minSdk 26
         targetSdk 35
-        versionCode 26
-        versionName "1.1.6"
-
+        versionCode 29
+        versionName "1.1.6.2"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary true
@@ -57,6 +56,17 @@ android {
                 keyAlias keystoreProperties['KEY_ALIAS']
                 keyPassword keystoreProperties['KEY_PASSWORD']
             }
+        }
+    }
+
+    // Task to copy and timestamp the signed APK to ~/Downloads
+    tasks.register('copySignedApk', Copy) {
+        dependsOn 'assembleRelease'
+        from 'build/outputs/apk/release/'
+        include 'app-universal-release.apk'
+        into System.getProperty("user.home") + "/Downloads/"
+        rename { String filename ->
+            "IPDial-v${android.defaultConfig.versionName}-${new Date().format('yyyyMMdd-HHmm')}-signed.apk"
         }
     }
 

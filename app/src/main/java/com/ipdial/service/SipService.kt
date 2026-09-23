@@ -22,6 +22,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -389,6 +390,25 @@ class SipService : Service() {
             }
         }
 
+        // Push global NAT traversal settings into the engine and re-add enabled
+        // accounts whenever they change (Settings → Network). TURN is universal,
+        // not per-account.
+        scope.launch {
+            combine(
+                repo.turnServer,
+                repo.turnUsername,
+                repo.turnPassword,
+                repo.turnTransport
+            ) { server, user, pass, tp ->
+                SipEngine.updateGlobalNatSettings(
+                    server.ifBlank { null },
+                    user.ifBlank { null },
+                    pass,
+                    tp
+                )
+            }.collect { }
+        }
+
         scope.launch {
             SipEngine.registrationEvents.collect { (accountId, status, statusCode) ->
                 repo.updateRegStatus(accountId, status)
@@ -525,6 +545,22 @@ class SipService : Service() {
                             }
                             withContext(Dispatchers.Main) {
                                 android.widget.Toast.makeText(applicationContext, reasonText, android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                        // Task 7 — TURN/media failure graceful degradation: if the call
+                        // was torn down because its media transport errored (ICE/TURN
+                        // allocation failure, relay quota exhausted, UDP blocked), show
+                        // a clear user-visible message rather than letting the call
+                        // screen just vanish / silently fail. Only set for calls that
+                        // actually needed the relay — direct calls never hit this.
+                        if (sessionToLog.callId == SipEngine.mediaFailureToastShownFor) {
+                            SipEngine.mediaFailureToastShownFor = -1
+                            withContext(Dispatchers.Main) {
+                                android.widget.Toast.makeText(
+                                    applicationContext,
+                                    "Call failed — network issue, please try again",
+                                    android.widget.Toast.LENGTH_LONG
+                                ).show()
                             }
                         }
                         // Use the service scope so the write is tied to the service lifecycle

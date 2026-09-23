@@ -74,5 +74,17 @@ class IPDialApplication : Application() {
         } catch (e: Throwable) {
             android.util.Log.e("IPDialApp", "FirestoreAdConfig init failed", e)
         }
+
+        // Start SIP foreground service early so startForeground() is called within
+        // Android's 5-second timeout.  Calling this from Application.onCreate()
+        // posts the service lifecycle transaction to the main-thread Handler
+        // BEFORE the Activity lifecycle, giving maximum headroom.  If microphone
+        // permission is missing the service stops itself; it will be restarted
+        // once the user grants the permission via MainActivity.
+        try {
+            com.ipdial.service.SipService.start(this)
+        } catch (e: Throwable) {
+            android.util.Log.e("IPDialApp", "SipService early start failed", e)
+        }
     }
 }

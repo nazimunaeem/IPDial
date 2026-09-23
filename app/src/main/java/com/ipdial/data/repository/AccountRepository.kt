@@ -21,6 +21,7 @@ import com.ipdial.data.model.KeypadDesign
 import com.ipdial.data.model.PreferredCodec
 import com.ipdial.data.model.SipAccount
 import com.ipdial.data.model.ThemeMode
+import com.ipdial.data.model.TurnTransport
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -66,11 +67,19 @@ class AccountRepository(private val context: Context) {
     private val globalAgcEnabledKey = booleanPreferencesKey("global_agc_enabled")
     private val sipEcEnabledKey = booleanPreferencesKey("sip_ec_enabled")
     private val sipNsEnabledKey = booleanPreferencesKey("sip_ns_enabled")
+    private val fullScreenContactPhotoKey = booleanPreferencesKey("full_screen_contact_photo")
     private val googleSignInBannerDismissedKey = booleanPreferencesKey("google_sign_in_banner_dismissed")
     private val savedLabelsKey = stringPreferencesKey("saved_labels")
     private val savedHostsKey = stringPreferencesKey("saved_hosts")
     private val firebaseUserIdKey = stringPreferencesKey("firebase_user_id")
     private val userCodeKey = stringPreferencesKey("user_code")
+    // Global NAT traversal (TURN relay) settings — universal, applies to ALL accounts.
+    // Users may leave username/password blank to skip TURN entirely; ICE+STUN (and
+    // IPv6 where available) still handle most NAT types for free.
+    private val turnServerKey = stringPreferencesKey("turn_server")
+    private val turnUsernameKey = stringPreferencesKey("turn_username")
+    private val turnPasswordKey = stringPreferencesKey("turn_password")
+    private val turnTransportKey = androidx.datastore.preferences.core.stringPreferencesKey("turn_transport")
     // Cached device-slot authorization (which deviceId owns the local Pro slot).
     // Lets a relaunch on a single authorized device unlock Pro immediately without
     // waiting for a Firestore round-trip.
@@ -164,10 +173,19 @@ class AccountRepository(private val context: Context) {
     val globalNsEnabled: Flow<Boolean> = context.dataStore.data.map { it[globalNsEnabledKey] ?: true }
     val globalAgcEnabled: Flow<Boolean> = context.dataStore.data.map { it[globalAgcEnabledKey] ?: true }
 
+    // Global TURN relay settings (decrypted on read; applied to all accounts).
+    val turnServer: Flow<String> = context.dataStore.data.map { it[turnServerKey] ?: "" }
+    val turnUsername: Flow<String> = context.dataStore.data.map { it[turnUsernameKey] ?: "" }
+    val turnPassword: Flow<String> = context.dataStore.data.map { decryptPassword(it[turnPasswordKey] ?: "") }
+    val turnTransport: Flow<TurnTransport> = context.dataStore.data.map { prefs ->
+        try { TurnTransport.valueOf(prefs[turnTransportKey] ?: "UDP") } catch (_: Exception) { TurnTransport.UDP }
+    }
+
     // SIP-level audio processing (PJSIP's built-in EC/NS) — default OFF for compatibility
     // Some devices mute mic when PJSIP's software EC/NS runs. User can enable if it works.
     val sipEcEnabled: Flow<Boolean> = context.dataStore.data.map { it[sipEcEnabledKey] ?: false }
     val sipNsEnabled: Flow<Boolean> = context.dataStore.data.map { it[sipNsEnabledKey] ?: false }
+    val fullScreenContactPhoto: Flow<Boolean> = context.dataStore.data.map { it[fullScreenContactPhotoKey] ?: false }
     val firebaseUserId: Flow<String?> = context.dataStore.data.map { it[firebaseUserIdKey] }
     val userCode: Flow<String?> = context.dataStore.data.map { it[userCodeKey] }
     val proDeviceAuthorized: Flow<Boolean> = context.dataStore.data.map { it[proDeviceAuthorizedKey] ?: false }
@@ -238,8 +256,16 @@ class AccountRepository(private val context: Context) {
     suspend fun setGlobalNsEnabled(enabled: Boolean) = context.dataStore.edit { it[globalNsEnabledKey] = enabled }
     suspend fun setGlobalAgcEnabled(enabled: Boolean) = context.dataStore.edit { it[globalAgcEnabledKey] = enabled }
 
+    suspend fun setTurnServer(server: String) = context.dataStore.edit { it[turnServerKey] = server.trim() }
+    suspend fun setTurnUsername(username: String) = context.dataStore.edit { it[turnUsernameKey] = username.trim() }
+    suspend fun setTurnPassword(password: String) = context.dataStore.edit {
+        it[turnPasswordKey] = encryptPassword(password.trim())
+    }
+    suspend fun setTurnTransport(tp: TurnTransport) = context.dataStore.edit { it[turnTransportKey] = tp.name }
+
     suspend fun setSipEcEnabled(enabled: Boolean) = context.dataStore.edit { it[sipEcEnabledKey] = enabled }
     suspend fun setSipNsEnabled(enabled: Boolean) = context.dataStore.edit { it[sipNsEnabledKey] = enabled }
+    suspend fun setFullScreenContactPhoto(enabled: Boolean) = context.dataStore.edit { it[fullScreenContactPhotoKey] = enabled }
     suspend fun dismissGoogleSignInBanner() = context.dataStore.edit { it[googleSignInBannerDismissedKey] = true }
     suspend fun setFirebaseUserId(id: String?) = context.dataStore.edit {
         if (id == null) it.remove(firebaseUserIdKey)
@@ -280,6 +306,10 @@ class AccountRepository(private val context: Context) {
             prefs.remove(keypadDesignKey)
             prefs.remove(appIconKey)
             prefs.remove(incomingCallModeKey)
+            prefs.remove(turnServerKey)
+            prefs.remove(turnUsernameKey)
+            prefs.remove(turnPasswordKey)
+            prefs.remove(turnTransportKey)
         }
     }
 
@@ -382,8 +412,10 @@ class AccountRepository(private val context: Context) {
         return CryptoHelper.encrypt(password)
     }
 
-    private fun secureAccount(acc: SipAccount): SipAccount = acc.copy(password = encryptPassword(acc.password))
-    private fun unsecureAccount(acc: SipAccount): SipAccount = acc.copy(password = decryptPassword(acc.password))
+    private fun secureAccount(acc: SipAccount): SipAccount =
+        acc.copy(password = encryptPassword(acc.password))
+    private fun unsecureAccount(acc: SipAccount): SipAccount =
+        acc.copy(password = decryptPassword(acc.password))
 
     private fun getAccountsList(prefs: Preferences): List<SipAccount> {
         val json = prefs[accountsKey] ?: return emptyList()

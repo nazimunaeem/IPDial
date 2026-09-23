@@ -16,7 +16,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.automirrored.filled.*
@@ -28,7 +31,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.ipdial.R
 import com.ipdial.data.model.*
@@ -56,7 +63,10 @@ fun SettingsScreen(
     onNavigateToLogs: () -> Unit,
     onNavigateToCodecs: () -> Unit,
     onNavigateToTheme: () -> Unit = {},
-    onNavigateToIncomingCallStyle: () -> Unit = {}
+    onNavigateToIncomingCallStyle: () -> Unit = {},
+    onNavigateToPrivacy: () -> Unit = {},
+    onNavigateToAbout: () -> Unit = {},
+    onNavigateToServerInspector: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -70,6 +80,13 @@ fun SettingsScreen(
     var showRestartDialog by remember { mutableStateOf(false) }
     var showResetDialog by remember { mutableStateOf(false) }
     var showCallAudioInfo by remember { mutableStateOf(false) }
+    var showNatDialog by remember { mutableStateOf(false) }
+
+    // Global NAT traversal (TURN relay) — universal, applies to ALL accounts.
+    val turnServer by vm.turnServer.collectAsState()
+    val turnUsername by vm.turnUsername.collectAsState()
+    val turnPassword by vm.turnPassword.collectAsState()
+    val turnTransport by vm.turnTransport.collectAsState()
 
     if (showCallAudioInfo) {
         CallAudioQualityDialog(
@@ -122,6 +139,19 @@ fun SettingsScreen(
             dismissButton = {
                 TextButton(onClick = { showResetDialog = false }) { Text("Cancel") }
             }
+        )
+    }
+    if (showNatDialog) {
+        NatTraversalDialog(
+            turnServer = turnServer,
+            turnUsername = turnUsername,
+            turnPassword = turnPassword,
+            turnTransport = turnTransport,
+            onServerChange = { vm.setTurnServer(it) },
+            onUsernameChange = { vm.setTurnUsername(it) },
+            onPasswordChange = { vm.setTurnPassword(it) },
+            onTransportChange = { vm.setTurnTransport(it) },
+            onDismiss = { showNatDialog = false }
         )
     }
 
@@ -280,7 +310,7 @@ fun SettingsScreen(
 
     Scaffold(
         topBar = {
-            IPDialTopBar(accounts = accounts, vm = vm, title = "Settings", onBack = onBack)
+            IPDialTopBar(accounts = accounts, vm = vm, title = "All Settings", onBack = onBack)
         },
         bottomBar = {
             com.ipdial.ui.components.StartIoBanner(
@@ -391,6 +421,22 @@ fun SettingsScreen(
             }
 
             stickyHeader { SettingsSection("General") }
+            item {
+                val fullScreenPhoto by vm.fullScreenContactPhoto.collectAsState()
+                SettingsRow(
+                    icon = Icons.Default.Image,
+                    title = "Full Screen Contact Photo",
+                    subtitle = "Show hi-res contact photo full screen during calls",
+                    trailing = {
+                        Switch(
+                            checked = fullScreenPhoto,
+                            onCheckedChange = { vm.setFullScreenContactPhoto(it) }
+                        )
+                    },
+                    onClick = { vm.setFullScreenContactPhoto(!fullScreenPhoto) }
+                )
+            }
+
             item {
                 val fontSizeLabel = fontSizeOptions.find { it.second == fontSizeMultiplier }?.first ?: "Normal"
                 SettingsRow(
@@ -540,7 +586,27 @@ fun SettingsScreen(
                 )
             }
 
-            stickyHeader { SettingsSection("Advanced") }
+            stickyHeader { SettingsSection("Network") }
+            item {
+                SettingsRow(
+                    icon = Icons.Default.NetworkCheck,
+                    title = "Server Inspector",
+                    subtitle = "Test call quality, DTMF & connectivity for any host",
+                    onClick = { onNavigateToServerInspector() }
+                )
+            }
+            item {
+                val subtitle = when {
+                    turnUsername.isNotBlank() && turnServer.isNotBlank() -> "TURN: $turnServer (${turnTransport.name})"
+                    else -> "ICE + STUN — TURN not configured (optional)"
+                }
+                SettingsRow(
+                    icon = Icons.Default.Wifi,
+                    title = "NAT Traversal / TURN",
+                    subtitle = subtitle,
+                    onClick = { showNatDialog = true }
+                )
+            }
             item {
                 SettingsRow(
                     icon = Icons.Default.Restore,
@@ -549,8 +615,128 @@ fun SettingsScreen(
                     onClick = { showResetDialog = true }
                 )
             }
+
+            stickyHeader { SettingsSection("About") }
+            item {
+                SettingsRow(
+                    icon = Icons.Default.PrivacyTip,
+                    title = "Privacy Policy",
+                    subtitle = "Data usage & permissions",
+                    onClick = { onNavigateToPrivacy() }
+                )
+            }
+
+            item {
+                SettingsRow(
+                    icon = Icons.Default.Info,
+                    title = "About IPDial",
+                    subtitle = "Version, developer & updates",
+                    onClick = { onNavigateToAbout() }
+                )
+            }
         }
     }
+}
+
+@Composable
+fun NatTraversalDialog(
+    turnServer: String,
+    turnUsername: String,
+    turnPassword: String,
+    turnTransport: TurnTransport,
+    onServerChange: (String) -> Unit,
+    onUsernameChange: (String) -> Unit,
+    onPasswordChange: (String) -> Unit,
+    onTransportChange: (TurnTransport) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var showTurnPass by remember { mutableStateOf(false) }
+    val uriHandler = LocalUriHandler.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("NAT Traversal / TURN") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Text(
+                    "Calls connect directly via ICE (host) or STUN (srflx) for free. " +
+                        "TURN relay is only needed on symmetric NAT / carrier NAT " +
+                        "(common on mobile data) where a direct connection is impossible. " +
+                        "Leave username/password blank to skip TURN — most users never need it.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    value = turnServer,
+                    onValueChange = onServerChange,
+                    label = { Text("TURN Server") },
+                    placeholder = { Text("e.g. staticauth.openrelay.metered.ca:80") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = turnUsername,
+                    onValueChange = onUsernameChange,
+                    label = { Text("TURN Username") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = turnPassword,
+                    onValueChange = onPasswordChange,
+                    label = { Text("TURN Password") },
+                    singleLine = true,
+                    visualTransformation = if (showTurnPass) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(onClick = { showTurnPass = !showTurnPass }) {
+                            Icon(if (showTurnPass) Icons.Default.VisibilityOff else Icons.Default.Visibility, null)
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Column {
+                    Text(
+                        text = "TURN Transport",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TurnTransport.entries.forEach { tp ->
+                            FilterChip(
+                                selected = turnTransport == tp,
+                                onClick = { onTransportChange(tp) },
+                                label = { Text(tp.name) }
+                            )
+                        }
+                    }
+                    Text(
+                        text = "UDP is fastest. Choose TCP or TLS if your network blocks UDP.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+                Text(
+                    text = "Get free TURN credentials (20 GB/month) → Open Relay",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { uriHandler.openUri("https://www.metered.ca/tools/openrelay/") }
+                        .padding(vertical = 4.dp)
+                )
+                Text(
+                    text = "Changes apply to all SIP accounts automatically. Your TURN password is stored encrypted.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Done") }
+        }
+    )
 }
 
 @Composable

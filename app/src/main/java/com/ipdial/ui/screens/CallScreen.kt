@@ -41,6 +41,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -54,7 +56,9 @@ import com.ipdial.ui.screens.call.InCallDialpad
 import com.ipdial.ui.screens.call.PulsingStateLabel
 import com.ipdial.ui.screens.call.formatDuration
 import com.ipdial.ui.theme.EndRed
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import android.util.Log
 
 @Composable
@@ -76,6 +80,7 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
     val accounts by vm.accounts.collectAsState()
     val contacts by vm.contacts.collectAsState()
     val audioDeviceMode by vm.audioDeviceMode.collectAsState()
+    val fullScreenPhotoEnabled by vm.fullScreenContactPhoto.collectAsState()
 
     val account = accounts.firstOrNull { it.id == activeSession.accountId }
     val simLabel = account?.displayName ?: ""
@@ -92,6 +97,20 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
     }
     val displayName = contact?.name ?: vm.cleanDisplayName(activeSession.remoteDisplayName, activeSession.remoteUri)
 
+    // Resolve the contact's hi-res photo for full-screen mode off the main
+    // thread. Full-screen is used only when the setting is ON and a hi-res
+    // photo actually exists; otherwise we keep the normal avatar display.
+    val context = LocalContext.current
+    var fullScreenPhotoUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    LaunchedEffect(contact?.id, fullScreenPhotoEnabled) {
+        fullScreenPhotoUri = if (contact != null && fullScreenPhotoEnabled) {
+            withContext(Dispatchers.IO) {
+                com.ipdial.util.ContactPhotoUtil.resolveFullScreenUri(context, contact.id)
+            }
+        } else null
+    }
+    val showFullScreenPhoto = fullScreenPhotoEnabled && fullScreenPhotoUri != null
+
     var showDialpad by remember { mutableStateOf(false) }
     var elapsedSeconds by remember(activeSession.callId) { mutableLongStateOf(0L) }
 
@@ -107,8 +126,8 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
         }
     }
 
-    val textColor = MaterialTheme.colorScheme.onBackground
-    val subtitleColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val textColor = if (showFullScreenPhoto) Color.White else MaterialTheme.colorScheme.onBackground
+    val subtitleColor = if (showFullScreenPhoto) Color.White.copy(alpha = 0.82f) else MaterialTheme.colorScheme.onSurfaceVariant
 
     // Call timer — ticks every second while the live session is CONFIRMED.
     // Keyed on callId so elapsedSeconds resets to 0 for each new call.
@@ -125,10 +144,25 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
     }
 
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+        modifier = Modifier.fillMaxSize()
     ) {
+        // Background: full-screen hi-res contact photo when enabled, else the
+        // theme background. A scrim keeps the name/status/controls readable.
+        if (showFullScreenPhoto) {
+            coil.compose.AsyncImage(
+                model = fullScreenPhotoUri,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.38f))
+            )
+        } else {
+            Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
+        }
         Column(
             modifier = Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -145,7 +179,8 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
                 contactPhotoUri = contact?.photoUri,
                 avatarName = displayName,
                 textColor = textColor,
-                subtitleColor = subtitleColor
+                subtitleColor = subtitleColor,
+                photoMode = showFullScreenPhoto
             )
 
             Spacer(Modifier.weight(1f))
@@ -164,7 +199,8 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
                         onMute = { vm.toggleMute() },
                         onSpeaker = { vm.cycleAudioDevice() },
                         onRecord = { vm.toggleRecording() },
-                        audioDeviceMode = audioDeviceMode
+                        audioDeviceMode = audioDeviceMode,
+                        photoMode = showFullScreenPhoto
                     )
                 }
             }
@@ -208,7 +244,8 @@ private fun CallHeader(
     contactPhotoUri: android.net.Uri?,
     avatarName: String,
     textColor: Color,
-    subtitleColor: Color
+    subtitleColor: Color,
+    photoMode: Boolean = false
 ) {
     val transition = rememberInfiniteTransition(label = "avatar_glow")
     val glowScale by transition.animateFloat(
@@ -227,50 +264,50 @@ private fun CallHeader(
         AudioDeviceMode.EARPIECE -> "Earpiece"
     }
 
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp),
-        shape = RoundedCornerShape(28.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
-        tonalElevation = 4.dp
-    ) {
+    // Full-screen photo mode: the rounded avatar card behind the contact photo is
+    // intentionally not rendered — the photo is already the whole background.
+    val headerContent: @Composable () -> Unit = {
         Column(
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 20.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.fillMaxWidth()
         ) {
             if (simLabel.isNotBlank()) {
                 Text(simLabel, style = MaterialTheme.typography.labelLarge, color = subtitleColor)
                 Spacer(Modifier.height(4.dp))
             }
 
-            Box(contentAlignment = Alignment.Center, modifier = Modifier.size(152.dp)) {
-                if (isActive) {
-                    Box(
-                        modifier = Modifier
-                            .size(132.dp)
-                            .scale(glowScale)
-                            .border(10.dp, Color(0xFF35B978).copy(alpha = 0.18f), CircleShape)
+            if (!photoMode) {
+                Box(contentAlignment = Alignment.Center, modifier = Modifier.size(152.dp)) {
+                    if (isActive) {
+                        Box(
+                            modifier = Modifier
+                                .size(132.dp)
+                                .scale(glowScale)
+                                .border(10.dp, Color(0xFF35B978).copy(alpha = 0.18f), CircleShape)
+                        )
+                        AudioWaveform(
+                            modifier = Modifier.fillMaxWidth(),
+                            color = Color(0xFF35B978).copy(alpha = 0.65f)
+                        )
+                    } else {
+                        // Animated circular ripple around avatar while dialing (before call is received).
+                        RippleRings()
+                    }
+                    ContactAvatar(
+                        name = avatarName,
+                        photoUri = contactPhotoUri,
+                        size = 116.dp,
+                        backgroundColor = avatarColor,
+                        contentColor = Color.White,
+                        modifier = Modifier.border(3.dp, Color.White.copy(alpha = 0.7f), CircleShape)
                     )
-                    AudioWaveform(
-                        modifier = Modifier.fillMaxWidth(),
-                        color = Color(0xFF35B978).copy(alpha = 0.65f)
-                    )
-                } else {
-                    // Animated circular ripple around avatar while dialing (before call is received).
-                    RippleRings()
                 }
-                ContactAvatar(
-                    name = avatarName,
-                    photoUri = contactPhotoUri,
-                    size = 116.dp,
-                    backgroundColor = avatarColor,
-                    contentColor = Color.White,
-                    modifier = Modifier.border(3.dp, Color.White.copy(alpha = 0.7f), CircleShape)
-                )
-            }
 
-            Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(10.dp))
+            } else {
+                Spacer(Modifier.height(28.dp))
+            }
             Text(
                 text = displayName,
                 style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
@@ -288,6 +325,26 @@ private fun CallHeader(
                 Text("Connected  •  $routeLabel", style = MaterialTheme.typography.labelMedium, color = subtitleColor)
             } else {
                 PulsingStateLabel(state)
+            }
+        }
+    }
+
+    if (photoMode) {
+        headerContent()
+    } else {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp),
+            shape = RoundedCornerShape(28.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
+            tonalElevation = 4.dp
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                headerContent()
             }
         }
     }

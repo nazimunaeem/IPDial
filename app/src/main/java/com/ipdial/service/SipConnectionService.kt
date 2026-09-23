@@ -114,7 +114,36 @@ class SipConnectionService : ConnectionService() {
         val number = address?.schemeSpecificPart
         Log.d(TAG, "Attempting outgoing call: accountId=$accountId, number=$number")
         com.ipdial.util.SipLogger.log(TAG, "Attempting outgoing call via ConnectionService: accountId=$accountId, number=$number")
-        
+
+        // GUARD: If an active call session already exists (placed via direct
+        // SipEngine.makeCall when the Telecom 3s fallback fired), do NOT place a
+        // duplicate INVITE. Register this Telecom connection to the existing session
+        // so the system dialer UI stays in sync without disrupting the live call.
+        val existingSession = SipEngine.callSession.value
+        if (existingSession != null && existingSession.state != com.ipdial.data.model.CallState.DISCONNECTED) {
+            Log.d(TAG, "onCreateOutgoingConnection: REJECTING duplicate — active session already exists (callId=${existingSession.callId}, state=${existingSession.state})")
+            com.ipdial.util.SipLogger.log(TAG, "onCreateOutgoingConnection: reusing existing connection for active call callId=${existingSession.callId}")
+            if (existingSession.callId >= 0) {
+                connection.callId = existingSession.callId
+                registerConnection(existingSession.callId, connection)
+                when (existingSession.state) {
+                    com.ipdial.data.model.CallState.CONFIRMED -> connection.setActive()
+                    com.ipdial.data.model.CallState.CONNECTING,
+                    com.ipdial.data.model.CallState.CALLING -> connection.setDialing()
+                    com.ipdial.data.model.CallState.EARLY -> connection.setRinging()
+                    else -> {}
+                }
+            } else {
+                // callId still -1 (INVITE in flight from direct path); bind via the
+                // in-flight connection map so SipService notification/routing work.
+                // The session will update to a real callId shortly via onCallState,
+                // at which point getConnection(realId) picks this up.
+                connection.setDisconnected(DisconnectCause(DisconnectCause.CANCELED))
+                connection.destroy()
+            }
+            return connection
+        }
+
         if (accountId != null && number != null) {
             serviceScope.launch {
                 val success = SipEngine.makeCall(accountId, number)
@@ -133,10 +162,26 @@ class SipConnectionService : ConnectionService() {
                             connection.destroy()
                         }
                     } else {
-                        Log.e(TAG, "SipEngine.makeCall failed")
-                        com.ipdial.util.SipLogger.log(TAG, "SipEngine.makeCall failed")
-                        connection.setDisconnected(DisconnectCause(DisconnectCause.ERROR))
-                        connection.destroy()
+                        // makeCall was blocked (engine guard) or failed. If a session
+                        // exists now (e.g. the direct fallback won the race first),
+                        // link this connection to it; otherwise tear down with error.
+                        val sessionNow = SipEngine.callSession.value
+                        if (sessionNow != null && sessionNow.state != com.ipdial.data.model.CallState.DISCONNECTED && sessionNow.callId >= 0) {
+                            Log.d(TAG, "makeCall blocked by active session, linking connection to existing callId=${sessionNow.callId}")
+                            com.ipdial.util.SipLogger.log(TAG, "makeCall blocked by active session, linking connection to existing callId=${sessionNow.callId}")
+                            connection.callId = sessionNow.callId
+                            registerConnection(sessionNow.callId, connection)
+                            when (sessionNow.state) {
+                                com.ipdial.data.model.CallState.CONFIRMED -> connection.setActive()
+                                com.ipdial.data.model.CallState.EARLY -> connection.setRinging()
+                                else -> connection.setDialing()
+                            }
+                        } else {
+                            Log.e(TAG, "SipEngine.makeCall failed")
+                            com.ipdial.util.SipLogger.log(TAG, "SipEngine.makeCall failed")
+                            connection.setDisconnected(DisconnectCause(DisconnectCause.ERROR))
+                            connection.destroy()
+                        }
                     }
                 }
             }
