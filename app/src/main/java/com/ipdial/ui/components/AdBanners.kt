@@ -66,7 +66,12 @@ fun StartIoBanner(modifier: Modifier = Modifier, vm: SipViewModel? = null) {
         AndroidView(
             modifier = modifier.fillMaxWidth(),
             factory = { ctx ->
-                Banner(ctx)
+                try {
+                    Banner(ctx)
+                } catch (e: Throwable) {
+                    android.util.Log.e("StartIoBanner", "Failed to create StartApp banner", e)
+                    android.view.View(ctx)
+                }
             }
         )
     }

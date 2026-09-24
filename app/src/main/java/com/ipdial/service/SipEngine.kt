@@ -1663,24 +1663,6 @@ object SipEngine {
                 return@runOnPjsipThreadAndWait "BUFFERED" to false
             }
 
-            // Detect if this domain needs SIP-INFO
-            val domain = accountConfigs[session.accountId]?.domain?.lowercase()?.trim() ?: ""
-            val forceSipInfo = SipAudioController.SIP_INFO_ONLY_DOMAINS_PUBLIC.any { domain == it }
-
-            if (forceSipInfo) {
-                try {
-                    val prm = CallSendRequestParam().apply { method = "INFO" }
-                    prm.txOption = SipTxOption().apply {
-                        contentType = "application/dtmf-relay"
-                        msgBody = "Signal=$digit\r\nDuration=160"
-                    }
-                    call.sendRequest(prm)
-                    return@runOnPjsipThreadAndWait "SIP-INFO" to true
-                } catch (e: Throwable) {
-                    return@runOnPjsipThreadAndWait "SIP-INFO" to false
-                }
-            }
-
             // Try RFC 2833 first, fall back to SIP-INFO
             try {
                 call.dialDtmf(digit.toString())

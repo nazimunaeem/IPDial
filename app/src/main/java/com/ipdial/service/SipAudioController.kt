@@ -2,6 +2,7 @@ package com.ipdial.service
 
 import android.util.Log
 import com.ipdial.data.model.CallSession
+import com.ipdial.data.model.CallState
 import com.ipdial.util.DeviceUtil
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.pjsip.pjsua2.*
@@ -30,35 +31,13 @@ object SipAudioController {
      * re-INVITE unhold), flushed by [flushPendingDtmf] once the audio path is up. */
     private val pendingDtmfChars = java.util.Collections.synchronizedList(mutableListOf<Char>())
 
-    /**
-     * Domains on the webvoice/amarip platform family (SIGNAL/1.0 stack). These
-     * servers advertise RFC 2833 telephone-event in the SDP, so PJSIP's
-     * `dialDtmf()` succeeds — but their IVR ignores RTP telephone-events and
-     * silently drops the digits. DTMF must therefore be sent over the SIP
-     * signaling path (in-dialog SIP INFO with `application/dtmf-relay`), which
-     * their call-through/PBX gateway does honor.
-     */
-    private val SIP_INFO_ONLY_DOMAINS = setOf(
-        "sip.amarip.net",
-        "103.170.231.10",
-        "103.129.202.202",
-        "billing.webvoice.net",
-    )
-
-    /** Public view used by the Server Inspector's DTMF probe. */
-    val SIP_INFO_ONLY_DOMAINS_PUBLIC: Set<String> get() = SIP_INFO_ONLY_DOMAINS
-
-    /** Domain of the account that owns the current call session, lowercased. */
-    private fun activeAccountDomain(): String? {
-        val accountId = SipEngine._callSession.value?.accountId ?: return null
-        return SipEngine.accountConfigs[accountId]?.domain?.lowercase()?.trim()
-    }
-
-    /** Whether the active call's provider requires SIP-INFO DTMF exclusively. */
-    private fun shouldForceSipInfo(): Boolean {
-        val domain = activeAccountDomain() ?: return false
-        return SIP_INFO_ONLY_DOMAINS.any { domain == it }
-    }
+    // NOTE (verified 2026-09-23 on OPPO against sip.amarip.net gw 103.170.231.10):
+    // The amarip/webvoice platform was previously routed through SIP INFO
+    // (application/dtmf-relay). Live capture showed PJSIP retransmitting those
+    // INFO requests forever — the gateway never answered them (no 200 OK, then
+    // call died with 408 Request Timeout). So DTMF now uses RFC 2833 first with
+    // SIP INFO only as a fallback when the telephone-event channel is missing,
+    // exactly like every other provider.
 
     /**
      * Maps the app's 0..6 volume-bar scale to PJSIP's conference-bridge level,
@@ -153,22 +132,17 @@ object SipAudioController {
             SipEngine.registerCurrentThreadEx()
             SipEngine._callSession.value?.let { session ->
                 SipEngine.callMap[session.callId]?.let { call ->
-                    if (!shouldForceSipInfo() && !isCallMediaActive(call)) {
-                        // Media is not established yet (CALLING/EARLY, or re-INVITE
-                        // unhold in progress). PJSIP drops RFC2833 DTMF silently in
-                        // this window, so buffer the digit and flush it when the audio
-                        // path becomes ACTIVE (see flushPendingDtmf). SIP-INFO DTMF
-                        // rides the signaling path and is safe to send immediately.
+                    // Send RFC2833 as soon as the invite is CONFIRMED.
+                    // (v1.1.6.3 gated delivery on isCallMediaActive(), which can read a
+                    // stale negative right after answer — keypresses then sat in the
+                    // buffer forever and never reached the IVR.)
+                    if (session.state == CallState.CONFIRMED && !session.isOnHold) {
+                        if (!trySendDtmf(call, digit)) {
+                            pendingDtmfChars.add(digit)
+                        }
+                    } else {
                         pendingDtmfChars.add(digit)
-                        SipEngine.logEx("sendDtmf: media not active, buffering '$digit' (state=${session.state})", false)
-                        return@let
-                    }
-                    if (!trySendDtmf(call, digit)) {
-                        // Media reported ACTIVE but the digit was not delivered —
-                        // e.g. no negotiated telephone-event channel (RFC2833) or
-                        // the audio path was just torn down. Re-buffer so the next
-                        // flush retries it instead of silently dropping the key press.
-                        pendingDtmfChars.add(digit)
+                        SipEngine.logEx("sendDtmf: call not CONFIRMED yet (state=${session.state}), buffering '$digit'", false)
                     }
                 }
             }
@@ -176,27 +150,12 @@ object SipAudioController {
     }
 
     /**
-     * Delivers a single digit automatically. By default it prefers RFC 4733/2833
-     * telephone-event RTP (PJSIP `dialDtmf`), and if that is unavailable the
-     * digit is resent as an in-dialog SIP INFO request
-     * (`application/dtmf-relay` body), which providers that ignore RTP
-     * telephone-events act on.
-     *
-     * For the webvoice/amarip platform family the order is reversed: RTP
-     * telephone-events are silently dropped by their IVR even though the SDP
-     * advertises them, so those accounts go straight to SIP INFO.
-     * Returns true when the digit was accepted for sending.
+     * Delivers a single digit automatically: RFC 4733/2833 telephone-event RTP
+     * (PJSIP `dialDtmf`) by default, falling back to an in-dialog SIP INFO request
+     * (`application/dtmf-relay` body, `Signal=<digit>`) when the telephone-event
+     * channel is unavailable. Returns true when the digit was accepted for sending.
      */
     private fun trySendDtmf(call: Call, digit: Char): Boolean {
-        if (shouldForceSipInfo()) {
-            try {
-                sendSipInfoDtmf(call, digit)
-                return true
-            } catch (e: Throwable) {
-                SipEngine.logEx("sendDtmf (SIP INFO) failed for '$digit': ${e.message}", true)
-                return false
-            }
-        }
         return try {
             call.dialDtmf(digit.toString())
             true
@@ -260,7 +219,7 @@ object SipAudioController {
             SipEngine.registerCurrentThreadEx()
             SipEngine._callSession.value?.let { session ->
                 SipEngine.callMap[session.callId]?.let { call ->
-                    if (!isCallMediaActive(call)) return@let
+                    if (session.state != CallState.CONFIRMED && !isCallMediaActive(call)) return@let
                     if (pendingDtmfChars.isEmpty()) return@let
                     SipEngine.logEx("flushPendingDtmf: sending buffered digits ${pendingDtmfChars.joinToString("")}", false)
                     val iterator = pendingDtmfChars.iterator()

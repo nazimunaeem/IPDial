@@ -87,8 +87,16 @@ class SipService : Service() {
         // permission) or do any slow work before calling startForeground(), Android
         // kills the process with ForegroundServiceDidNotStartInTimeException once the
         // ~5s timeout elapses (onStartCommand may never even be dispatched).
-        createNotificationChannels(this)
-        startServiceForeground()
+        try {
+            createNotificationChannels(this)
+        } catch (e: Throwable) {
+            Log.e("SipService", "Failed to create notification channels", e)
+        }
+        try {
+            startServiceForeground()
+        } catch (e: Throwable) {
+            Log.e("SipService", "startServiceForeground threw", e)
+        }
 
         if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) !=
             android.content.pm.PackageManager.PERMISSION_GRANTED
@@ -756,6 +764,14 @@ class SipService : Service() {
             }
         } catch (e: Throwable) {
             Log.e("SipService", "startServiceForeground failed", e)
+            // Never stay alive as a service started via startForegroundService()
+            // without having promoted itself to foreground. The system would kill
+            // the whole process anyway via ForegroundServiceDidNotStartInTimeException.
+            try {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            } catch (_: Throwable) {
+            }
+            stopSelf()
         }
     }
 

@@ -237,7 +237,16 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        enableEdgeToEdge()
+        try {
+            enableEdgeToEdge()
+        } catch (e: Throwable) {
+            // Devices whose framework is missing API 29+ WindowInsets$Type" /
+            // Type.systemOverlays() (e.g. fake/upgraded Android images) throw a
+            // NoSuchMethodError here and again on the first insets read. Fall back
+            // to legacy decor-fits-system-windows so the app still renders.
+            Log.e("MainActivity", "enableEdgeToEdge failed", e)
+            androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, true)
+        }
         super.onCreate(savedInstanceState)
         
         volumeControlStream = android.media.AudioManager.STREAM_MUSIC

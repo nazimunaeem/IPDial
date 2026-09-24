@@ -556,68 +556,80 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
 
         // Prefer a rewarded video. If no video is available, fall back to an
         // interstitial and still grant the reward when it is closed.
-        val rewardedAd = com.startapp.sdk.adsbase.StartAppAd(context)
-        rewardedAd.setVideoListener(object : com.startapp.sdk.adsbase.adlisteners.VideoListener {
-            override fun onVideoCompleted() {
-                android.util.Log.d("SipViewModel", "Rewarded video completed")
-                grantReward()
-            }
-        })
+        try {
+            val rewardedAd = com.startapp.sdk.adsbase.StartAppAd(context)
+            rewardedAd.setVideoListener(object : com.startapp.sdk.adsbase.adlisteners.VideoListener {
+                override fun onVideoCompleted() {
+                    android.util.Log.d("SipViewModel", "Rewarded video completed")
+                    grantReward()
+                }
+            })
 
-        rewardedAd.loadAd(
-            com.startapp.sdk.adsbase.StartAppAd.AdMode.REWARDED_VIDEO,
-            object : com.startapp.sdk.adsbase.adlisteners.AdEventListener {
-                override fun onReceiveAd(ad: com.startapp.sdk.adsbase.Ad) {
-                    android.util.Log.d("SipViewModel", "Rewarded video received, showing...")
-                    rewardedAd.showAd(object : com.startapp.sdk.adsbase.adlisteners.AdDisplayListener {
-                        override fun adDisplayed(ad: com.startapp.sdk.adsbase.Ad?) {}
-                        override fun adNotDisplayed(ad: com.startapp.sdk.adsbase.Ad?) {
-                            android.util.Log.w("SipViewModel", "Rewarded video not displayed")
-                            _isLoadingAd.value = false
-                        }
-                        override fun adClicked(ad: com.startapp.sdk.adsbase.Ad?) {}
-                        override fun adHidden(ad: com.startapp.sdk.adsbase.Ad?) {
-                            android.util.Log.d("SipViewModel", "Rewarded video closed")
-                            _isLoadingAd.value = false
-                        }
-                    })
+            rewardedAd.loadAd(
+                com.startapp.sdk.adsbase.StartAppAd.AdMode.REWARDED_VIDEO,
+                object : com.startapp.sdk.adsbase.adlisteners.AdEventListener {
+                    override fun onReceiveAd(ad: com.startapp.sdk.adsbase.Ad) {
+                        android.util.Log.d("SipViewModel", "Rewarded video received, showing...")
+                        rewardedAd.showAd(object : com.startapp.sdk.adsbase.adlisteners.AdDisplayListener {
+                            override fun adDisplayed(ad: com.startapp.sdk.adsbase.Ad?) {}
+                            override fun adNotDisplayed(ad: com.startapp.sdk.adsbase.Ad?) {
+                                android.util.Log.w("SipViewModel", "Rewarded video not displayed")
+                                _isLoadingAd.value = false
+                            }
+                            override fun adClicked(ad: com.startapp.sdk.adsbase.Ad?) {}
+                            override fun adHidden(ad: com.startapp.sdk.adsbase.Ad?) {
+                                android.util.Log.d("SipViewModel", "Rewarded video closed")
+                                _isLoadingAd.value = false
+                            }
+                        })
+                    }
+                    override fun onFailedToReceiveAd(ad: com.startapp.sdk.adsbase.Ad?) {
+                        android.util.Log.w("SipViewModel", "No rewarded video available, falling back to interstitial")
+                        showFallbackInterstitialForReward(context, grantReward)
+                    }
                 }
-                override fun onFailedToReceiveAd(ad: com.startapp.sdk.adsbase.Ad?) {
-                    android.util.Log.w("SipViewModel", "No rewarded video available, falling back to interstitial")
-                    showFallbackInterstitialForReward(context, grantReward)
-                }
-            }
-        )
+            )
+        } catch (e: Throwable) {
+            // Constructing/loading the ad can throw on devices with a broken
+            // WebView provider; degrade gracefully via the interstitial fallback.
+            android.util.Log.e("SipViewModel", "Rewarded video flow failed, falling back to interstitial", e)
+            showFallbackInterstitialForReward(context, grantReward)
+        }
     }
 
     // Fallback when a rewarded video could not be loaded: show an interstitial
     // and treat its dismissal as the completed reward gate.
     private fun showFallbackInterstitialForReward(context: Context, grantReward: () -> Unit) {
-        val interstitial = com.startapp.sdk.adsbase.StartAppAd(context)
-        interstitial.loadAd(
-            com.startapp.sdk.adsbase.StartAppAd.AdMode.OVERLAY,
-            object : com.startapp.sdk.adsbase.adlisteners.AdEventListener {
-                override fun onReceiveAd(ad: com.startapp.sdk.adsbase.Ad) {
-                    android.util.Log.d("SipViewModel", "Fallback interstitial received, showing...")
-                    interstitial.showAd(object : com.startapp.sdk.adsbase.adlisteners.AdDisplayListener {
-                        override fun adDisplayed(ad: com.startapp.sdk.adsbase.Ad?) {}
-                        override fun adNotDisplayed(ad: com.startapp.sdk.adsbase.Ad?) {
-                            android.util.Log.w("SipViewModel", "Fallback interstitial not displayed")
-                            _isLoadingAd.value = false
-                        }
-                        override fun adClicked(ad: com.startapp.sdk.adsbase.Ad?) {}
-                        override fun adHidden(ad: com.startapp.sdk.adsbase.Ad?) {
-                            android.util.Log.d("SipViewModel", "Fallback interstitial closed, granting reward")
-                            grantReward()
-                        }
-                    })
+        try {
+            val interstitial = com.startapp.sdk.adsbase.StartAppAd(context)
+            interstitial.loadAd(
+                com.startapp.sdk.adsbase.StartAppAd.AdMode.OVERLAY,
+                object : com.startapp.sdk.adsbase.adlisteners.AdEventListener {
+                    override fun onReceiveAd(ad: com.startapp.sdk.adsbase.Ad) {
+                        android.util.Log.d("SipViewModel", "Fallback interstitial received, showing...")
+                        interstitial.showAd(object : com.startapp.sdk.adsbase.adlisteners.AdDisplayListener {
+                            override fun adDisplayed(ad: com.startapp.sdk.adsbase.Ad?) {}
+                            override fun adNotDisplayed(ad: com.startapp.sdk.adsbase.Ad?) {
+                                android.util.Log.w("SipViewModel", "Fallback interstitial not displayed")
+                                _isLoadingAd.value = false
+                            }
+                            override fun adClicked(ad: com.startapp.sdk.adsbase.Ad?) {}
+                            override fun adHidden(ad: com.startapp.sdk.adsbase.Ad?) {
+                                android.util.Log.d("SipViewModel", "Fallback interstitial closed, granting reward")
+                                grantReward()
+                            }
+                        })
+                    }
+                    override fun onFailedToReceiveAd(ad: com.startapp.sdk.adsbase.Ad?) {
+                        android.util.Log.e("SipViewModel", "Fallback interstitial also failed to load")
+                        _isLoadingAd.value = false
+                    }
                 }
-                override fun onFailedToReceiveAd(ad: com.startapp.sdk.adsbase.Ad?) {
-                    android.util.Log.e("SipViewModel", "Fallback interstitial also failed to load")
-                    _isLoadingAd.value = false
-                }
-            }
-        )
+            )
+        } catch (e: Throwable) {
+            android.util.Log.e("SipViewModel", "Fallback interstitial creation failed", e)
+            _isLoadingAd.value = false
+        }
     }
 
     fun triggerInterstitialAd(context: Context, ignorePro: Boolean = false, onComplete: ((Boolean) -> Unit)? = null) {
@@ -628,32 +640,38 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         
         _isLoadingAd.value = true
 
-        val startAppAd = com.startapp.sdk.adsbase.StartAppAd(context)
-        startAppAd.loadAd(object : com.startapp.sdk.adsbase.adlisteners.AdEventListener {
-            override fun onReceiveAd(ad: com.startapp.sdk.adsbase.Ad) {
-                startAppAd.showAd(object : com.startapp.sdk.adsbase.adlisteners.AdDisplayListener {
-                    override fun adDisplayed(ad: com.startapp.sdk.adsbase.Ad?) {
-                        android.util.Log.d("SipViewModel", "Interstitial ad displayed")
-                    }
-                    override fun adNotDisplayed(ad: com.startapp.sdk.adsbase.Ad?) { 
-                        android.util.Log.w("SipViewModel", "Interstitial ad not displayed")
-                        _isLoadingAd.value = false
-                        onComplete?.invoke(false) 
-                    }
-                    override fun adClicked(ad: com.startapp.sdk.adsbase.Ad?) {}
-                    override fun adHidden(ad: com.startapp.sdk.adsbase.Ad?) { 
-                        android.util.Log.d("SipViewModel", "Interstitial ad hidden")
-                        _isLoadingAd.value = false
-                        onComplete?.invoke(true) 
-                    }
-                })
-            }
-            override fun onFailedToReceiveAd(ad: com.startapp.sdk.adsbase.Ad?) {
-                android.util.Log.e("SipViewModel", "Failed to receive interstitial ad")
-                _isLoadingAd.value = false
-                onComplete?.invoke(false)
-            }
-        })
+        try {
+            val startAppAd = com.startapp.sdk.adsbase.StartAppAd(context)
+            startAppAd.loadAd(object : com.startapp.sdk.adsbase.adlisteners.AdEventListener {
+                override fun onReceiveAd(ad: com.startapp.sdk.adsbase.Ad) {
+                    startAppAd.showAd(object : com.startapp.sdk.adsbase.adlisteners.AdDisplayListener {
+                        override fun adDisplayed(ad: com.startapp.sdk.adsbase.Ad?) {
+                            android.util.Log.d("SipViewModel", "Interstitial ad displayed")
+                        }
+                        override fun adNotDisplayed(ad: com.startapp.sdk.adsbase.Ad?) { 
+                            android.util.Log.w("SipViewModel", "Interstitial ad not displayed")
+                            _isLoadingAd.value = false
+                            onComplete?.invoke(false) 
+                        }
+                        override fun adClicked(ad: com.startapp.sdk.adsbase.Ad?) {}
+                        override fun adHidden(ad: com.startapp.sdk.adsbase.Ad?) { 
+                            android.util.Log.d("SipViewModel", "Interstitial ad hidden")
+                            _isLoadingAd.value = false
+                            onComplete?.invoke(true) 
+                        }
+                    })
+                }
+                override fun onFailedToReceiveAd(ad: com.startapp.sdk.adsbase.Ad?) {
+                    android.util.Log.e("SipViewModel", "Failed to receive interstitial ad")
+                    _isLoadingAd.value = false
+                    onComplete?.invoke(false)
+                }
+            })
+        } catch (e: Throwable) {
+            android.util.Log.e("SipViewModel", "Interstitial ad creation failed", e)
+            _isLoadingAd.value = false
+            onComplete?.invoke(false)
+        }
     }
 
     fun showProPopup() {

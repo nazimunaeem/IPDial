@@ -26,9 +26,13 @@ firestore.indexes.json
 .firebase/
 firebase-debug.log
 .firebase-debug.log
+firestore-debug.log
 
-# Firebase hosting admin console (contains Firebase config keys and admin scripts)
+# Firebase Hosting (web + admin console; deploy config, targets, site assets)
+hosting/
 hostingAdmin/
+firebase.json
+.firebaserc
 
 # Local configuration
 local.properties
@@ -39,6 +43,7 @@ secrets.properties
 .idea/
 .kotlin/
 *.iml
+.vscode/
 
 # OS files
 .DS_Store
