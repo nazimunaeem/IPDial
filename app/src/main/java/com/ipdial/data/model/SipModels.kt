@@ -78,6 +78,8 @@ data class CallSession(
     val negotiatedCodec: String? = null,
     val disconnectCode: Int? = null,
     val disconnectReason: String? = null,
+    val callLogId: String = UUID.randomUUID().toString(),
+    val startedAtMs: Long = System.currentTimeMillis(),
 )
 
 enum class CallDirection { INCOMING, OUTGOING }

@@ -9,6 +9,7 @@ import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.os.VibrationAttributes
 import android.util.Log
 import com.ipdial.data.repository.AccountRepository
 import kotlinx.coroutines.*
@@ -124,7 +125,15 @@ class SipRingtonePlayer(
                     }
 
                     if (vibrateEnabled || ringerMode == AudioManager.RINGER_MODE_VIBRATE) {
-                        vibrator?.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 1000, 1000), 0))
+                        val effect = VibrationEffect.createWaveform(longArrayOf(0, 800, 600), 0)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            vibrator?.vibrate(
+                                effect,
+                                VibrationAttributes.createForUsage(VibrationAttributes.USAGE_RINGTONE)
+                            )
+                        } else {
+                            vibrator?.vibrate(effect)
+                        }
                     }
                 }
             } catch (e: Exception) {

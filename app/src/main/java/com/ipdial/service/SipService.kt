@@ -73,7 +73,7 @@ class SipService : Service() {
 
     private var lastWasConfirmed = false
     private var callStartTime = 0L
-    private var lastSession: com.ipdial.data.model.CallSession? = null
+    @Volatile private var lastSession: com.ipdial.data.model.CallSession? = null
     private var autoRecordedCallId = -1
     private val authFailedAccounts = java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
@@ -125,10 +125,26 @@ class SipService : Service() {
             incomingCallHandler.handle(session)
         }
 
+        SipEngine.onOutgoingCallStarted = { session ->
+            // Keep the final-state observer's fallback populated even if a very
+            // fast failure conflates CALLING before its collector runs.
+            lastSession = session
+            val entry = com.ipdial.data.model.CallLogEntry(
+                id = session.callLogId,
+                accountId = session.accountId,
+                remoteUri = session.remoteUri,
+                remoteDisplayName = session.remoteDisplayName,
+                direction = CallDirection.OUTGOING,
+                timestampMs = session.startedAtMs
+            )
+            scope.launch(Dispatchers.IO) {
+                com.ipdial.data.repository.CallLogRepository.getInstance(applicationContext).insert(entry)
+            }
+        }
+
         SipEngine.onCallDisconnected = { callId ->
             Log.d("SipService", "onCallDisconnected: callId=$callId — stopping ringtone/vibration and dismissing incoming UI")
             SipEngine.setDndActive(false)
-            stopPushingBanner()
             ringtonePlayer.stopRingtone()
             cancelIncomingNotification(this)
 
@@ -259,7 +275,6 @@ class SipService : Service() {
                 val callId = intent.getIntExtra("callId", -1)
                 SipEngine.answerCall(callId)
                 audioRouter.routeAudioToEarpiece()
-                stopPushingBanner()
                 cancelIncomingNotification(this)
                 val fullIntent = Intent(this, MainActivity::class.java).apply {
                     this.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -276,12 +291,10 @@ class SipService : Service() {
                 val cause = CallHangupResolver.resolveDisconnectCause(session)
                 SipEngine.hangupCall(callId)
                 SipConnectionService.disconnectCall(callId, cause)
-                stopPushingBanner()
                 cancelIncomingNotification(this)
             }
             "ACTION_STOP_BANNER" -> {
                 cancelIncomingNotification(this)
-                stopPushingBanner()
             }
             ACTION_SET_AUDIO_DEVICE -> {
                 val mode = intent.getStringExtra("mode") ?: AudioDeviceMode.EARPIECE.name
@@ -527,11 +540,12 @@ class SipService : Service() {
                         val disconnectReason = sessionToLog.disconnectReason ?: pendingDisconnect?.second
                         Log.d("SipService", "Call ended: code=$disconnectCode reason=$disconnectReason (via session=${sessionToLog.disconnectCode}/${sessionToLog.disconnectReason}, sideChannel=${pendingDisconnect})")
                         val entry = com.ipdial.data.model.CallLogEntry(
+                            id = sessionToLog.callLogId,
                             accountId = sessionToLog.accountId,
                             remoteUri = sessionToLog.remoteUri,
                             remoteDisplayName = sessionToLog.remoteDisplayName,
                             direction = sessionToLog.direction,
-                            timestampMs = System.currentTimeMillis(),
+                            timestampMs = sessionToLog.startedAtMs,
                             durationSeconds = duration,
                             missed = !lastWasConfirmed && sessionToLog.direction == CallDirection.INCOMING,
                             disconnectCode = disconnectCode,
@@ -580,7 +594,6 @@ class SipService : Service() {
                         }
                     }
                     ringtonePlayer.stopRingtone()
-                    stopPushingBanner()
                     audioRouter.restoreAudio()
 
                     wakeLockManager.releaseWakeLock()
@@ -624,9 +637,6 @@ class SipService : Service() {
                             if (speakerChanged) {
                                 audioRouter.routeAudioToSpeaker(session.isSpeaker)
                             }
-                            if (!com.ipdial.AppState.isForeground && !SipEngine.isDndActive()) {
-                                showCallNotificationStatic(this@SipService, session.remoteDisplayName, session.callId)
-                            }
                         } else {
                             applyActiveCallProgress(session, stateChanged, speakerChanged)
                         }
@@ -635,7 +645,6 @@ class SipService : Service() {
                                 audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
                             }
                             ringtonePlayer.stopRingtone()
-                            stopPushingBanner()
 
                             if (stateChanged || speakerChanged) {
                                 scope.launch {

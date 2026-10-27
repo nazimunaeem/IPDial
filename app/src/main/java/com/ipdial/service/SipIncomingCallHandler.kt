@@ -1,7 +1,6 @@
 package com.ipdial.service
 
 import android.content.Context
-import android.content.Intent
 import android.util.Log
 import com.ipdial.data.model.CallSession
 import com.ipdial.data.repository.AccountRepository
@@ -39,6 +38,15 @@ class SipIncomingCallHandler(
 
                 val isDnd = repo.dndEnabled.first()
                 Log.d(TAG, "DND=$isDnd for callId=${session.callId}")
+                if (isDnd && SipEngine.callSession.value?.callId == session.callId) {
+                    SipEngine.setDndActive(true)
+                }
+
+                if (!isDnd && !com.ipdial.AppState.isForeground) {
+                    // Post the actionable call notification as soon as DND is
+                    // known. Contact lookup and Telecom reporting can take longer.
+                    showIncomingCallNotificationStatic(context, session.remoteDisplayName, session.callId)
+                }
 
                 val displayName = session.remoteDisplayName
                 val cleanNum = session.remoteUri.replace("<", "").replace(">", "").removePrefix("sip:").substringBefore("@").substringBefore(";")
@@ -57,13 +65,15 @@ class SipIncomingCallHandler(
 
                 SipEngine.updateCallSessionName(finalDisplayName)
 
-                if (isDnd && SipEngine.callSession.value?.callId == session.callId) {
-                    SipEngine.setDndActive(true)
+                if (SipEngine.callSession.value?.callId != session.callId || !SipEngine.hasActiveCall(session.callId)) {
+                    Log.d(TAG, "onIncomingCall: call ${session.callId} ended during contact lookup, skipping Telecom")
+                    return@launch
                 }
 
-                if (SipEngine.callSession.value?.callId != session.callId || !SipEngine.hasActiveCall(session.callId)) {
-                    Log.d(TAG, "onIncomingCall: call $${session.callId} ended during contact lookup, skipping Telecom/banner")
-                    return@launch
+                if (!isDnd && !com.ipdial.AppState.isForeground) {
+                    // Refresh the already visible notification with the resolved
+                    // contact name. setOnlyAlertOnce prevents another ring/vibrate.
+                    showIncomingCallNotificationStatic(context, finalDisplayName, session.callId)
                 }
 
                 withContext(Dispatchers.Main) {
@@ -71,22 +81,8 @@ class SipIncomingCallHandler(
                         Log.d(TAG, "onIncomingCall: call $${session.callId} ended before Telecom reporting, skipping")
                         return@withContext
                     }
-                    Log.d(TAG, "Reporting incoming call to Telecom and showing notification")
+                    Log.d(TAG, "Reporting incoming call to Telecom")
                     TelecomHelper.reportIncomingCall(context, session.remoteUri, finalDisplayName, session.callId)
-                    if (!isDnd) {
-                        startPushingBanner(scope, context, finalDisplayName, session.callId)
-                    }
-                    if (!com.ipdial.AppState.isForeground) {
-                        val activityIntent = Intent(context, com.ipdial.MainActivity::class.java).apply {
-                            action = "com.ipdial.ACTION_INCOMING_CALL"
-                            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                        }
-                        try {
-                            context.startActivity(activityIntent)
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Failed to start MainActivity from background: ${e.message}")
-                        }
-                    }
                 }
             }
         }

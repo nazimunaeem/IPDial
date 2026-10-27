@@ -64,6 +64,7 @@ import android.util.Log
 @Composable
 fun CallScreen(vm: SipViewModel, session: CallSession) {
     val liveCallSession by vm.callSession.collectAsState()
+    val isEndingCall by vm.isEndingCall.collectAsState()
     // The navigation argument is only the initial snapshot. Once the engine
     // clears its live session after a remote BYE, never render that stale copy.
     val activeSession = liveCallSession ?: return
@@ -217,7 +218,7 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
                     .height(56.dp)
                     .clip(RoundedCornerShape(28.dp))
                     .background(EndRed)
-                    .then(Modifier.clickableNoRipple { vm.hangup() })
+                    .then(if (isEndingCall) Modifier else Modifier.clickableNoRipple { vm.hangup() })
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -225,7 +226,7 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
                 ) {
                     Icon(Icons.Default.CallEnd, contentDescription = "End call", tint = Color.White, modifier = Modifier.size(24.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("End call", color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(if (isEndingCall) "Ending…" else "End call", color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 }
             }
         }

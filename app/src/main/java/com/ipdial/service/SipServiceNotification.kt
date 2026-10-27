@@ -12,13 +12,11 @@ import com.ipdial.MainActivity
 import com.ipdial.R
 import com.ipdial.data.model.CallDirection
 import com.ipdial.data.model.CallState
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 const val NOTIF_CHANNEL_SIP = "sip_service_v1"
-const val NOTIF_CHANNEL_CALL = "incoming_call_v4"
+// Bump the channel ID so devices that created the previous non-vibrating
+// channel receive the updated call-alert behavior (channel settings are immutable).
+const val NOTIF_CHANNEL_CALL = "incoming_call_v5"
 const val NOTIF_CHANNEL_MISSED = "missed_calls_v1"
 const val NOTIF_ID_SERVICE = 1001
 const val NOTIF_ID_INCOMING = 1002
@@ -50,7 +48,8 @@ fun createNotificationChannels(context: Context) {
             lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             setShowBadge(true)
             setSound(null, null)
-            enableVibration(false)
+            enableVibration(true)
+            vibrationPattern = longArrayOf(0L, 800L, 600L, 800L, 600L)
         }
     )
 
@@ -113,25 +112,6 @@ fun showMissedCallNotification(context: Context, callerName: String, remoteUri: 
     nm.notify(NOTIF_ID_MISSED, notif)
 }
 
-private var bannerPushJob: Job? = null
-
-fun startPushingBanner(scope: CoroutineScope, context: Context, callerName: String, callId: Int) {
-    stopPushingBanner()
-    bannerPushJob = scope.launch {
-        while (true) {
-            if (!com.ipdial.AppState.isForeground && !SipEngine.isDndActive()) {
-                showIncomingCallNotificationStatic(context, callerName, callId)
-            }
-            delay(4000)
-        }
-    }
-}
-
-fun stopPushingBanner() {
-    bannerPushJob?.cancel()
-    bannerPushJob = null
-}
-
 fun showCallNotificationStatic(context: Context, callerName: String = "", callId: Int = -1) {
     Log.d("SipService", "showCallNotificationStatic: caller=$callerName, isForeground=${com.ipdial.AppState.isForeground}")
 
@@ -183,6 +163,7 @@ fun showCallNotificationStatic(context: Context, callerName: String = "", callId
         .setContentIntent(contentPi)
         .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
         .setAutoCancel(false)
+        .setOnlyAlertOnce(true)
         .setOngoing(true)
 
     if (isIncomingRinging) {

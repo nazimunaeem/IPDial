@@ -193,6 +193,8 @@ object SipEngine {
     @Volatile
     var onIncomingCall: ((CallSession) -> Unit)? = null
     @Volatile
+    var onOutgoingCallStarted: ((CallSession) -> Unit)? = null
+    @Volatile
     var onCallDisconnected: ((callId: Int) -> Unit)? = null
 
     // Recorder is written/deleted from two threads: the PJSIP worker (call
@@ -1032,13 +1034,15 @@ object SipEngine {
             // call's log entry doesn't inherit the old reason.
             pendingDisconnectInfo = null
 
-            _callSession.value = CallSession(
+            val outgoingSession = CallSession(
                 callId = -1,
                 accountId = accountId,
                 remoteUri = destUri,
                 direction = CallDirection.OUTGOING,
                 state = CallState.CALLING
             )
+            onOutgoingCallStarted?.invoke(outgoingSession)
+            _callSession.value = outgoingSession
 
             val prm = CallOpParam(true).apply {
                 opt.audioCount = 1

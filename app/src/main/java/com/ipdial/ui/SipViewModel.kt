@@ -737,6 +737,8 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val callSession: StateFlow<CallSession?> = SipEngine.callSession
+    private val _isEndingCall = MutableStateFlow(false)
+    val isEndingCall: StateFlow<Boolean> = _isEndingCall.asStateFlow()
 
     // Contacts state
     private val _contacts = MutableStateFlow<List<Contact>>(emptyList())
@@ -844,6 +846,11 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         observeCallSession()
+        viewModelScope.launch {
+            callSession.collect { session ->
+                if (session == null) _isEndingCall.value = false
+            }
+        }
 
         if (!deviceNoiseCancellationSupported) {
             viewModelScope.launch {
@@ -1583,6 +1590,8 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     fun hangup() {
         val session = callSession.value
         val id = session?.callId ?: -1
+        if (_isEndingCall.value) return
+        _isEndingCall.value = true
         android.util.Log.d("SipViewModel", "hangup() called: callId=$id, state=${session?.state}, direction=${session?.direction}")
 
         val causeCode = com.ipdial.service.CallHangupResolver.resolveDisconnectCause(session)
