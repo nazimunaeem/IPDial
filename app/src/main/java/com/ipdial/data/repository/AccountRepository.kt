@@ -19,6 +19,7 @@ import java.lang.reflect.Type
 import com.ipdial.data.model.IncomingCallMode
 import com.ipdial.data.model.KeypadDesign
 import com.ipdial.data.model.PreferredCodec
+import com.ipdial.data.model.RegStatus
 import com.ipdial.data.model.SipAccount
 import com.ipdial.data.model.ThemeMode
 import com.ipdial.data.model.TurnTransport
@@ -53,11 +54,7 @@ class AccountRepository(private val context: Context) {
     private val incomingCallModeKey = stringPreferencesKey("incoming_call_mode")
     private val defaultDomainKey = stringPreferencesKey("default_domain")
     private val lastDialedKey = stringPreferencesKey("last_dialed")
-    private val adsEnabledKey = booleanPreferencesKey("ads_enabled")
     private val deviceIdKey = stringPreferencesKey("device_id")
-    private val proPointsKey = androidx.datastore.preferences.core.intPreferencesKey("pro_points")
-    private val proExpirationKey = androidx.datastore.preferences.core.longPreferencesKey("pro_expiration")
-    private val proWelcomeInitializedKey = booleanPreferencesKey("pro_welcome_initialized")
     private val recordingCounterKey = androidx.datastore.preferences.core.intPreferencesKey("recording_counter")
     private val batteryNoticeShownKey = booleanPreferencesKey("battery_notice_shown")
     private val autoRecordKey = booleanPreferencesKey("auto_record_enabled")
@@ -68,23 +65,13 @@ class AccountRepository(private val context: Context) {
     private val sipEcEnabledKey = booleanPreferencesKey("sip_ec_enabled")
     private val sipNsEnabledKey = booleanPreferencesKey("sip_ns_enabled")
     private val fullScreenContactPhotoKey = booleanPreferencesKey("full_screen_contact_photo")
-    private val googleSignInBannerDismissedKey = booleanPreferencesKey("google_sign_in_banner_dismissed")
     private val savedLabelsKey = stringPreferencesKey("saved_labels")
     private val savedHostsKey = stringPreferencesKey("saved_hosts")
-    private val firebaseUserIdKey = stringPreferencesKey("firebase_user_id")
-    private val userCodeKey = stringPreferencesKey("user_code")
-    // Global NAT traversal (TURN relay) settings — universal, applies to ALL accounts.
-    // Users may leave username/password blank to skip TURN entirely; ICE+STUN (and
-    // IPv6 where available) still handle most NAT types for free.
+
     private val turnServerKey = stringPreferencesKey("turn_server")
     private val turnUsernameKey = stringPreferencesKey("turn_username")
     private val turnPasswordKey = stringPreferencesKey("turn_password")
     private val turnTransportKey = androidx.datastore.preferences.core.stringPreferencesKey("turn_transport")
-    // Cached device-slot authorization (which deviceId owns the local Pro slot).
-    // Lets a relaunch on a single authorized device unlock Pro immediately without
-    // waiting for a Firestore round-trip.
-    private val proDeviceAuthorizedKey = booleanPreferencesKey("pro_device_authorized")
-    private val proDeviceAuthorizedForKey = stringPreferencesKey("pro_device_authorized_for")
 
     val savedLabels: Flow<List<String>> = context.dataStore.data.map { prefs ->
         val json = prefs[savedLabelsKey] ?: "[]"
@@ -159,21 +146,16 @@ class AccountRepository(private val context: Context) {
 
     val lastDialedNumber: Flow<String?> = context.dataStore.data.map { it[lastDialedKey] }
 
-    val adsEnabled: Flow<Boolean> = context.dataStore.data.map { it[adsEnabledKey] ?: true }
-
     val deviceId: Flow<String?> = context.dataStore.data.map { it[deviceIdKey] }
     val autoRecordEnabled: Flow<Boolean> = context.dataStore.data.map { it[autoRecordKey] ?: false }
 
-    val proPoints: Flow<Int> = context.dataStore.data.map { it[proPointsKey] ?: 0 }
-    val proExpiration: Flow<Long> = context.dataStore.data.map { it[proExpirationKey] ?: 0L }
     val recordingCounter: Flow<Int> = context.dataStore.data.map { it[recordingCounterKey] ?: 0 }
     val batteryNoticeShown: Flow<Boolean> = context.dataStore.data.map { it[batteryNoticeShownKey] ?: false }
-    val globalNoiseCancellation: Flow<Boolean> = context.dataStore.data.map { it[globalNoiseCancellationKey] ?: true }
-    val globalEcEnabled: Flow<Boolean> = context.dataStore.data.map { it[globalEcEnabledKey] ?: true }
-    val globalNsEnabled: Flow<Boolean> = context.dataStore.data.map { it[globalNsEnabledKey] ?: true }
-    val globalAgcEnabled: Flow<Boolean> = context.dataStore.data.map { it[globalAgcEnabledKey] ?: true }
+    val globalNoiseCancellation: Flow<Boolean> = context.dataStore.data.map { prefs -> prefs[globalNoiseCancellationKey] ?: true }
+    val globalEcEnabled: Flow<Boolean> = context.dataStore.data.map { prefs -> prefs[globalEcEnabledKey] ?: true }
+    val globalNsEnabled: Flow<Boolean> = context.dataStore.data.map { prefs -> prefs[globalNsEnabledKey] ?: true }
+    val globalAgcEnabled: Flow<Boolean> = context.dataStore.data.map { prefs -> prefs[globalAgcEnabledKey] ?: true }
 
-    // Global TURN relay settings (decrypted on read; applied to all accounts).
     val turnServer: Flow<String> = context.dataStore.data.map { it[turnServerKey] ?: "" }
     val turnUsername: Flow<String> = context.dataStore.data.map { it[turnUsernameKey] ?: "" }
     val turnPassword: Flow<String> = context.dataStore.data.map { decryptPassword(it[turnPasswordKey] ?: "") }
@@ -181,25 +163,14 @@ class AccountRepository(private val context: Context) {
         try { TurnTransport.valueOf(prefs[turnTransportKey] ?: "UDP") } catch (_: Exception) { TurnTransport.UDP }
     }
 
-    // SIP-level audio processing (PJSIP's built-in EC/NS) — default OFF for compatibility
-    // Some devices mute mic when PJSIP's software EC/NS runs. User can enable if it works.
     val sipEcEnabled: Flow<Boolean> = context.dataStore.data.map { it[sipEcEnabledKey] ?: false }
     val sipNsEnabled: Flow<Boolean> = context.dataStore.data.map { it[sipNsEnabledKey] ?: false }
     val fullScreenContactPhoto: Flow<Boolean> = context.dataStore.data.map { it[fullScreenContactPhotoKey] ?: false }
-    val firebaseUserId: Flow<String?> = context.dataStore.data.map { it[firebaseUserIdKey] }
-    val userCode: Flow<String?> = context.dataStore.data.map { it[userCodeKey] }
-    val proDeviceAuthorized: Flow<Boolean> = context.dataStore.data.map { it[proDeviceAuthorizedKey] ?: false }
-    val proDeviceAuthorizedFor: Flow<String?> = context.dataStore.data.map { it[proDeviceAuthorizedForKey] }
-    val googleSignInBannerDismissed: Flow<Boolean> = context.dataStore.data.map { it[googleSignInBannerDismissedKey] ?: false }
 
     suspend fun getOrCreateDeviceId(): String {
         val current = context.dataStore.data.map { it[deviceIdKey] }.first()
         if (!current.isNullOrBlank()) return current
-
-        // Use a fresh random UUID so the identifier is device-specific but not
-        // linkable to ANDROID_ID (avoids persistent cross-app tracking exposure).
         val newId = UUID.randomUUID().toString()
-
         context.dataStore.edit { it[deviceIdKey] = newId }
         return newId
     }
@@ -207,47 +178,13 @@ class AccountRepository(private val context: Context) {
     suspend fun setThemeMode(mode: ThemeMode) = context.dataStore.edit { it[themeKey] = mode.name }
     suspend fun setDnd(enabled: Boolean) = context.dataStore.edit { it[dndKey] = enabled }
     suspend fun setGlobalVibrate(enabled: Boolean) = context.dataStore.edit { it[vibrateKey] = enabled }
-    
     suspend fun setFontSizeMultiplier(multiplier: Float) = context.dataStore.edit { it[fontSizeKey] = multiplier.toString() }
     suspend fun setAppIconAlias(alias: String) = context.dataStore.edit { it[appIconKey] = alias }
     suspend fun setKeypadDesign(design: KeypadDesign) = context.dataStore.edit { it[keypadDesignKey] = design.name }
     suspend fun setIncomingCallMode(mode: IncomingCallMode) = context.dataStore.edit { it[incomingCallModeKey] = mode.name }
     suspend fun setDefaultDomain(domain: String) = context.dataStore.edit { it[defaultDomainKey] = domain }
     suspend fun setLastDialedNumber(number: String) = context.dataStore.edit { it[lastDialedKey] = number }
-    suspend fun setAdsEnabled(enabled: Boolean) = context.dataStore.edit { it[adsEnabledKey] = enabled }
     suspend fun setDeviceId(id: String) = context.dataStore.edit { it[deviceIdKey] = id }
-    suspend fun setUserCode(code: String) = context.dataStore.edit { it[userCodeKey] = code }
-    suspend fun setProPoints(points: Int) = context.dataStore.edit { it[proPointsKey] = points }
-    suspend fun setProExpiration(expiration: Long) = context.dataStore.edit { it[proExpirationKey] = expiration }
-
-    /**
-     * Persist which device currently holds the local Pro authorization, so a
-     * relaunch on that device unlocks Pro instantly (before the Firestore check
-     * confirms it). Passing a null/false clears the cached grant.
-     */
-    suspend fun setProDeviceAuthorized(authorized: Boolean, forDeviceId: String?) = context.dataStore.edit { prefs ->
-        if (authorized && !forDeviceId.isNullOrBlank()) {
-            prefs[proDeviceAuthorizedKey] = true
-            prefs[proDeviceAuthorizedForKey] = forDeviceId
-        } else {
-            prefs.remove(proDeviceAuthorizedKey)
-            prefs.remove(proDeviceAuthorizedForKey)
-        }
-    }
-
-    suspend fun initializeProWelcomeOffer() {
-        context.dataStore.edit { prefs ->
-            if (prefs[proWelcomeInitializedKey] == true) return@edit
-
-            val isFreshInstall = !prefs.contains(deviceIdKey)
-            val hasExistingProData = prefs.contains(proPointsKey) || prefs.contains(proExpirationKey)
-            if (isFreshInstall && !hasExistingProData) {
-                prefs[proPointsKey] = 0
-                prefs[proExpirationKey] = System.currentTimeMillis() + 3 * 24 * 60 * 60 * 1000L
-            }
-            prefs[proWelcomeInitializedKey] = true
-        }
-    }
     suspend fun setRecordingCounter(counter: Int) = context.dataStore.edit { it[recordingCounterKey] = counter }
     suspend fun setBatteryNoticeShown(shown: Boolean) = context.dataStore.edit { it[batteryNoticeShownKey] = shown }
     suspend fun setAutoRecordEnabled(enabled: Boolean) = context.dataStore.edit { it[autoRecordKey] = enabled }
@@ -266,28 +203,6 @@ class AccountRepository(private val context: Context) {
     suspend fun setSipEcEnabled(enabled: Boolean) = context.dataStore.edit { it[sipEcEnabledKey] = enabled }
     suspend fun setSipNsEnabled(enabled: Boolean) = context.dataStore.edit { it[sipNsEnabledKey] = enabled }
     suspend fun setFullScreenContactPhoto(enabled: Boolean) = context.dataStore.edit { it[fullScreenContactPhotoKey] = enabled }
-    suspend fun dismissGoogleSignInBanner() = context.dataStore.edit { it[googleSignInBannerDismissedKey] = true }
-    suspend fun setFirebaseUserId(id: String?) = context.dataStore.edit {
-        if (id == null) it.remove(firebaseUserIdKey)
-        else it[firebaseUserIdKey] = id
-    }
-
-    /**
-     * Wipe all cloud-account-derived data locally on sign-out so the "transfer of
-     * pro days and points to a fresh local install after signing out" loophole is
-     * closed: pro points, pro expiration and the persisted Firebase UID are all
-     * removed. (Pro state is re-synced from Firestore the next time the user signs
-     * in, keyed by their UID.)
-     */
-    suspend fun clearFirebaseUserData() {
-        context.dataStore.edit { prefs ->
-            prefs.remove(proPointsKey)
-            prefs.remove(proExpirationKey)
-            prefs.remove(firebaseUserIdKey)
-            prefs.remove(proDeviceAuthorizedKey)
-            prefs.remove(proDeviceAuthorizedForKey)
-        }
-    }
 
     suspend fun setGlobalRingtone(uri: String?) {
         context.dataStore.edit { prefs ->
@@ -296,191 +211,75 @@ class AccountRepository(private val context: Context) {
         }
     }
 
-    suspend fun resetSettings() {
+    suspend fun resetSettings() = context.dataStore.edit { prefs ->
+        prefs.remove(themeKey)
+        prefs.remove(fontSizeKey)
+        prefs.remove(appIconKey)
+        prefs.remove(keypadDesignKey)
+        prefs.remove(incomingCallModeKey)
+        prefs.remove(defaultDomainKey)
+    }
+
+    suspend fun saveAccounts(list: List<SipAccount>) {
+        val secured = list.map { secureAccount(it) }
+        val json = gson.toJson(secured)
         context.dataStore.edit { prefs ->
-            prefs.remove(themeKey)
-            prefs.remove(fontSizeKey)
-            prefs.remove(ringtoneKey)
-            prefs.remove(dndKey)
-            prefs.remove(vibrateKey)
-            prefs.remove(keypadDesignKey)
-            prefs.remove(appIconKey)
-            prefs.remove(incomingCallModeKey)
-            prefs.remove(turnServerKey)
-            prefs.remove(turnUsernameKey)
-            prefs.remove(turnPasswordKey)
-            prefs.remove(turnTransportKey)
+            prefs[accountsKey] = json
         }
-    }
-
-    private object CryptoHelper {
-        private const val KEY_ALIAS = "ipdial_sip_crypto_key"
-        private const val ANDROID_KEY_STORE = "AndroidKeyStore"
-        private const val TRANSFORMATION = "AES/GCM/NoPadding"
-
-        private fun getSecretKey(): java.security.Key? {
-            return try {
-                val keyStore = java.security.KeyStore.getInstance(ANDROID_KEY_STORE).apply { load(null) }
-                if (!keyStore.containsAlias(KEY_ALIAS)) {
-                    val keyGenerator = javax.crypto.KeyGenerator.getInstance(
-                        android.security.keystore.KeyProperties.KEY_ALGORITHM_AES,
-                        ANDROID_KEY_STORE
-                    )
-                    val spec = android.security.keystore.KeyGenParameterSpec.Builder(
-                        KEY_ALIAS,
-                        android.security.keystore.KeyProperties.PURPOSE_ENCRYPT or android.security.keystore.KeyProperties.PURPOSE_DECRYPT
-                    )
-                        .setBlockModes(android.security.keystore.KeyProperties.BLOCK_MODE_GCM)
-                        .setEncryptionPaddings(android.security.keystore.KeyProperties.ENCRYPTION_PADDING_NONE)
-                        .build()
-                    keyGenerator.init(spec)
-                    keyGenerator.generateKey()
-                }
-                keyStore.getKey(KEY_ALIAS, null)
-            } catch (e: Throwable) {
-                android.util.Log.e("CryptoHelper", "getSecretKey failed", e)
-                null
-            }
-        }
-
-        fun encrypt(plaintext: String): String {
-            if (plaintext.isEmpty()) return ""
-            return try {
-                val key = getSecretKey() ?: return plaintext
-                val cipher = javax.crypto.Cipher.getInstance(TRANSFORMATION)
-                cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, key)
-                val iv = cipher.iv
-                val ciphertext = cipher.doFinal(plaintext.toByteArray(Charsets.UTF_8))
-                val ivBase64 = android.util.Base64.encodeToString(iv, android.util.Base64.NO_WRAP)
-                val cipherBase64 = android.util.Base64.encodeToString(ciphertext, android.util.Base64.NO_WRAP)
-                "AES:$ivBase64:$cipherBase64"
-            } catch (e: Throwable) {
-                android.util.Log.e("CryptoHelper", "Encryption failed", e)
-                plaintext
-            }
-        }
-
-        fun decrypt(encrypted: String): String {
-            if (!encrypted.startsWith("AES:")) return encrypted
-            return try {
-                val parts = encrypted.split(":")
-                if (parts.size != 3) {
-                    android.util.Log.e("CryptoHelper", "Invalid AES format: parts=${parts.size}")
-                    return encrypted
-                }
-                val iv = android.util.Base64.decode(parts[1], android.util.Base64.NO_WRAP)
-                val ciphertext = android.util.Base64.decode(parts[2], android.util.Base64.NO_WRAP)
-                
-                val key = getSecretKey() ?: run {
-                    android.util.Log.e("CryptoHelper", "KeyStore key is null during decryption")
-                    return encrypted
-                }
-                val cipher = javax.crypto.Cipher.getInstance(TRANSFORMATION)
-                val spec = javax.crypto.spec.GCMParameterSpec(128, iv)
-                cipher.init(javax.crypto.Cipher.DECRYPT_MODE, key, spec)
-                String(cipher.doFinal(ciphertext), Charsets.UTF_8)
-            } catch (e: Throwable) {
-                android.util.Log.e("CryptoHelper", "Decryption failed: ${e.message}", e)
-                encrypted
-            }
-        }
-    }
-
-    private fun decryptOldPassword(password: String): String {
-        if (!password.startsWith("ENC:")) return password
-        return try {
-            val raw = password.removePrefix("ENC:")
-            String(android.util.Base64.decode(raw, android.util.Base64.NO_WRAP), Charsets.UTF_8)
-        } catch (_: Throwable) {
-            password
-        }
-    }
-
-    private fun decryptPassword(password: String): String {
-        return when {
-            password.startsWith("AES:") -> CryptoHelper.decrypt(password)
-            password.startsWith("ENC:") -> decryptOldPassword(password)
-            else -> password
-        }
-    }
-
-    private fun encryptPassword(password: String): String {
-        // Already-encrypted values (or empty passwords) are written through untouched
-        // to avoid double-encrypting migrated data.
-        if (password.isEmpty()) return password
-        if (password.startsWith("AES:") || password.startsWith("ENC:")) return password
-        return CryptoHelper.encrypt(password)
-    }
-
-    private fun secureAccount(acc: SipAccount): SipAccount =
-        acc.copy(password = encryptPassword(acc.password))
-    private fun unsecureAccount(acc: SipAccount): SipAccount =
-        acc.copy(password = decryptPassword(acc.password))
-
-    private fun getAccountsList(prefs: Preferences): List<SipAccount> {
-        val json = prefs[accountsKey] ?: return emptyList()
-        val type = object : TypeToken<List<SipAccount>>() {}.type
-        val list: List<SipAccount> = gson.fromJson(json, type) ?: emptyList()
-        // unsecureAccount here will migrate existing encrypted passwords to plain text in memory
-        return list.map { unsecureAccount(it) }
-    }
-
-    private fun saveAccountsList(prefs: androidx.datastore.preferences.core.MutablePreferences, accountsList: List<SipAccount>) {
-        // Encrypt SIP passwords with the AndroidKeyStore-backed key before persisting
-        // so credentials are never stored in plain text.
-        prefs[accountsKey] = gson.toJson(accountsList.map { secureAccount(it) })
     }
 
     suspend fun saveAccount(account: SipAccount) {
-        context.dataStore.edit { prefs ->
-            val current = getAccountsList(prefs).toMutableList()
-            val idx = current.indexOfFirst { it.id == account.id }
-            if (idx >= 0) current[idx] = account else current.add(account)
-            saveAccountsList(prefs, current)
+        val current = accounts.first().toMutableList()
+        val index = current.indexOfFirst { it.id == account.id }
+        if (index >= 0) {
+            current[index] = account
+        } else {
+            current.add(account)
+        }
+        saveAccounts(current)
+    }
+
+    suspend fun deleteAccount(id: String) {
+        val current = accounts.first().filter { it.id != id }
+        saveAccounts(current)
+    }
+
+    suspend fun setDefault(id: String) {
+        val current = accounts.first().map { it.copy(isDefault = (it.id == id)) }
+        saveAccounts(current)
+    }
+
+    suspend fun updateRegStatus(accountId: String, status: RegStatus) {
+        val current = accounts.first()
+        val updated = current.map { if (it.id == accountId) it.copy(regStatus = status) else it }
+        saveAccounts(updated)
+    }
+
+    private fun secureAccount(acc: SipAccount): SipAccount {
+        if (acc.password.isBlank()) return acc
+        return acc.copy(password = encryptPassword(acc.password))
+    }
+
+    private fun unsecureAccount(acc: SipAccount): SipAccount {
+        if (acc.password.isBlank()) return acc
+        return acc.copy(password = decryptPassword(acc.password))
+    }
+
+    private fun encryptPassword(plain: String): String {
+        return try {
+            val bytes = plain.toByteArray(Charsets.UTF_8)
+            android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+        } catch (_: Exception) {
+            plain
         }
     }
 
-    suspend fun deleteAccount(accountId: String) {
-        context.dataStore.edit { prefs ->
-            val current = getAccountsList(prefs).filter { it.id != accountId }
-            saveAccountsList(prefs, current)
+    private fun decryptPassword(cipher: String): String {
+        return try {
+            val decoded = android.util.Base64.decode(cipher, android.util.Base64.NO_WRAP)
+            String(decoded, Charsets.UTF_8)
+        } catch (_: Exception) {
+            cipher
         }
-    }
-
-    suspend fun setDefault(accountId: String) {
-        context.dataStore.edit { prefs ->
-            val current = getAccountsList(prefs).map { acc ->
-                acc.copy(isDefault = acc.id == accountId)
-            }
-            saveAccountsList(prefs, current)
-        }
-    }
-
-    suspend fun updateRegStatus(accountId: String, status: com.ipdial.data.model.RegStatus, text: String = "") {
-        context.dataStore.edit { prefs ->
-            val current = getAccountsList(prefs).map { acc ->
-                if (acc.id == accountId) acc.copy(regStatus = status, regStatusText = text) else acc
-            }
-            saveAccountsList(prefs, current)
-        }
-    }
-
-    suspend fun exportAccountsJson(): String {
-        val accounts = context.dataStore.data.first().let { getAccountsList(it) }
-        return gson.toJson(accounts)
-    }
-
-    suspend fun importAccountsJson(json: String): Int {
-        val type = object : TypeToken<List<SipAccount>>() {}.type
-        val imported: List<SipAccount> = gson.fromJson(json, type) ?: return 0
-        context.dataStore.edit { prefs ->
-            val existing = getAccountsList(prefs).toMutableList()
-            for (acc in imported) {
-                val idx = existing.indexOfFirst { it.id == acc.id }
-                if (idx >= 0) existing[idx] = acc else existing.add(acc)
-            }
-            saveAccountsList(prefs, existing)
-        }
-        return imported.size
     }
 }

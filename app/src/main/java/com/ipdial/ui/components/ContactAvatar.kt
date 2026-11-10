@@ -92,6 +92,7 @@ fun ContactItem(
     onAvatarClick: () -> Unit,
     onToggleFavorite: ((Contact) -> Unit)? = null,
     modifier: Modifier = Modifier,
+    selected: Boolean = false,
     isGlass: Boolean = false
 ) {
     val isFav = contact.isFavorite
@@ -155,9 +156,12 @@ fun ContactItem(
         } else null,
         colors = if (isGlass)
             ListItemDefaults.colors(containerColor = Color.Transparent)
+        else if (selected)
+            ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f))
         else ListItemDefaults.colors(),
         modifier = modifier
             .fillMaxWidth()
+            .clickable { onContactClick() }
             .then(
                 if (isGlass) Modifier
                     .padding(horizontal = 12.dp, vertical = 2.dp)

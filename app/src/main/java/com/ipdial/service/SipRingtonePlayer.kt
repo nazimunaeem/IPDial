@@ -51,11 +51,6 @@ class SipRingtonePlayer(
         }
 
         val ringerMode = audioManager.ringerMode
-        if (ringerMode == AudioManager.RINGER_MODE_SILENT) {
-            Log.d(TAG, "Silent mode, skipping ringtone")
-            return
-        }
-
         isPlayingRingtone = true
 
         if (ringtoneWakeLock == null) {
@@ -124,7 +119,7 @@ class SipRingtonePlayer(
                         }
                     }
 
-                    if (vibrateEnabled || ringerMode == AudioManager.RINGER_MODE_VIBRATE) {
+                    if (vibrateEnabled || ringerMode == AudioManager.RINGER_MODE_VIBRATE || ringerMode == AudioManager.RINGER_MODE_SILENT) {
                         val effect = VibrationEffect.createWaveform(longArrayOf(0, 800, 600), 0)
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                             vibrator?.vibrate(

@@ -148,7 +148,7 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
         if (results[Manifest.permission.READ_CONTACTS] == true) {
-            vm.refreshContacts()
+            vm.syncContacts()
         }
         if (results[Manifest.permission.RECORD_AUDIO] == true) {
             startSipServiceIfPermitted()
@@ -476,7 +476,6 @@ sealed class NavDest(val route: String, val label: String, val icon: ImageVector
     object About   : NavDest("about",   "About",    Icons.Default.Info)
     object Recordings: NavDest("recordings", "Recordings", Icons.Default.Mic)
     object Logs    : NavDest("logs",    "Activity Log", Icons.AutoMirrored.Filled.List)
-    object GetPro  : NavDest("get_pro",  "IPDial Pro",   Icons.Default.CardGiftcard)
     object Privacy : NavDest("privacy",  "Privacy Policy", Icons.Default.PrivacyTip)
     object AudioCodecs : NavDest("audio_codecs", "Audio Codecs", Icons.Default.Audiotrack)
     object ThemeSettings : NavDest("theme_settings", "Theme", Icons.Default.Settings)
@@ -633,80 +632,6 @@ fun AppScaffold(
                 showFullIncomingScreen = showFullIncomingScreen,
                 onOpenMenu = onOpenMenu,
                 modifier = Modifier.align(Alignment.BottomCenter)
-            )
-        }
-
-        // Sign-in-for-Pro offer for signed-out users — points & Pro only survive
-        // reinstall/data-clear if backed up to their Google account via Firestore.
-        // Shown on Home tab only, until dismissed.
-        if (currentRoute == NavDest.Home.route) {
-            GoogleSignInBackupBanner(
-                vm = vm,
-                onOpenGetPro = {
-                    navController.graph.let { graph ->
-                        navController.navigate(NavDest.GetPro.route) {
-                            popUpTo(graph.findStartDestination().id) { saveState = true }
-                            launchSingleTop = true
-                            restoreState = true
-                        }
-                    }
-                },
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .navigationBarsPadding()
-                    .padding(bottom = 72.dp, start = 16.dp, end = 16.dp)
-            )
-        }
-
-        val showProPopup by vm.showProBlockPopup.collectAsState()
-        if (showProPopup) {
-            AlertDialog(
-                onDismissRequest = { vm.dismissProPopup() },
-                containerColor = if (isGlass) Color.Transparent else MaterialTheme.colorScheme.surface,
-                modifier = if (isGlass) Modifier.glass(MaterialTheme.shapes.extraLarge, alpha = 0.95f) else Modifier,
-                title = { Text("Pro Feature") },
-                text = { Text("Upgrade to IPDial Pro to unlock this feature and enjoy an ad-free experience!") },
-                confirmButton = {
-                    Button(onClick = {
-                        vm.dismissProPopup()
-                        navController.graph.let { graph ->
-                            navController.navigate(NavDest.GetPro.route) {
-                                popUpTo(graph.findStartDestination().id) { saveState = true }
-                                launchSingleTop = true
-                            }
-                        }
-                    }) {
-                        Text("Get Pro for Free!")
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { vm.dismissProPopup() }) {
-                        Text("Later")
-                    }
-                }
-            )
-        }
-
-        val adGateCallback by vm.adGateCallback.collectAsState()
-        if (adGateCallback != null) {
-            AlertDialog(
-                onDismissRequest = { vm.dismissAdGate() },
-                containerColor = if (isGlass) Color.Transparent else MaterialTheme.colorScheme.surface,
-                modifier = if (isGlass) Modifier.glass(MaterialTheme.shapes.extraLarge, alpha = 0.95f) else Modifier,
-                title = { Text("Watch Ad to Unlock") },
-                text = { Text("Please watch a short video to use this feature for free, or upgrade to Pro for unlimited access.") },
-                confirmButton = {
-                    Button(onClick = {
-                        vm.triggerAdGate(context)
-                    }) {
-                        Text("Watch Ad")
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { vm.dismissAdGate() }) {
-                        Text("Cancel")
-                    }
-                }
             )
         }
     }
@@ -914,147 +839,11 @@ fun AppNavHost(
                 onOpenDrawer = onOpenMenu
             )
         }
-        composable(NavDest.GetPro.route) {
-            GetProScreen(
-                vm = vm,
-                onBack = { navController.popBackStack() },
-                onOpenDrawer = onOpenMenu
-            )
-        }
         composable(NavDest.ServerInspector.route) {
             ServerInspectorScreen(
                 vm = vm,
                 onBack = { navController.popBackStack() }
             )
-        }
-    }
-}
-
-/**
- * Persistent top banner shown to existing Pro users who haven't signed in with
- * Google. Their points and Pro subscription only survive reinstall /
- * data-clear if synced to their Google account via Firestore — so we encourage
- * them to sign in to avoid losing anything.
- */
-@Composable
-private fun GoogleSignInBackupBanner(
-    vm: SipViewModel,
-    modifier: Modifier = Modifier,
-    onOpenGetPro: () -> Unit = {}
-) {
-    val isPro by vm.isPro.collectAsState()
-    val isSignedIn by vm.isSignedIn.collectAsState()
-    var dismissed by remember { mutableStateOf(false) }
-    var isSigningIn by remember { mutableStateOf(false) }
-    val context = androidx.compose.ui.platform.LocalContext.current
-
-    // Signed-in users don't need the offer; dismissed hides it for this visit.
-    if (dismissed || isSignedIn) return
-
-    val title = if (isPro) {
-        "You're Pro — secure it with Google"
-    } else {
-        "Go Pro free — sign in with Google"
-    }
-    val subtitle = if (isPro) {
-        "Sign in to keep your points & Pro subscription safe on any device. Don't lose them!"
-    } else {
-        "Sign in to earn points, unlock Pro features, and keep them on any device."
-    }
-
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = Color.Transparent,
-        shadowElevation = 6.dp,
-        onClick = onOpenGetPro,
-        modifier = modifier.fillMaxWidth()
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(
-                    Brush.horizontalGradient(
-                        colors = listOf(Color(0xFF8E2DE2), Color(0xFF4A00E0))
-                    )
-                )
-                .padding(start = 12.dp, end = 6.dp, top = 8.dp, bottom = 8.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                // Google "G" avatar
-                Surface(
-                    shape = CircleShape,
-                    color = Color.White,
-                    modifier = Modifier.size(36.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            painter = painterResource(com.ipdial.R.drawable.ic_google_g),
-                            contentDescription = "Google",
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
-
-                Spacer(Modifier.width(12.dp))
-
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        title,
-                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                        color = Color.White
-                    )
-                    Text(
-                        subtitle,
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
-                        color = Color.White.copy(alpha = 0.9f)
-                    )
-                }
-
-                Spacer(Modifier.width(8.dp))
-
-                Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = Color.White,
-                    onClick = {
-                        if (!isSigningIn) {
-                            isSigningIn = true
-                            vm.signIn(context) { success, msg ->
-                                isSigningIn = false
-                                if (!success && msg.isNotBlank()) {
-                                    android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
-                                }
-                            }
-                        }
-                    },
-                    enabled = !isSigningIn
-                ) {
-                    Text(
-                        text = if (isSigningIn) "Signing in..." else "Sign in",
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF4A00E0)
-                        ),
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                    )
-                }
-
-                Spacer(Modifier.width(4.dp))
-
-                IconButton(
-                    onClick = { dismissed = true },
-                    modifier = Modifier.size(28.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "Dismiss",
-                        tint = Color.White.copy(alpha = 0.7f),
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-            }
         }
     }
 }

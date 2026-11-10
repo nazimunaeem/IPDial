@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -42,6 +43,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -117,6 +119,9 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
 
     val isActive = activeSession.state == CallState.CONFIRMED
 
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+
     // Check for Bluetooth devices when call is active
     val view = androidx.compose.ui.platform.LocalView.current
     LaunchedEffect(isActive) {
@@ -164,6 +169,90 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
         } else {
             Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
         }
+        if (isLandscape) {
+            // ── Landscape: two-pane layout. Header left, DTMF keypad / call
+            // controls + end-call right, so the keypad stays usable on short,
+            // wide screens and tablets.
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .navigationBarsPadding(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .weight(0.85f)
+                        .fillMaxHeight()
+                        .padding(start = 16.dp, end = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CallHeader(
+                        displayName = displayName,
+                        number = vm.cleanUri(activeSession.remoteUri),
+                        simLabel = simLabel,
+                        isActive = isActive,
+                        state = activeSession.state,
+                        elapsedSeconds = elapsedSeconds,
+                        audioDeviceMode = audioDeviceMode,
+                        contactPhotoUri = contact?.photoUri,
+                        avatarName = displayName,
+                        textColor = textColor,
+                        subtitleColor = subtitleColor,
+                        photoMode = showFullScreenPhoto,
+                        compact = true
+                    )
+                }
+
+                Column(
+                    modifier = Modifier
+                        .weight(1.15f)
+                        .fillMaxHeight()
+                        .padding(start = 4.dp, end = 16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Spacer(Modifier.weight(1f))
+                    AnimatedContent(targetState = showDialpad, label = "dialpad_toggle_landscape") { showDp ->
+                        if (showDp) {
+                            InCallDialpad(vm = vm) {
+                                showDialpad = false
+                            }
+                        } else {
+                            CallControls(
+                                session = activeSession,
+                                isActive = isActive,
+                                onKeypad = { showDialpad = true },
+                                onMute = { vm.toggleMute() },
+                                onSpeaker = { vm.cycleAudioDevice() },
+                                onRecord = { vm.toggleRecording() },
+                                audioDeviceMode = audioDeviceMode,
+                                photoMode = showFullScreenPhoto
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(14.dp))
+                    // Pill-shaped end-call action remains prominent without dominating the screen.
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .width(160.dp)
+                            .height(56.dp)
+                            .clip(RoundedCornerShape(28.dp))
+                            .background(EndRed)
+                            .then(if (isEndingCall) Modifier else Modifier.clickableNoRipple { vm.hangup() })
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(Icons.Default.CallEnd, contentDescription = "End call", tint = Color.White, modifier = Modifier.size(24.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(if (isEndingCall) "Ending…" else "End call", color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    Spacer(Modifier.weight(1f))
+                }
+            }
+        } else {
         Column(
             modifier = Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -230,6 +319,7 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
                 }
             }
         }
+        }
     }
 }
 
@@ -246,8 +336,14 @@ private fun CallHeader(
     avatarName: String,
     textColor: Color,
     subtitleColor: Color,
-    photoMode: Boolean = false
+    photoMode: Boolean = false,
+    compact: Boolean = false
 ) {
+    val avatarSize = if (compact) 84.dp else 116.dp
+    val ringFrameSize = if (compact) 112.dp else 152.dp
+    val glowRingSize = if (compact) 96.dp else 132.dp
+    val glowRingWidth = if (compact) 8.dp else 10.dp
+
     val transition = rememberInfiniteTransition(label = "avatar_glow")
     val glowScale by transition.animateFloat(
         initialValue = 1f,
@@ -279,35 +375,36 @@ private fun CallHeader(
             }
 
             if (!photoMode) {
-                Box(contentAlignment = Alignment.Center, modifier = Modifier.size(152.dp)) {
+                Box(contentAlignment = Alignment.Center, modifier = Modifier.size(ringFrameSize)) {
                     if (isActive) {
                         Box(
                             modifier = Modifier
-                                .size(132.dp)
+                                .size(glowRingSize)
                                 .scale(glowScale)
-                                .border(10.dp, Color(0xFF35B978).copy(alpha = 0.18f), CircleShape)
+                                .border(glowRingWidth, Color(0xFF35B978).copy(alpha = 0.18f), CircleShape)
                         )
                         AudioWaveform(
                             modifier = Modifier.fillMaxWidth(),
-                            color = Color(0xFF35B978).copy(alpha = 0.65f)
+                            color = Color(0xFF35B978).copy(alpha = 0.65f),
+                            waveHeight = if (compact) 28.dp else 42.dp
                         )
                     } else {
                         // Animated circular ripple around avatar while dialing (before call is received).
-                        RippleRings()
+                        RippleRings(ringFrameSize = ringFrameSize, innerSize = avatarSize)
                     }
                     ContactAvatar(
                         name = avatarName,
                         photoUri = contactPhotoUri,
-                        size = 116.dp,
+                        size = avatarSize,
                         backgroundColor = avatarColor,
                         contentColor = Color.White,
-                        modifier = Modifier.border(3.dp, Color.White.copy(alpha = 0.7f), CircleShape)
+                        modifier = Modifier.border(if (compact) 2.dp else 3.dp, Color.White.copy(alpha = 0.7f), CircleShape)
                     )
                 }
 
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(if (compact) 6.dp else 10.dp))
             } else {
-                Spacer(Modifier.height(28.dp))
+                Spacer(Modifier.height(if (compact) 12.dp else 28.dp))
             }
             Text(
                 text = displayName,
@@ -322,7 +419,7 @@ private fun CallHeader(
             }
             Spacer(Modifier.height(8.dp))
             if (isActive) {
-                Text(formatDuration(elapsedSeconds), style = MaterialTheme.typography.headlineMedium, color = textColor, fontWeight = FontWeight.Bold)
+                Text(formatDuration(elapsedSeconds), style = if (compact) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineMedium, color = textColor, fontWeight = FontWeight.Bold)
                 Text("Connected  •  $routeLabel", style = MaterialTheme.typography.labelMedium, color = subtitleColor)
             } else {
                 PulsingStateLabel(state)
@@ -356,7 +453,7 @@ private fun CallHeader(
  * while the call is in the dialing / ringing phase.
  */
 @Composable
-private fun RippleRings() {
+private fun RippleRings(ringFrameSize: androidx.compose.ui.unit.Dp = 152.dp, innerSize: androidx.compose.ui.unit.Dp = 116.dp) {
     val transition = rememberInfiniteTransition(label = "dialing_ripple")
 
     // Ring 1 — expands & fades, immediately followed by ring 2.
@@ -387,32 +484,32 @@ private fun RippleRings() {
 
     // Two concentric rings expand outward from the avatar with a staggered delay
     // to create a continuous "ping" ripple effect.
-    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(152.dp)) {
-        RippleRing(scale = ring1Scale, alpha = ring1Alpha, ringColor = Color(0xFF35B978))
-        RippleRing(scale = ring2Scale, alpha = ring2Alpha, ringColor = Color(0xFF35B978))
+    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(ringFrameSize)) {
+        RippleRing(scale = ring1Scale, alpha = ring1Alpha, ringColor = Color(0xFF35B978), size = innerSize)
+        RippleRing(scale = ring2Scale, alpha = ring2Alpha, ringColor = Color(0xFF35B978), size = innerSize)
     }
 }
 
 @Composable
-private fun RippleRing(scale: Float, alpha: Float, ringColor: Color) {
+private fun RippleRing(scale: Float, alpha: Float, ringColor: Color, size: androidx.compose.ui.unit.Dp) {
     Box(
         modifier = Modifier
-            .size(116.dp)
+            .size(size)
             .scale(scale)
             .border(3.dp, ringColor.copy(alpha = alpha), CircleShape)
     )
 }
 
 @Composable
-private fun AudioWaveform(modifier: Modifier = Modifier, color: Color) {
+private fun AudioWaveform(modifier: Modifier = Modifier, color: Color, waveHeight: androidx.compose.ui.unit.Dp = 42.dp) {
     val transition = rememberInfiniteTransition(label = "audio_waveform")
     Row(
-        modifier = modifier.height(42.dp),
+        modifier = modifier.height(waveHeight),
         horizontalArrangement = Arrangement.spacedBy(5.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         repeat(9) { index ->
-            val height by transition.animateFloat(
+            val fraction by transition.animateFloat(
                 initialValue = 0.25f,
                 targetValue = 1f,
                 animationSpec = infiniteRepeatable(
@@ -424,7 +521,7 @@ private fun AudioWaveform(modifier: Modifier = Modifier, color: Color) {
             Box(
                 modifier = Modifier
                     .weight(1f)
-                    .height((42 * height).dp)
+                    .height((waveHeight.value * fraction).dp)
                     .clip(RoundedCornerShape(4.dp))
                     .background(color)
             )

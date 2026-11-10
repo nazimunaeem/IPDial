@@ -318,14 +318,10 @@ fun IncomingCallSettingsScreen(
                 }
             }
 
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.height(16.dp))
 
-            Text(
-                text = "Changing this setting is a Pro feature.\nNon-Pro users can watch an ad to unlock.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 32.dp, vertical = 16.dp)
+            com.ipdial.ui.components.SupportKoriBanner(
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp)
             )
         }
     }

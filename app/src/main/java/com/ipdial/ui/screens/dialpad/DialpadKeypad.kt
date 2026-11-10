@@ -36,6 +36,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ipdial.data.model.KeypadDesign
@@ -51,23 +52,33 @@ fun DialpadKeypad(
     design: KeypadDesign,
     onKeyPress: (Char) -> Unit,
     onZeroLongPress: () -> Unit,
-    onCallClick: (() -> Unit)? = null
+    onCallClick: (() -> Unit)? = null,
+    fitWithinWidth: Dp? = null
 ) {
     val haptic = LocalHapticFeedback.current
     val isGlass = LocalGlassMode.current != GlassMode.None
     val configuration = LocalConfiguration.current
     val isWide = configuration.screenWidthDp > 600
     val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-    val horizontalPadding = if (isWide) (configuration.screenWidthDp * 0.2f).dp else 64.dp
-    val keySize = if (isWide) 80.dp else if (isLandscape) 52.dp else 68.dp
-    val gridHeight = if (isWide) 64.dp else if (isLandscape) 40.dp else 52.dp
-    val rowSpacing = if (isWide) 16.dp else if (isLandscape) 6.dp else 10.dp
+    val horizontalPadding = if (isWide && !isLandscape) (configuration.screenWidthDp * 0.2f).dp else 64.dp
+    val baseKeySize = if (isWide) 80.dp else if (isLandscape) 52.dp else 68.dp
+    val baseGridHeight = if (isWide) 64.dp else if (isLandscape) 40.dp else 52.dp
+    val baseRowSpacing = if (isWide) 16.dp else if (isLandscape) 6.dp else 10.dp
+
+    // When placed in a side pane (landscape two-pane), scale sizing down so the
+    // keypad always fits the available width and height on any device.
+    val paneWidth = fitWithinWidth
+    val rowSpacing = if (paneWidth != null) 10.dp else baseRowSpacing
+    val keySize = if (paneWidth != null) {
+        maxOf(44.dp, minOf(52.dp, (paneWidth - 48.dp - rowSpacing * 2) / 3f))
+    } else baseKeySize
+    val gridHeight = if (paneWidth != null) 52.dp else baseGridHeight
 
     if (design == KeypadDesign.Rounded) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = if (isLandscape) (configuration.screenWidthDp * 0.3f).dp else horizontalPadding),
+                .padding(horizontal = if (paneWidth != null) 24.dp else if (isLandscape) 24.dp else horizontalPadding),
             verticalArrangement = Arrangement.spacedBy(rowSpacing)
         ) {
             keys.chunked(3).forEach { row ->
@@ -103,10 +114,12 @@ fun DialpadKeypad(
             "5" to 270f, "6" to 300f, "7" to 330f, "8" to 0f, "9" to 30f,
             "#" to 60f, "0" to 90f, "*" to 120f
         )
-        val rotarySizePx = if (isWide) 360f else if (isLandscape) 270f else 310f
+        val rotarySizePx = if (paneWidth != null) {
+            maxOf(210f, minOf(270f, paneWidth.value - 8f))
+        } else if (isWide) 360f else if (isLandscape) 270f else 310f
         val rotarySize = rotarySizePx.dp
-        val keyRadius = if (isWide) 58.dp else if (isLandscape) 46.dp else 56.dp
-        val centerSize = if (isWide) 100.dp else 92.dp
+        val keyRadius = if (paneWidth != null) rotarySize * 0.18f else if (isWide) 58.dp else if (isLandscape) 46.dp else 56.dp
+        val centerSize = if (paneWidth != null) rotarySize * 0.32f else if (isWide) 100.dp else 92.dp
         val ringPadding = (if (isLandscape) 14f else 16f).dp
         val orbitRadius = (rotarySizePx / 2f - keyRadius.value / 2f - ringPadding.value).dp
 

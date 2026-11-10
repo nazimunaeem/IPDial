@@ -84,9 +84,8 @@ fun RecordingsScreen(
             IPDialTopBar(accounts = accounts, vm = vm, title = "Recordings", onBack = onBack)
         },
         bottomBar = {
-            com.ipdial.ui.components.StartIoBanner(
-                vm = vm,
-                modifier = Modifier.fillMaxWidth().padding(8.dp)
+            com.ipdial.ui.components.SupportKoriBanner(
+                modifier = Modifier.fillMaxWidth().padding(16.dp)
             )
         }
     ) { padding ->

@@ -8,6 +8,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -15,11 +16,11 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
@@ -35,6 +36,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -105,225 +107,272 @@ fun DialpadScreen(
         }
     }
 
-    // Landscape: keep original scrollable column layout
+    // Landscape: two-pane — keypad on the left, suggestions on the right
     if (isLandscape) {
-        Column(
+        Row(
             modifier = Modifier
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background)
                 .navigationBarsPadding()
-                .verticalScroll(rememberScrollState()),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Top
         ) {
-            Box(
+            // ── LEFT pane: dial display + keypad + call button ──
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 96.dp)
-                    .padding(top = 4.dp)
-                    .clipToBounds()
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .padding(horizontal = 8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
             ) {
-                if (dialString.isEmpty() && mostCalled.isNotEmpty()) {
+                BoxWithConstraints(
+                    Modifier
+                        .widthIn(max = 430.dp)
+                        .fillMaxWidth()
+                        .fillMaxHeight()
+                ) {
+                    val fitW = minOf(430.dp, maxWidth)
                     Column(
                         modifier = Modifier
-                            .fillMaxWidth()
+                            .fillMaxSize()
                             .verticalScroll(rememberScrollState())
+                            .padding(bottom = 24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
                     ) {
-                        Text(
-                            text = "Most Called",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(start = 16.dp, top = 4.dp, bottom = 4.dp)
+                        // Dial display row
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Box {
+                                IconButton(onClick = { showMenu = true }) {
+                                    Icon(
+                                        imageVector = Icons.Default.MoreVert,
+                                        contentDescription = "More",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                                    if (clipboardManager.hasText()) {
+                                        DropdownMenuItem(
+                                            text = { Text("Paste") },
+                                            onClick = {
+                                                showMenu = false
+                                                clipboardManager.getText()?.text?.let { text ->
+                                                    text.filter { it.isDigit() || it == '+' || it == '*' || it == '#' }.forEach { vm.dialPad(it) }
+                                                }
+                                            }
+                                        )
+                                    }
+                                    DropdownMenuItem(
+                                        text = { Text("Add to contact") },
+                                        onClick = {
+                                            showMenu = false
+                                            val intent = android.content.Intent(android.content.Intent.ACTION_INSERT).apply {
+                                                type = android.provider.ContactsContract.Contacts.CONTENT_TYPE
+                                                putExtra(android.provider.ContactsContract.Intents.Insert.PHONE, dialString)
+                                            }
+                                            context.startActivity(intent)
+                                        }
+                                    )
+                                }
+                            }
+                            InterceptPlatformTextInput(interceptor = { _, _ -> awaitCancellation() }) {
+                                BasicTextField(
+                                    value = dialTextFieldValue,
+                                    onValueChange = {
+                                        vm.setDialString(it.copy(text = it.text.filter { c -> c.isDigit() || c == '+' || c == '*' || c == '#' }))
+                                    },
+                                    visualTransformation = PhoneNumberTransformation(),
+                                    textStyle = MaterialTheme.typography.headlineMedium.copy(
+                                        fontSize = 36.sp,
+                                        fontWeight = FontWeight.Normal,
+                                        color = MaterialTheme.colorScheme.onBackground,
+                                        textAlign = TextAlign.Center
+                                    ),
+                                    modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                                    maxLines = 1,
+                                    singleLine = true,
+                                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary)
+                                )
+                            }
+                            AnimatedVisibility(visible = dialString.isNotEmpty()) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .clip(CircleShape)
+                                        .combinedClickable(
+                                            onClick = { vm.backspace() },
+                                            onLongClick = {
+                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                vm.clearDial()
+                                            }
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.Backspace,
+                                        contentDescription = "Backspace",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            if (dialString.isEmpty()) Spacer(Modifier.size(48.dp))
+                        }
+
+                        Spacer(Modifier.height(8.dp))
+
+                        // Keypad grid
+                        val keys = listOf(
+                            Triple("1", "⠀", null),
+                            Triple("2", "ABC", null),
+                            Triple("3", "DEF", null),
+                            Triple("4", "GHI", null),
+                            Triple("5", "JKL", null),
+                            Triple("6", "MNO", null),
+                            Triple("7", "PQRS", null),
+                            Triple("8", "TUV", null),
+                            Triple("9", "WXYZ", null),
+                            Triple("*", "", null),
+                            Triple("0", "+", null),
+                            Triple("#", "", null),
                         )
-                        mostCalled.forEach { contact ->
-                            key(contact.id) {
-                                SuggestedContactRow(contact) { num ->
-                                    vm.clearDial()
-                                    num.filter { it.isDigit() || it == '+' || it == '*' || it == '#' }.forEach { vm.dialPad(it) }
-                                    vm.makeCall()
+
+                        val callAction = {
+                            if (dialString.isEmpty() && !lastDialedNumber.isNullOrEmpty()) {
+                                vm.setDialString(androidx.compose.ui.text.input.TextFieldValue(lastDialedNumber!!))
+                            } else if (dialString.isNotEmpty()) {
+                                vm.makeCall()
+                            }
+                        }
+
+                        if (keypadDesign == KeypadDesign.Ring) {
+                            DialpadKeypad(
+                                keys = keys,
+                                design = keypadDesign,
+                                onKeyPress = { vm.dialPad(it) },
+                                onZeroLongPress = { vm.dialPad('+') },
+                                onCallClick = callAction,
+                                fitWithinWidth = fitW
+                            )
+                        } else {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                DialpadKeypad(
+                                    keys = keys,
+                                    design = keypadDesign,
+                                    onKeyPress = { vm.dialPad(it) },
+                                    onZeroLongPress = { vm.dialPad('+') },
+                                    onCallClick = null,
+                                    fitWithinWidth = fitW - 68.dp
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier
+                                        .size(60.dp)
+                                        .clip(CircleShape)
+                                        .background(ForestGreen)
+                                        .clickableWithRipple(onClick = callAction)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Call,
+                                        contentDescription = "Call",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(30.dp)
+                                    )
                                 }
                             }
                         }
                     }
-                } else if (suggestedContacts.isNotEmpty()) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .verticalScroll(rememberScrollState())
-                    ) {
-                        suggestedContacts.forEach { contact ->
-                            key(contact.id) {
-                                SuggestedContactRow(contact) { num ->
-                                    vm.clearDial()
-                                    num.filter { it.isDigit() || it == '+' || it == '*' || it == '#' }.forEach { vm.dialPad(it) }
-                                    vm.makeCall()
-                                }
-                            }
-                        }
-                    }
-                } else if (dialString.isNotEmpty()) {
-                    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        Text(
-                            "No matching contacts",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.outline
-                        )
-                    }
                 }
             }
 
-            // Ad above digit box (only when a banner will actually render, otherwise
-            // a PRO/no-ads user sees a blank 90dp gap while showAd is briefly true)
-            val showAd by vm.showAd.collectAsState()
-            val adsEnabled by vm.adsEnabled.collectAsState()
-            val isPro by vm.isPro.collectAsState()
-            if (showAd && adsEnabled && !isPro) {
-                Box(Modifier.height(90.dp).fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
-                    StartIoBanner(vm = vm, modifier = Modifier.fillMaxSize())
-                }
-            }
+            VerticalDivider(
+                thickness = 1.dp,
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+            )
 
-            // Dial display row
-            Row(
+            // ── RIGHT pane: suggestions (Most Called / matches) + ad ──
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                    .weight(1f)
+                    .fillMaxHeight(),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Box {
-                    IconButton(onClick = { showMenu = true }) {
-                        Icon(
-                            imageVector = Icons.Default.MoreVert,
-                            contentDescription = "More",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-                        if (clipboardManager.hasText()) {
-                            DropdownMenuItem(
-                                text = { Text("Paste") },
-                                onClick = {
-                                    showMenu = false
-                                    clipboardManager.getText()?.text?.let { text ->
-                                        text.filter { it.isDigit() || it == '+' || it == '*' || it == '#' }.forEach { vm.dialPad(it) }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(horizontal = 8.dp, vertical = 8.dp)
+                        .clipToBounds()
+                ) {
+                    if (dialString.isEmpty() && mostCalled.isNotEmpty()) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState())
+                        ) {
+                            Text(
+                                text = "Most Called",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(start = 16.dp, top = 4.dp, bottom = 4.dp)
+                            )
+                            mostCalled.forEach { contact ->
+                                key(contact.id) {
+                                    SuggestedContactRow(contact) { num ->
+                                        vm.clearDial()
+                                        num.filter { it.isDigit() || it == '+' || it == '*' || it == '#' }.forEach { vm.dialPad(it) }
+                                        vm.makeCall()
                                     }
                                 }
+                            }
+                        }
+                    } else if (suggestedContacts.isNotEmpty()) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState())
+                        ) {
+                            suggestedContacts.forEach { contact ->
+                                key(contact.id) {
+                                    SuggestedContactRow(contact) { num ->
+                                        vm.clearDial()
+                                        num.filter { it.isDigit() || it == '+' || it == '*' || it == '#' }.forEach { vm.dialPad(it) }
+                                        vm.makeCall()
+                                    }
+                                }
+                            }
+                        }
+                    } else if (dialString.isNotEmpty()) {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text(
+                                "No matching contacts",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.outline
                             )
                         }
-                        DropdownMenuItem(
-                            text = { Text("Add to contact") },
-                            onClick = {
-                                showMenu = false
-                                val intent = android.content.Intent(android.content.Intent.ACTION_INSERT).apply {
-                                    type = android.provider.ContactsContract.Contacts.CONTENT_TYPE
-                                    putExtra(android.provider.ContactsContract.Intents.Insert.PHONE, dialString)
-                                }
-                                context.startActivity(intent)
-                            }
-                        )
+                    } else {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text(
+                                "Frequently called contacts appear here",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.outline
+                            )
+                        }
                     }
                 }
-                InterceptPlatformTextInput(interceptor = { _, _ -> awaitCancellation() }) {
-                    BasicTextField(
-                        value = dialTextFieldValue,
-                        onValueChange = {
-                            vm.setDialString(it.copy(text = it.text.filter { c -> c.isDigit() || c == '+' || c == '*' || c == '#' }))
-                        },
-                        visualTransformation = PhoneNumberTransformation(),
-                        textStyle = MaterialTheme.typography.headlineMedium.copy(
-                            fontSize = if (isWide) 36.sp else 28.sp,
-                            fontWeight = FontWeight.Normal,
-                            color = MaterialTheme.colorScheme.onBackground,
-                            textAlign = TextAlign.Center
-                        ),
-                        modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
-                        maxLines = 1,
-                        singleLine = true,
-                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary)
-                    )
-                }
-                AnimatedVisibility(visible = dialString.isNotEmpty()) {
-                    Box(
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(CircleShape)
-                            .combinedClickable(
-                                onClick = { vm.backspace() },
-                                onLongClick = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    vm.clearDial()
-                                }
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.Backspace,
-                            contentDescription = "Backspace",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-                if (dialString.isEmpty()) Spacer(Modifier.size(48.dp))
-            }
-
-            Spacer(Modifier.height(8.dp))
-
-            // Keypad grid
-            val keys = listOf(
-            Triple("1", "⠀", null),
-            Triple("2", "ABC", null),
-            Triple("3", "DEF", null),
-            Triple("4", "GHI", null),
-            Triple("5", "JKL", null),
-            Triple("6", "MNO", null),
-            Triple("7", "PQRS", null),
-            Triple("8", "TUV", null),
-            Triple("9", "WXYZ", null),
-            Triple("*", "", null),
-            Triple("0", "+", null),
-            Triple("#", "", null),
-        )
-
-        val callAction = {
-            if (dialString.isEmpty() && !lastDialedNumber.isNullOrEmpty()) {
-                vm.setDialString(androidx.compose.ui.text.input.TextFieldValue(lastDialedNumber!!))
-            } else if (dialString.isNotEmpty()) {
-                vm.makeCall()
             }
         }
-
-        DialpadKeypad(
-            keys = keys,
-            design = keypadDesign,
-            onKeyPress = { vm.dialPad(it) },
-            onZeroLongPress = { vm.dialPad('+') },
-            onCallClick = if (keypadDesign == KeypadDesign.Ring) callAction else null
-        )
-
-        if (keypadDesign != KeypadDesign.Ring) {
-            Spacer(Modifier.height(9.dp))
-
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .width(if (isWide) 220.dp else 150.dp)
-                    .height(if (isWide) 72.dp else 62.dp)
-                    .clip(CircleShape)
-                    .background(ForestGreen)
-                    .clickableWithRipple(onClick = callAction)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Call,
-                    contentDescription = "Call",
-                    tint = Color.White,
-                    modifier = Modifier.size(if (isWide) 34.dp else 28.dp)
-                )
-            }
-        }
-
-            Spacer(Modifier.height(66.dp))
-        } // end landscape Column
     } else {
         // Portrait: suggestions layer behind, dialpad overlaid from bottom
         Box(
@@ -403,16 +452,6 @@ fun DialpadScreen(
                     color = MaterialTheme.colorScheme.outlineVariant
                 )
                 // Ad above digit box (only when a banner will actually render, otherwise
-                // a PRO/no-ads user sees a blank 90dp gap while showAd is briefly true)
-                val showAd by vm.showAd.collectAsState()
-                val adsEnabled by vm.adsEnabled.collectAsState()
-                val isPro by vm.isPro.collectAsState()
-                if (showAd && adsEnabled && !isPro) {
-                    Box(Modifier.height(90.dp).fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
-                        StartIoBanner(vm = vm, modifier = Modifier.fillMaxSize())
-                    }
-                }
-
                 // Dial display row
                 Row(
                     modifier = Modifier

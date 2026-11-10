@@ -319,13 +319,19 @@ fun SettingsScreen(
             )
         }
     ) { padding ->
-        LazyColumn(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .background(MaterialTheme.colorScheme.background),
-            contentPadding = PaddingValues(bottom = 80.dp)
+                .background(MaterialTheme.colorScheme.background)
         ) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 760.dp)
+                    .align(Alignment.TopCenter),
+                contentPadding = PaddingValues(bottom = 80.dp)
+            ) {
             item {
                 Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                     TelegramSupportCard()
@@ -448,7 +454,6 @@ fun SettingsScreen(
             }
 
             item {
-                val isPro by vm.isPro.collectAsState()
                 SettingsRow(
                     icon = Icons.Default.GridOn,
                     title = "Keypad Design",
@@ -457,59 +462,35 @@ fun SettingsScreen(
                         Switch(
                             checked = keypadDesign == KeypadDesign.Rounded,
                             onCheckedChange = {
-                                if (!isPro) {
-                                    vm.showAdGate {
-                                        vm.setKeypadDesign(context, if (it) KeypadDesign.Rounded else KeypadDesign.Grid)
-                                    }
-                                } else {
-                                    vm.setKeypadDesign(context, if (it) KeypadDesign.Rounded else KeypadDesign.Grid)
-                                }
+                                vm.setKeypadDesign(context, if (it) KeypadDesign.Rounded else KeypadDesign.Grid)
                             }
                         )
                     },
                     onClick = {
-                        if (!isPro) {
-                            vm.showAdGate {
-                                vm.setKeypadDesign(context, if (keypadDesign == KeypadDesign.Rounded) KeypadDesign.Grid else KeypadDesign.Rounded)
-                            }
-                        } else {
-                            vm.setKeypadDesign(context, if (keypadDesign == KeypadDesign.Rounded) KeypadDesign.Grid else KeypadDesign.Rounded)
-                        }
+                        vm.setKeypadDesign(context, if (keypadDesign == KeypadDesign.Rounded) KeypadDesign.Grid else KeypadDesign.Rounded)
                     }
                 )
             }
 
             item {
-                val isPro by vm.isPro.collectAsState()
                 SettingsRow(
                     icon = Icons.Default.Brush,
                     title = "Choose App Icon",
                     subtitle = appIconAlias,
                     onClick = {
-                        if (!isPro) {
-                            vm.showAdGate {
-                                showAppIconDialog = true
-                            }
-                        } else {
-                            showAppIconDialog = true
-                        }
+                        showAppIconDialog = true
                     }
                 )
             }
 
             item {
                 val mode by vm.incomingCallMode.collectAsState()
-                val isPro by vm.isPro.collectAsState()
                 SettingsRow(
                     icon = Icons.Default.Call,
                     title = "Incoming Call Style",
                     subtitle = if (mode == IncomingCallMode.Slider) "Slider" else "Buttons",
                     onClick = {
-                        if (!isPro) {
-                            vm.showAdGate { onNavigateToIncomingCallStyle() }
-                        } else {
-                            onNavigateToIncomingCallStyle()
-                        }
+                        onNavigateToIncomingCallStyle()
                     }
                 )
             }
@@ -545,17 +526,16 @@ fun SettingsScreen(
 
             item { SettingsSection("Recording") }
             item {
-                val isPro by vm.isPro.collectAsState()
                 val autoRecordEnabled by vm.autoRecordEnabled.collectAsState()
                 SettingsRow(
                     icon = Icons.Default.RadioButtonChecked,
                     title = "Auto Record Calls",
-                    subtitle = if (isPro) "Automatically record every call" else "Pro feature — upgrade to enable",
+                    subtitle = "Automatically record every call",
                     trailing = {
                         Switch(
                             checked = autoRecordEnabled,
                             onCheckedChange = { vm.setAutoRecord(context, it) },
-                            enabled = isPro
+                            enabled = true
                         )
                     },
                     onClick = { vm.setAutoRecord(context, !autoRecordEnabled) }
@@ -633,6 +613,10 @@ fun SettingsScreen(
                     subtitle = "Version, developer & updates",
                     onClick = { onNavigateToAbout() }
                 )
+            }
+            item {
+                com.ipdial.ui.components.SupportKoriBanner(modifier = Modifier.padding(16.dp))
+            }
             }
         }
     }

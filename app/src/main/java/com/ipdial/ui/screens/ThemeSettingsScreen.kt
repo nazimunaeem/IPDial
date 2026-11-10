@@ -97,6 +97,9 @@ fun ThemeSettingsScreen(
                     onSelect = { vm.setThemeMode(context, ThemeMode.valueOf(preview.label)) }
                 )
             }
+            item {
+                com.ipdial.ui.components.SupportKoriBanner(modifier = Modifier.padding(top = 8.dp))
+            }
         }
     }
 }

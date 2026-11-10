@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Backspace
@@ -39,15 +40,32 @@ fun InCallDialpad(vm: SipViewModel, onHide: () -> Unit) {
     val isWide = configuration.screenWidthDp > 600
     val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
 
+    val keyHeight = if (isWide) 68.dp else if (isLandscape) 44.dp else 52.dp
+    val spacing = if (isWide) 8.dp else if (isLandscape) 6.dp else 4.dp
+    val keyStyle = when {
+        isWide -> MaterialTheme.typography.displaySmall
+        isLandscape -> MaterialTheme.typography.headlineSmall
+        else -> MaterialTheme.typography.headlineSmall
+    }
+    val displayTextStyle = if (isLandscape) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium
+
+    // On landscape the keypad lives in a (possibly narrow) side pane, so cap its
+    // width and keep it dense enough to fit the reduced available height.
+    val keypadWidth = 420.dp
+
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         // Display pressed digits with back button
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 8.dp).height(48.dp)
+            modifier = Modifier
+                .widthIn(max = keypadWidth)
+                .fillMaxWidth()
+                .height(if (isLandscape) 40.dp else 48.dp)
+                .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp)
         ) {
             Text(
                 text = dtmfString,
-                style = MaterialTheme.typography.headlineMedium,
+                style = displayTextStyle,
                 color = MaterialTheme.colorScheme.onBackground,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.weight(1f)
@@ -64,16 +82,20 @@ fun InCallDialpad(vm: SipViewModel, onHide: () -> Unit) {
         TextButton(onClick = onHide) {
             Text("Hide keypad")
         }
+
         val keys = listOf(
             "1","2","3","4","5","6","7","8","9","*","0","#"
         )
         Column(
-            verticalArrangement = Arrangement.spacedBy(if (isWide) 8.dp else 4.dp),
-            modifier = Modifier.padding(horizontal = if (isLandscape) (configuration.screenWidthDp * 0.3f).dp else 32.dp)
+            verticalArrangement = Arrangement.spacedBy(spacing),
+            modifier = Modifier
+                .widthIn(max = keypadWidth)
+                .fillMaxWidth()
+                .padding(horizontal = if (isLandscape) 12.dp else 20.dp)
         ) {
             keys.chunked(3).forEach { row ->
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(if (isWide) 8.dp else 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(spacing),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     row.forEach { digit ->
@@ -82,7 +104,7 @@ fun InCallDialpad(vm: SipViewModel, onHide: () -> Unit) {
                             color = MaterialTheme.colorScheme.surfaceVariant,
                             modifier = Modifier
                                 .weight(1f)
-                                .height(if (isWide) 72.dp else 52.dp)
+                                .height(keyHeight)
                                 .clip(RoundedCornerShape(50))
                                 .clickableNoRipple {
                                     dtmfString += digit
@@ -92,7 +114,7 @@ fun InCallDialpad(vm: SipViewModel, onHide: () -> Unit) {
                             Box(contentAlignment = Alignment.Center) {
                                 Text(
                                     digit,
-                                    style = if (isWide) MaterialTheme.typography.displaySmall else MaterialTheme.typography.headlineSmall,
+                                    style = keyStyle,
                                     color = MaterialTheme.colorScheme.onBackground
                                 )
                             }

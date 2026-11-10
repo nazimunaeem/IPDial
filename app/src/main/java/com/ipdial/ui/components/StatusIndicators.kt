@@ -65,47 +65,16 @@ fun TopBarBalanceChip(
     val context = LocalContext.current
     val balanceMap by vm.balances.collectAsState()
     val balance = balanceMap[account.id]
-    val isPro by vm.isPro.collectAsState()
 
-    var isRevealing by remember { mutableStateOf(false) }
-    val isSupportedDomain = remember(account.domain) {
-        account.domain.equals("sip.amarip.net", ignoreCase = true) ||
-        account.domain.equals("103.170.231.10", ignoreCase = true) ||
-        account.domain.equals("103.129.202.202", ignoreCase = true) ||
-        account.domain.equals("billing.webvoice.net", ignoreCase = true)
-    }
-
-    val showBalance = isPro || isRevealing || (balance != null && balance.isNotBlank())
-
-    LaunchedEffect(isRevealing, isPro, account.id) {
-        if (isSupportedDomain) {
-            if (isPro) {
-                vm.fetchBalance(account, context)
-            }
-            if (isRevealing) {
-                delay(10000)
-                isRevealing = false
-            }
-        }
+    LaunchedEffect(account.id) {
+        vm.fetchBalance(account, context)
     }
 
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.primary.copy(alpha = 0.09f),
         modifier = modifier.clickable {
-            if (isSupportedDomain) {
-                if (isPro) {
-                    vm.fetchBalance(account, context)
-                } else {
-                    if (isRevealing) {
-                        isRevealing = false
-                        vm.dismissAd()
-                    } else {
-                        vm.fetchBalance(account, context)
-                        isRevealing = true
-                    }
-                }
-            }
+            vm.fetchBalance(account, context)
         }
     ) {
         Row(
@@ -122,28 +91,16 @@ fun TopBarBalanceChip(
                 color = MaterialTheme.colorScheme.primary
             )
             Spacer(Modifier.width(4.dp))
-            if (showBalance && balance != null) {
-                val cleanBalance = balance.replace("BDT", "").replace("৳", "").trim()
-                Text(
-                    text = cleanBalance,
-                    style = MaterialTheme.typography.labelMedium.copy(
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp
-                    ),
-                    color = MaterialTheme.colorScheme.primary,
-                    maxLines = 1
-                )
-            } else {
-                Text(
-                    text = if (isSupportedDomain) "Balance" else "VoIP",
-                    style = MaterialTheme.typography.labelMedium.copy(
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 12.sp
-                    ),
-                    color = MaterialTheme.colorScheme.primary,
-                    maxLines = 1
-                )
-            }
+            val cleanBalance = (balance ?: "...").replace("BDT", "").replace("৳", "").trim()
+            Text(
+                text = cleanBalance,
+                style = MaterialTheme.typography.labelMedium.copy(
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp
+                ),
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1
+            )
         }
     }
 }
@@ -304,28 +261,12 @@ fun RegStatusIndicator(
             }
         }
 
-        if (activeAccount != null && (activeAccount.domain.equals("sip.amarip.net", ignoreCase = true) || activeAccount.domain.equals("103.170.231.10", ignoreCase = true) || activeAccount.domain.equals("103.129.202.202", ignoreCase = true)) && vm != null) {
+        if (activeAccount != null && vm != null) {
             val balanceMap by vm.balances.collectAsState()
             val balance = balanceMap[activeAccount.id]
-            val isPro by vm.isPro.collectAsState()
 
-            var isRevealing by remember { mutableStateOf(false) }
-            val offsetX = remember { Animatable(-10f) }
-
-            // Always show balance for Pro users or if specifically revealing
-            val showBalance = isPro || isRevealing
-
-            LaunchedEffect(isRevealing, isPro) {
-                if (isPro) {
-                    vm?.fetchBalance(activeAccount, context)
-                    if (!isRevealing) offsetX.snapTo(20f)
-                }
-                if (isRevealing) {
-                    offsetX.snapTo(0f)
-                    offsetX.animateTo(20f, animationSpec = tween(600))
-                    delay(10000)
-                    isRevealing = false
-                }
+            LaunchedEffect(activeAccount.id) {
+                vm.fetchBalance(activeAccount, context)
             }
 
             Row(
@@ -334,50 +275,29 @@ fun RegStatusIndicator(
                     .clip(RoundedCornerShape(4.dp))
                     .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f))
                     .clickable {
-                        if (isPro) {
-                            // Pro users just refresh on click
-                            vm?.fetchBalance(activeAccount, context)
-                        } else {
-                            if (isRevealing) {
-                                isRevealing = false
-                                vm?.dismissAd()
-                            } else {
-                                vm?.fetchBalance(activeAccount, context)
-                                isRevealing = true
-                            }
-                        }
+                        vm.fetchBalance(activeAccount, context)
                     }
                     .padding(horizontal = 6.dp, vertical = 2.dp)
                     .widthIn(min = 60.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center
             ) {
-                if (showBalance) {
-                    val cleanBalance = (balance ?: "...").replace("BDT", "").trim()
-                    Text(
-                        text = cleanBalance,
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold
-                        ),
-                        color = MaterialTheme.colorScheme.primary,
-                        maxLines = 1
-                    )
-                    Spacer(Modifier.width(3.dp))
-                    Text(
-                        text = "৳",
-                        fontSize = 10.sp,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.offset(x = (offsetX.value - 20).dp)
-                    )
-                } else {
-                    Text(
-                        text = "Balance",
-                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
-                        color = MaterialTheme.colorScheme.primary,
-                        maxLines = 1
-                    )
-                }
+                val cleanBalance = (balance ?: "...").replace("BDT", "").replace("৳", "").trim()
+                Text(
+                    text = cleanBalance,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1
+                )
+                Spacer(Modifier.width(3.dp))
+                Text(
+                    text = "৳",
+                    fontSize = 10.sp,
+                    color = MaterialTheme.colorScheme.primary
+                )
             }
         }
     }

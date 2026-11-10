@@ -172,9 +172,7 @@
                 android:value="sip_keepalive" />
         </service>
 
-        <meta-data
-            android:name="com.startapp.sdk.APPLICATION_ID"
-            android:value="205857982" />
+
 
         <service
             android:name=".service.SipConnectionService"

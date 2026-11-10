@@ -25,45 +25,49 @@ class SipAccountDelegate(
 ) : Account() {
 
     override fun onRegState(prm: OnRegStateParam) {
-        try {
-            val ai = try { info } catch (e: Throwable) {
-                log("CRITICAL: Account $accountId info retrieval failed: ${e.message}", true)
-                return
-            }
+        // Account.info() crosses into the native PJSIP object. Serialize the
+        // callback's native reads with SipEngine's account destruction.
+        synchronized(SipEngine.pjsipLock) {
+            try {
+                val ai = try { info } catch (e: Throwable) {
+                    log("CRITICAL: Account $accountId info retrieval failed: ${e.message}", true)
+                    return
+                }
 
-            if (ai == null) {
-                log("CRITICAL: Account $accountId info is null", true)
-                return
-            }
+                if (ai == null) {
+                    log("CRITICAL: Account $accountId info is null", true)
+                    return
+                }
 
-            val statusCode = try {
-                ai.regStatus?.swigValue() ?: 0
-            } catch (e: Throwable) {
-                0
-            }
-            log("onRegState: Account $accountId code=$statusCode reason=${ai.regStatusText} active=${ai.regIsActive} activeFlag=${ai.regIsActive}", false)
+                val statusCode = try {
+                    ai.regStatus?.swigValue() ?: 0
+                } catch (e: Throwable) {
+                    0
+                }
+                log("onRegState: Account $accountId code=$statusCode reason=${ai.regStatusText} active=${ai.regIsActive} activeFlag=${ai.regIsActive}", false)
             
-            val status = when {
-                ai.regIsActive || statusCode in 200..299 -> RegStatus.REGISTERED
-                statusCode == 0 || statusCode in 100..199 -> RegStatus.REGISTERING
-                statusCode == 401 || statusCode == 403 -> {
-                    log("REG_AUTH_FAILED: Account $accountId auth failed (code=$statusCode). Check credentials.", true)
-                    RegStatus.ERROR
+                val status = when {
+                    ai.regIsActive || statusCode in 200..299 -> RegStatus.REGISTERED
+                    statusCode == 0 || statusCode in 100..199 -> RegStatus.REGISTERING
+                    statusCode == 401 || statusCode == 403 -> {
+                        log("REG_AUTH_FAILED: Account $accountId auth failed (code=$statusCode). Check credentials.", true)
+                        RegStatus.ERROR
+                    }
+                    statusCode == 408 || statusCode == 423 || statusCode in 500..599 || statusCode == 480 -> {
+                        log("REG_TRANSIENT: Account $accountId code=$statusCode (${ai.regStatusText}) - stack will retry", false)
+                        RegStatus.REGISTERING
+                    }
+                    statusCode >= 300 -> {
+                        log("REG_ERROR: Account $accountId code=$statusCode (${ai.regStatusText})", true)
+                        RegStatus.ERROR
+                    }
+                    else -> RegStatus.UNREGISTERED
                 }
-                statusCode == 408 || statusCode == 423 || statusCode in 500..599 || statusCode == 480 -> {
-                    log("REG_TRANSIENT: Account $accountId code=$statusCode (${ai.regStatusText}) - stack will retry", false)
-                    RegStatus.REGISTERING
-                }
-                statusCode >= 300 -> {
-                    log("REG_ERROR: Account $accountId code=$statusCode (${ai.regStatusText})", true)
-                    RegStatus.ERROR
-                }
-                else -> RegStatus.UNREGISTERED
+                log("REG_UPDATE: Account $accountId -> $status (code=$statusCode)", false)
+                _registrationEvents.tryEmit(Triple(accountId, status, statusCode))
+            } catch (e: Throwable) {
+                log("onRegState failed for account $accountId: ${e.message}", true)
             }
-            log("REG_UPDATE: Account $accountId -> $status (code=$statusCode)", false)
-            _registrationEvents.tryEmit(Triple(accountId, status, statusCode))
-        } catch (e: Throwable) {
-            log("onRegState failed for account $accountId: ${e.message}", true)
         }
     }
 

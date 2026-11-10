@@ -85,7 +85,6 @@ fun AccountsScreen(
     onOpenDrawer: (() -> Unit)? = null
 ) {
     val accounts by vm.accounts.collectAsState()
-    val isPro by vm.isPro.collectAsState()
     val defaultDomain by vm.defaultDomain.collectAsState()
     var editingAccount by remember { mutableStateOf<SipAccount?>(null) }
     var showEditSheet by remember { mutableStateOf(false) }
@@ -95,14 +94,7 @@ fun AccountsScreen(
         topBar = {
             IPDialTopBar(accounts = accounts, vm = vm, title = "SIP Accounts", onBack = onBack)
         },
-        bottomBar = {
-            if (!isPro) {
-                com.ipdial.ui.components.StartIoBanner(
-                    vm = vm,
-                    modifier = Modifier.fillMaxWidth().padding(8.dp)
-                )
-            }
-        },
+        bottomBar = {},
         floatingActionButton = {}
     ) { padding ->
         LazyColumn(
@@ -111,15 +103,8 @@ fun AccountsScreen(
             item {
                 Button(
                     onClick = {
-                        if (!isPro && accounts.size >= 1) {
-                            vm.showAdGate {
-                                editingAccount = null
-                                showEditSheet = true
-                            }
-                        } else {
-                            editingAccount = null
-                            showEditSheet = true
-                        }
+                        editingAccount = null
+                        showEditSheet = true
                     },
                     modifier = Modifier
                         .fillMaxWidth()
@@ -149,11 +134,8 @@ fun AccountsScreen(
                 )
             }
 
-            // ── Custom Firebase ad banner ─────────────────────────────────
             item {
-                Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                    com.ipdial.ui.components.CustomAccountPageAd(vm = vm)
-                }
+                com.ipdial.ui.components.SupportKoriBanner(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
             }
         }
 

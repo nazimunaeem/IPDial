@@ -79,8 +79,7 @@ fun FloatingPillNavBar(
             currentRoute == NavDest.Keypad.route ||
             currentRoute == NavDest.Contacts.route
 
-    val shouldShow = !hasActiveCall && (isMainScreen ||
-            ((callSession == null || !showFullIncomingScreen) && currentRoute == NavDest.GetPro.route))
+    val shouldShow = !hasActiveCall && isMainScreen
 
     if (!shouldShow) return
 

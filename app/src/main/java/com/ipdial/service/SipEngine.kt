@@ -359,6 +359,14 @@ object SipEngine {
         }
     }
 
+    /** Serialize native account destruction with callbacks that inspect Account.info. */
+    private fun deleteAccountNative(account: SipAccountDelegate?) {
+        if (account == null) return
+        synchronized(pjsipLock) {
+            account.delete()
+        }
+    }
+
     private fun log(message: String, isError: Boolean = false) = logEx(message, isError)
 
     private fun registerCurrentThread() = registerCurrentThreadEx()
@@ -585,7 +593,7 @@ object SipEngine {
                             log("Re-registration failed for ${account.id}, force re-adding: ${e.message}", true)
                             // Account exists in our map but PJSIP internal state is lost
                             // Force remove and re-add
-                            try { existingPjAcc.delete() } catch (_: Throwable) {}
+                            try { deleteAccountNative(existingPjAcc) } catch (_: Throwable) {}
                             accountMap.remove(account.id)
                             // Fall through to full addAccount below
                         }
@@ -720,7 +728,7 @@ object SipEngine {
                 currentAgcEnabled = account.agcEnabled
                 log("Audio settings cached: EC=$currentEcEnabled, NS=$currentNsEnabled, AGC=$currentAgcEnabled")
             } catch (e: Throwable) {
-                pjAcc.delete()
+                deleteAccountNative(pjAcc)
                 throw e
             }
         } catch (e: Throwable) {
@@ -733,7 +741,7 @@ object SipEngine {
         runOnPjsipThread {
             registerCurrentThreadEx()
             try {
-                accountMap[accountId]?.delete()
+                deleteAccountNative(accountMap[accountId])
                 accountMap.remove(accountId)
                 accountConfigs.remove(accountId)
                 log("Account removed: $accountId")
@@ -762,7 +770,7 @@ object SipEngine {
                 configs.forEach { config ->
                     log("Force reconnecting account: ${config.id}")
                     try {
-                        accountMap[config.id]?.delete()
+                        deleteAccountNative(accountMap[config.id])
                     } catch (e: Throwable) {
                         log("Error deleting account during force reconnect: ${e.message}", true)
                     }
@@ -793,7 +801,7 @@ object SipEngine {
         val savedConfigs = accountConfigs.values.toList()
         accountMap.keys.toList().forEach { accId ->
             try {
-                accountMap[accId]?.delete()
+                deleteAccountNative(accountMap[accId])
             } catch (e: Throwable) {
                 log("Error deleting account $accId prior to network switch: ${e.message}", true)
             }
@@ -1553,7 +1561,7 @@ object SipEngine {
             try {
                 callMap.values.forEach { it.delete() }
                 callMap.clear()
-                accountMap.values.forEach { it.delete() }
+                accountMap.values.forEach { deleteAccountNative(it) }
                 accountMap.clear()
 
                 recorder?.delete()

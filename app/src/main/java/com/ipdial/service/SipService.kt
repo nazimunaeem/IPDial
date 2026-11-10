@@ -30,6 +30,12 @@ class SipService : Service() {
 
     companion object {
         fun start(context: Context, delayStartForeground: Boolean = false) {
+            if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+            ) {
+                Log.w("SipService", "Cannot start SIP service: RECORD_AUDIO permission not granted")
+                return
+            }
             val intent = Intent(context, SipService::class.java).apply {
                 action = ACTION_START
                 if (delayStartForeground) {
@@ -641,9 +647,11 @@ class SipService : Service() {
                             applyActiveCallProgress(session, stateChanged, speakerChanged)
                         }
                         CallState.CONFIRMED -> {
+                            updateForegroundType(ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)
                             if (audioManager.mode != AudioManager.MODE_IN_COMMUNICATION) {
                                 audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
                             }
+                            audioManager.isMicrophoneMute = session.isMuted
                             ringtonePlayer.stopRingtone()
 
                             if (stateChanged || speakerChanged) {
@@ -718,9 +726,6 @@ class SipService : Service() {
         try {
             if (autoRecordedCallId == session.callId) return
             if (session.isRecording) return
-
-            val proExpiration = repo.proExpiration.first()
-            if (proExpiration <= System.currentTimeMillis()) return // Not Pro
 
             val enabled = repo.autoRecordEnabled.first()
             if (!enabled) return

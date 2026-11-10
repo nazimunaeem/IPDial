@@ -3,173 +3,103 @@ package com.ipdial.ui.components
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material.icons.filled.Coffee
+import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
-import coil.compose.AsyncImage
+import androidx.compose.ui.unit.sp
 import com.ipdial.ui.SipViewModel
-import com.startapp.sdk.ads.banner.Banner
 
 @Composable
 fun StartIoBanner(modifier: Modifier = Modifier, vm: SipViewModel? = null) {
-    val adsEnabled = vm?.adsEnabled?.collectAsState()?.value ?: true
-    if (!adsEnabled) return
+    // Ad-free version: no banner shown.
+}
 
-    val isPro = vm?.isPro?.collectAsState()?.value ?: false
+@Composable
+fun SupportKoriBanner(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    Surface(
+        onClick = {
+            try {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.supportkori.com/nazimunaeem"))
+                context.startActivity(intent)
+            } catch (e: Exception) {
+                android.util.Log.e("SupportKori", "Failed to open link: ${e.message}")
+            }
+        },
+        shape = RoundedCornerShape(16.dp),
+        modifier = modifier.fillMaxWidth()
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    Brush.horizontalGradient(
+                        colors = listOf(Color(0xFF1B5E20), Color(0xFF2E7D32), Color(0xFF4CAF50))
+                    )
+                )
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = Color.White.copy(alpha = 0.25f),
+                    modifier = Modifier.size(38.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.Coffee,
+                            contentDescription = "Buy Me a Coffee",
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
 
-    // Check if custom ad is enabled via Firestore (admin-managed)
-    val customEnabled by com.ipdial.util.FirestoreAdConfig.customAdEnabled.collectAsState()
-    val imageUrl by com.ipdial.util.FirestoreAdConfig.customAdImageUrl.collectAsState()
-    val linkUrl by com.ipdial.util.FirestoreAdConfig.customAdLink.collectAsState()
-    val showTo by com.ipdial.util.FirestoreAdConfig.customAdShowTo.collectAsState()
-    val bgColorHex by com.ipdial.util.FirestoreAdConfig.customAdBg.collectAsState()
+                Spacer(Modifier.width(12.dp))
 
-    val bgColor = try {
-        Color(android.graphics.Color.parseColor(bgColorHex))
-    } catch (_: Exception) {
-        MaterialTheme.colorScheme.surface
-    }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Buy Me a Coffee ☕",
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                        color = Color.White
+                    )
+                    Text(
+                        text = "Support the developer via SupportKori",
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                        color = Color.White.copy(alpha = 0.9f)
+                    )
+                }
 
-    if (customEnabled && imageUrl.isNotBlank()) {
-        val showForThisUser = when (showTo) {
-            "pro" -> isPro
-            "non_pro" -> !isPro
-            else -> true  // "all"
-        }
-        if (!showForThisUser) return
-        CustomAdBanner(imageUrl = imageUrl, linkUrl = linkUrl, bgColor = bgColor, modifier = modifier)
-    } else {
-        if (isPro) return
-        AndroidView(
-            modifier = modifier.fillMaxWidth(),
-            factory = { ctx ->
-                try {
-                    Banner(ctx)
-                } catch (e: Throwable) {
-                    android.util.Log.e("StartIoBanner", "Failed to create StartApp banner", e)
-                    android.view.View(ctx)
+                Spacer(Modifier.width(8.dp))
+
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color.White
+                ) {
+                    Text(
+                        text = "Donate ☕",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF1B5E20)
+                        ),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    )
                 }
             }
-        )
-    }
-}
-
-@Composable
-fun CustomAdBanner(imageUrl: String, linkUrl: String, bgColor: Color = MaterialTheme.colorScheme.surface, modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    var dismissed by remember { mutableStateOf(false) }
-    if (dismissed) return
-
-    Card(
-        onClick = {
-            if (linkUrl.isNotBlank()) {
-                try {
-                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(linkUrl)))
-                } catch (_: Exception) {}
-            }
-        },
-        modifier = modifier
-            .size(width = 720.dp, height = 90.dp),
-        shape = RectangleShape,
-        colors = CardDefaults.cardColors(containerColor = bgColor)
-    ) {
-        Box(Modifier.fillMaxSize()) {
-            if (imageUrl.isNotBlank()) {
-                AsyncImage(
-                    model = imageUrl,
-                    contentDescription = "Advertisement",
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
-                )
-            }
-            IconButton(
-                onClick = { dismissed = true },
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .size(24.dp)
-                    .background(Color.Black.copy(alpha = 0.5f), shape = CircleShape)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = "Close ad",
-                    tint = Color.White,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun CustomAccountPageAd(vm: SipViewModel, modifier: Modifier = Modifier) {
-    val adsEnabled = vm.adsEnabled.collectAsState().value
-    if (!adsEnabled) return
-
-    val rc = com.ipdial.util.FirestoreAdConfig
-    val enabled by rc.accountPageAdEnabled.collectAsState()
-    if (!enabled) return
-
-    val imageUrl by rc.accountPageAdImage.collectAsState()
-    val bgColorHex by rc.accountPageAdBg.collectAsState()
-    val ctaUrl by rc.accountPageAdCta.collectAsState()
-    val showTo by rc.accountPageAdShowTo.collectAsState()
-
-    val isPro by vm.isPro.collectAsState()
-    val showForThisUser = when (showTo) {
-        "pro" -> isPro
-        "non_pro" -> !isPro
-        else -> true  // "all"
-    }
-    if (!showForThisUser) return
-
-    val context = LocalContext.current
-    val bgColor = try {
-        Color(android.graphics.Color.parseColor(bgColorHex))
-    } catch (_: Exception) {
-        MaterialTheme.colorScheme.primary
-    }
-
-    Card(
-        onClick = {
-            if (ctaUrl.isNotBlank()) {
-                try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(ctaUrl))) }
-                catch (_: Exception) {}
-            }
-        },
-        modifier = modifier.size(width = 720.dp, height = 90.dp),
-        shape = RectangleShape,
-        colors = CardDefaults.cardColors(containerColor = bgColor)
-    ) {
-        if (imageUrl.isNotBlank()) {
-            AsyncImage(
-                model = imageUrl,
-                contentDescription = "Advertisement",
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop
-            )
         }
     }
 }

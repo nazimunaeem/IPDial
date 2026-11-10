@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Coffee
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material3.Button
@@ -59,7 +60,6 @@ fun AboutScreen(
 ) {
     val context = LocalContext.current
     val accounts by vm.accounts.collectAsState()
-    val adsEnabled by vm.adsEnabled.collectAsState()
     val scope = rememberCoroutineScope()
     val clipboardManager = LocalClipboard.current
 
@@ -68,9 +68,6 @@ fun AboutScreen(
         try { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "1.0" }
         catch (e: Exception) { "1.0" }
     }
-
-    val isSignedIn by vm.isSignedIn.collectAsState()
-    val userId by vm.userDisplayId.collectAsState()
 
     val appIconBitmap = remember(context) {
         try {
@@ -150,60 +147,6 @@ fun AboutScreen(
             
             Spacer(Modifier.height(32.dp))
 
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(enabled = isSignedIn && userId.isNotEmpty()) {
-                        scope.launch {
-                            clipboardManager.setClipEntry(
-                                androidx.compose.ui.platform.ClipEntry(
-                                    android.content.ClipData.newPlainText("User ID", userId)
-                                )
-                            )
-                            android.widget.Toast.makeText(context, "User ID copied", android.widget.Toast.LENGTH_SHORT).show()
-                        }
-                    }
-            ) {
-                Column(
-                    modifier = Modifier.padding(12.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = "User ID",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    if (isSignedIn) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = userId,
-                                style = MaterialTheme.typography.bodySmall,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.weight(1f, fill = false)
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Icon(
-                                imageVector = Icons.Default.ContentCopy,
-                                contentDescription = "Copy",
-                                modifier = Modifier.size(16.dp),
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    } else {
-                        Text(
-                            text = "Sign in to view your ID",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(24.dp))
-            
             Button(
                 onClick = {
                     val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://t.me/IPDial"))
@@ -215,6 +158,25 @@ fun AboutScreen(
                 Icon(Icons.Default.Group, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
                 Text("Join Telegram Community")
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            Button(
+                onClick = {
+                    try {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.supportkori.com/nazimunaeem"))
+                        context.startActivity(intent)
+                    } catch (e: Exception) {
+                        android.util.Log.e("AboutScreen", "Failed to open SupportKori: ${e.message}")
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(Icons.Default.Coffee, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Buy Me a Coffee ☕")
             }
 
             Spacer(Modifier.height(32.dp))
@@ -276,36 +238,6 @@ fun AboutScreen(
             }
             */
 
-            Spacer(Modifier.height(24.dp))
-
-            // Ad Toggle
-            if (SHOW_AD_TOGGLE) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { vm.setAdsEnabled(!adsEnabled) }
-                        .padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Enable Advertisements",
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            text = "Support us by keeping ads on",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.outline
-                        )
-                    }
-                    Switch(
-                        checked = adsEnabled,
-                        onCheckedChange = { vm.setAdsEnabled(it) }
-                    )
-                }
-            }
         }
     }
 }

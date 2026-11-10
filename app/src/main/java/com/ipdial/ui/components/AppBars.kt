@@ -54,7 +54,6 @@ fun IPDialTopBar(
 ) {
     val isGlass = LocalGlassMode.current != GlassMode.None
     val containerColor = if (isGlass) Color.Transparent else MaterialTheme.colorScheme.surface
-    val isPro = vm?.isPro?.collectAsState()?.value ?: false
     val activeAccount = vm?.activeAccount?.collectAsState()?.value ?: accounts.firstOrNull { it.isEnabled } ?: accounts.firstOrNull()
 
     Surface(
@@ -90,7 +89,7 @@ fun IPDialTopBar(
                     }
                     Spacer(Modifier.width(2.dp))
                     Text(
-                        text = title ?: if (isPro) "IPDial Pro" else "IPDial",
+                        text = title ?: "IPDial",
                         style = MaterialTheme.typography.titleMedium.copy(
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface,
@@ -115,23 +114,6 @@ fun IPDialTopBar(
                             color = MaterialTheme.colorScheme.primary
                         )
                     )
-                    if (isPro) {
-                        Spacer(Modifier.width(5.dp))
-                        Surface(
-                            color = Color(0xFFBC4749).copy(alpha = 0.15f),
-                            shape = RoundedCornerShape(6.dp)
-                        ) {
-                            Text(
-                                text = "PRO",
-                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 9.sp,
-                                    color = Color(0xFFBC4749)
-                                )
-                            )
-                        }
-                    }
                 }
             }
 
@@ -182,32 +164,6 @@ fun IPDialTopBar(
                         vm = vm,
                         onClick = onAddAccount
                     )
-                } else if (isPro) {
-                    Surface(
-                        color = Color(0xFFBC4749).copy(alpha = 0.15f),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Star,
-                                contentDescription = null,
-                                tint = Color(0xFFBC4749),
-                                modifier = Modifier.size(12.dp)
-                            )
-                            Spacer(Modifier.width(3.dp))
-                            Text(
-                                "PRO",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 10.sp
-                                ),
-                                color = Color(0xFFBC4749)
-                            )
-                        }
-                    }
                 }
             }
         }

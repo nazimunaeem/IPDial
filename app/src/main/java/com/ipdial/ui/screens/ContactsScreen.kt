@@ -21,10 +21,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Search
@@ -39,7 +43,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,6 +54,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
@@ -55,9 +62,11 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.ipdial.data.model.Contact
 import com.ipdial.ui.components.AccountSelectionDialog
+import com.ipdial.ui.components.ContactAvatar
 import com.ipdial.ui.components.ContactItem
 import com.ipdial.ui.components.NumberPickerDialog
 import com.ipdial.ui.SipViewModel
@@ -104,6 +113,11 @@ fun ContactsScreen(
     var activeContactForNumberPicker by remember { mutableStateOf<Contact?>(null) }
     var searchActive by remember { mutableStateOf(false) }
     var favoritesOnly by remember { mutableStateOf(false) }
+    var selectedContact by remember { mutableStateOf<Contact?>(null) }
+
+    LaunchedEffect(favoritesOnly, searchQuery) {
+        selectedContact = null
+    }
 
     // Filter main's grouped (already search-filtered) contacts down to
     // favorites when the Favorites tab is selected.
@@ -122,6 +136,7 @@ fun ContactsScreen(
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     val isGlass = LocalGlassMode.current != com.ipdial.ui.theme.GlassMode.None
+    val isWide = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp >= 600
 
     // Build letter → first index map for the indexer (over the visible entries
     // so the index stays in sync with the All/Favorites filter).
@@ -136,6 +151,109 @@ fun ContactsScreen(
         map
     }
     val alphabet = remember { ('A'..'Z').toList() }
+
+    // Shared contacts list + alphabet indexer pane, reused by both the single-column
+    // and two-pane (landscape/tablet) layouts.
+    val contactListPane: @Composable (Modifier) -> Unit = { paneModifier ->
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .then(paneModifier)
+        ) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(top = 4.dp, bottom = if (isWide) 12.dp else 88.dp)
+            ) {
+                allEntries.forEach { (letter, contacts) ->
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(
+                                    if (isGlass) Color.Transparent
+                                    else MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
+                                )
+                                .padding(horizontal = 16.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                text = letter.toString(),
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+
+                    itemsIndexed(contacts, key = { _, c -> c.id }) { _, contact ->
+                        ContactItem(
+                            contact = contact,
+                            onNumberClick = { vm.makeCall(it) },
+                            onContactClick = {
+                                if (isWide) {
+                                    selectedContact = contact
+                                } else if (contact.numbers.size > 1) {
+                                    activeContactForNumberPicker = contact
+                                } else {
+                                    contact.numbers.firstOrNull()?.let { vm.makeCall(it) }
+                                }
+                            },
+                            onAvatarClick = {
+                                try {
+                                    val intent = Intent(Intent.ACTION_VIEW)
+                                    intent.setData(ContentUris.withAppendedId(ContactsContract.Contacts.CONTENT_URI, contact.id.toLong()))
+                                    context.startActivity(intent)
+                                } catch (e: Exception) {
+                                    Toast.makeText(context, "Cannot open contact", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            onToggleFavorite = { vm.toggleContactFavorite(it) },
+                            selected = isWide && selectedContact?.id == contact.id,
+                            isGlass = isGlass
+                        )
+                    }
+                }
+            }
+
+            // AlphabetIndexer
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .width(28.dp)
+                    .padding(end = 2.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    verticalArrangement = Arrangement.SpaceEvenly,
+                    modifier = Modifier.fillMaxHeight()
+                ) {
+                    alphabet.forEach { letter ->
+                        val hasLetter = letterToFirstIndex.containsKey(letter)
+                        Text(
+                            text = letter.toString(),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = if (hasLetter) FontWeight.Bold else FontWeight.Light,
+                            color = if (hasLetter) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
+                            modifier = Modifier
+                                .semantics {
+                                    role = Role.Button
+                                    contentDescription = "Jump to $letter"
+                                }
+                                .clickable(enabled = hasLetter) {
+                                    letterToFirstIndex[letter]?.let { index ->
+                                        coroutineScope.launch {
+                                            listState.animateScrollToItem(index)
+                                        }
+                                    }
+                                }
+                                .padding(vertical = 1.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -174,95 +292,51 @@ fun ContactsScreen(
                     icon = Icons.Default.Search
                 )
             } else {
-                Row(modifier = Modifier.fillMaxSize()) {
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(top = 4.dp, bottom = 88.dp)
-                    ) {
-                        allEntries.forEach { (letter, contacts) ->
-                            item {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .background(
-                                            if (isGlass) Color.Transparent
-                                            else MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
-                                        )
-                                        .padding(horizontal = 16.dp, vertical = 6.dp)
-                                ) {
-                                    Text(
-                                        text = letter.toString(),
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                            }
+                if (isWide) {
+                    // Landscape / tablet: contacts list on the left, contact details on the right
+                    Row(Modifier.fillMaxSize()) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            contactListPane(Modifier.widthIn(max = 480.dp))
+                        }
 
-                            itemsIndexed(contacts, key = { _, c -> c.id }) { _, contact ->
-                                ContactItem(
-                                    contact = contact,
-                                    onNumberClick = { vm.makeCall(it) },
-                                    onContactClick = {
-                                        if (contact.numbers.size > 1) {
-                                            activeContactForNumberPicker = contact
-                                        } else {
-                                            contact.numbers.firstOrNull()?.let { vm.makeCall(it) }
-                                        }
-                                    },
-                                    onAvatarClick = {
-                                        try {
-                                            val intent = Intent(Intent.ACTION_VIEW)
-                                            intent.setData(ContentUris.withAppendedId(ContactsContract.Contacts.CONTENT_URI, contact.id.toLong()))
-                                            context.startActivity(intent)
-                                        } catch (e: Exception) {
-                                            Toast.makeText(context, "Cannot open contact", Toast.LENGTH_SHORT).show()
-                                        }
-                                    },
-                                    onToggleFavorite = { vm.toggleContactFavorite(it) },
-                                    isGlass = isGlass
+                        VerticalDivider(
+                            thickness = 1.dp,
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                        )
+
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            val sel = selectedContact
+                            if (sel != null) {
+                                ContactDetailsPane(
+                                    contact = sel,
+                                    context = context,
+                                    onCall = { vm.makeCall(it) },
+                                    onToggleFavorite = { vm.toggleContactFavorite(it) }
+                                )
+                            } else {
+                                Text(
+                                    text = "Select a contact to view details",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.outline,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.padding(horizontal = 24.dp)
                                 )
                             }
                         }
                     }
-
-                    // AlphabetIndexer
-                    Box(
-                        modifier = Modifier
-                            .fillMaxHeight()
-                            .width(28.dp)
-                            .padding(end = 2.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(
-                            verticalArrangement = Arrangement.SpaceEvenly,
-                            modifier = Modifier.fillMaxHeight()
-                        ) {
-                            alphabet.forEach { letter ->
-                                val hasLetter = letterToFirstIndex.containsKey(letter)
-                                Text(
-                                    text = letter.toString(),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = if (hasLetter) FontWeight.Bold else FontWeight.Light,
-                                    color = if (hasLetter) MaterialTheme.colorScheme.primary
-                                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
-                                    modifier = Modifier
-                                        .semantics {
-                                            role = Role.Button
-                                            contentDescription = "Jump to $letter"
-                                        }
-                                        .clickable(enabled = hasLetter) {
-                                            letterToFirstIndex[letter]?.let { index ->
-                                                coroutineScope.launch {
-                                                    listState.animateScrollToItem(index)
-                                                }
-                                            }
-                                        }
-                                        .padding(vertical = 1.dp)
-                                )
-                            }
-                        }
+                } else {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                        contactListPane(Modifier.fillMaxSize())
                     }
                 }
             }
@@ -289,6 +363,120 @@ fun ContactsScreen(
             onAccountSelected = { vm.proceedWithCallAfterAccountSelection(it) },
             onDismiss = { vm.dismissAccountSelection() }
         )
+    }
+}
+
+@Composable
+private fun ContactDetailsPane(
+    contact: Contact,
+    context: android.content.Context,
+    onCall: (String) -> Unit,
+    onToggleFavorite: (Contact) -> Unit
+) {
+    val isGlass = LocalGlassMode.current != com.ipdial.ui.theme.GlassMode.None
+    val openContact: () -> Unit = {
+        try {
+            val intent = Intent(Intent.ACTION_VIEW)
+            intent.setData(ContentUris.withAppendedId(ContactsContract.Contacts.CONTENT_URI, contact.id.toLong()))
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            Toast.makeText(context, "Cannot open contact", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Top
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End
+        ) {
+            IconButton(onClick = openContact) {
+                Icon(
+                    imageVector = Icons.Default.Info,
+                    contentDescription = "Contact info",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        ContactAvatar(
+            name = contact.name,
+            photoUri = contact.photoUri,
+            size = 96.dp,
+            onClick = openContact
+        )
+
+        Spacer(Modifier.height(16.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Text(
+                text = contact.name,
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.weight(1f, fill = false)
+            )
+            IconButton(onClick = { onToggleFavorite(contact) }) {
+                Icon(
+                    imageVector = if (contact.isFavorite) Icons.Default.Star else Icons.Default.StarBorder,
+                    contentDescription = if (contact.isFavorite) "Remove favorite" else "Add favorite",
+                    tint = if (contact.isFavorite) Color(0xFFFFB300) else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        Spacer(Modifier.height(24.dp))
+
+        if (contact.numbers.isEmpty()) {
+            Text(
+                text = "No numbers",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.outline
+            )
+        } else {
+            contact.numbers.forEach { number ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
+                        .background(
+                            if (isGlass) Color.Transparent
+                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                        )
+                        .clickableWithRipple { onCall(number) }
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Call,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(Modifier.width(16.dp))
+                    Text(
+                        text = number,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
     }
 }
 

@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CardGiftcard
+import androidx.compose.material.icons.filled.Coffee
 import androidx.compose.material.icons.filled.Dialpad
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Palette
@@ -93,7 +94,6 @@ fun AppMenuBottomSheet(
     val accounts by vm.accounts.collectAsState()
     val activeAccount by vm.activeAccount.collectAsState()
     val isPro by vm.isPro.collectAsState()
-    val proExpiration by vm.proExpiration.collectAsState()
     val glassMode = LocalGlassMode.current
     val isGlass = glassMode != GlassMode.None
     val isQuartz = glassMode == GlassMode.Quartz
@@ -187,26 +187,6 @@ fun AppMenuBottomSheet(
             )
 
             Spacer(Modifier.height(8.dp))
-
-            // 2. Pro + Sign-in merged card
-            val isSignedIn by vm.isSignedIn.collectAsState()
-            val currentUser by vm.currentUser.collectAsState()
-            val userCode by vm.userCode.collectAsState()
-            ProUserCard(
-                isPro = isPro,
-                proExpiration = proExpiration,
-                isSignedIn = isSignedIn,
-                displayName = currentUser?.displayName ?: "User",
-                email = currentUser?.email ?: "",
-                photoUrl = currentUser?.photoUrl?.toString(),
-                userCode = userCode,
-                onClick = {
-                    onDismissRequest()
-                    onNavigate(NavDest.GetPro.route)
-                }
-            )
-
-            Spacer(Modifier.height(10.dp))
 
             // 3. Quick Actions Section (6 Tiles in 3-Column Grid)
             Text(
@@ -321,6 +301,20 @@ fun AppMenuBottomSheet(
                         onClick = {
                             onDismissRequest()
                             onNavigate(NavDest.Settings.route)
+                        }
+                    )
+                    MenuRowItem(
+                        icon = Icons.Default.Coffee,
+                        title = "Buy Me a Coffee ☕",
+                        subtitle = "Support the developer via SupportKori",
+                        onClick = {
+                            onDismissRequest()
+                            try {
+                                val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.supportkori.com/nazimunaeem"))
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                android.util.Log.e("AppMenu", "Failed to open SupportKori: ${e.message}")
+                            }
                         }
                     )
                 }
@@ -468,140 +462,6 @@ private fun AccountStatusCard(
                 modifier = Modifier.size(12.dp),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
             )
-        }
-    }
-}
-
-@Composable
-private fun ProUserCard(
-    isPro: Boolean,
-    proExpiration: Long,
-    isSignedIn: Boolean,
-    displayName: String,
-    email: String,
-    photoUrl: String?,
-    userCode: String,
-    onClick: () -> Unit
-) {
-    val proDaysLeft = remember(proExpiration) {
-        val diff = proExpiration - System.currentTimeMillis()
-        maxOf(0, TimeUnit.MILLISECONDS.toDays(diff) + 1)
-    }
-
-    val backgroundBrush = if (isPro) {
-        Brush.horizontalGradient(
-            colors = listOf(Color(0xFF8E2DE2), Color(0xFF4A00E0))
-        )
-    } else {
-        Brush.horizontalGradient(
-            colors = listOf(Color(0xFFBC4749), Color(0xFF6B1D2F))
-        )
-    }
-
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(18.dp),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(backgroundBrush)
-                .padding(horizontal = 12.dp, vertical = 10.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    if (isSignedIn && photoUrl != null) {
-                        AsyncImage(
-                            model = photoUrl,
-                            contentDescription = "Profile",
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                        )
-                    } else {
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                                .background(Color.White.copy(alpha = 0.2f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = if (isSignedIn) Icons.Default.AccountCircle else if (isPro) Icons.Default.Star else Icons.Default.CardGiftcard,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                    }
-
-                    Spacer(Modifier.width(12.dp))
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = if (isSignedIn) displayName else if (isPro) "IPDial Pro Active" else "Upgrade to IPDial Pro",
-                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                                color = Color.White,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            if (isSignedIn && isPro) {
-                                Spacer(Modifier.width(6.dp))
-                                Box(
-                                    modifier = Modifier
-                                        .size(6.dp)
-                                        .clip(CircleShape)
-                                        .background(Color(0xFF69F0AE))
-                                )
-                            }
-                        }
-                        Text(
-                            text = when {
-                                isSignedIn && isPro -> "$proDaysLeft days remaining • $email"
-                                isSignedIn -> "Free Version • $email"
-                                isPro -> "$proDaysLeft days remaining • Sign in to manage"
-                                else -> "Ad-free experience & premium features"
-                            },
-                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
-                            color = Color.White.copy(alpha = 0.85f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        if (isSignedIn && userCode.isNotBlank()) {
-                            Text(
-                                text = "My ID: $userCode",
-                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, fontWeight = FontWeight.SemiBold),
-                                color = Color.White.copy(alpha = 0.9f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                }
-
-                Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = Color.White,
-                    modifier = Modifier.padding(start = 8.dp)
-                ) {
-                    Text(
-                        text = if (isPro) "Manage" else "Get Pro",
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            fontWeight = FontWeight.Bold,
-                            color = if (isPro) Color(0xFF4A00E0) else Color(0xFFBC4749)
-                        ),
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                    )
-                }
-            }
         }
     }
 }
