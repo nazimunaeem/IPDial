@@ -280,6 +280,13 @@ fun AppMenuBottomSheet(
 
             Spacer(Modifier.height(14.dp))
 
+            // Highlighted Support Developer / Buy Me a Coffee Banner
+            SupportKoriBanner(
+                onClick = { onDismissRequest() }
+            )
+
+            Spacer(Modifier.height(14.dp))
+
             // 4. Preferences & App Info
             Text(
                 text = "Preferences & App Info",
@@ -301,20 +308,6 @@ fun AppMenuBottomSheet(
                         onClick = {
                             onDismissRequest()
                             onNavigate(NavDest.Settings.route)
-                        }
-                    )
-                    MenuRowItem(
-                        icon = Icons.Default.Coffee,
-                        title = "Buy Me a Coffee ☕",
-                        subtitle = "Support the developer via SupportKori",
-                        onClick = {
-                            onDismissRequest()
-                            try {
-                                val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.supportkori.com/nazimunaeem"))
-                                context.startActivity(intent)
-                            } catch (e: Exception) {
-                                android.util.Log.e("AppMenu", "Failed to open SupportKori: ${e.message}")
-                            }
                         }
                     )
                 }

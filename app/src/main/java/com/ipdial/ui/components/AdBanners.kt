@@ -26,10 +26,11 @@ fun StartIoBanner(modifier: Modifier = Modifier, vm: SipViewModel? = null) {
 }
 
 @Composable
-fun SupportKoriBanner(modifier: Modifier = Modifier) {
+fun SupportKoriBanner(modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
     val context = LocalContext.current
     Surface(
         onClick = {
+            onClick?.invoke()
             try {
                 val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.supportkori.com/nazimunaeem"))
                 context.startActivity(intent)
