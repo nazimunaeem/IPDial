@@ -4,10 +4,10 @@
     <selectionStates>
       <SelectionState runConfigName="app">
         <option name="selectionMode" value="DROPDOWN" />
-        <DropdownSelection timestamp="2026-09-23T17:00:45.850134Z">
+        <DropdownSelection timestamp="2026-11-09T18:18:01.953438Z">
           <Target type="DEFAULT_BOOT">
             <handle>
-              <DeviceId pluginId="Wireless" identifier="serviceName=adb-cbf17a68-qq41gh" />
+              <DeviceId pluginId="LocalEmulator" identifier="path=/Users/igeneration/.android/avd/ipdial-test.avd" />
             </handle>
           </Target>
         </DropdownSelection>

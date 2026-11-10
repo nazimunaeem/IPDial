@@ -437,6 +437,13 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
         }
+        viewModelScope.launch {
+            accounts.collect { accList ->
+                accList.filter { it.isEnabled }.forEach { acc ->
+                    fetchBalance(acc)
+                }
+            }
+        }
     }
 
     fun setShowFullIncomingScreen(show: Boolean) {
@@ -571,37 +578,48 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
 
     fun fetchBalance(account: SipAccount, context: Context? = null) {
         val host = account.domain.trim()
-        if (host.isBlank()) return
+        val username = account.username.trim()
+        val password = account.password.trim()
+        if (host.isBlank() || username.isBlank()) return
 
         viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val urlString = when {
-                    host.contains("amarip") || host == "103.170.231.10" -> "https://sip.amarip.net/api/mobile/login"
-                    else -> "https://billing.webvoice.net/api/mobile/login"
-                }
+            val endpoints = if (host.contains("amarip") || host == "103.170.231.10") {
+                listOf(
+                    "https://sip.amarip.net/api/mobile/login",
+                    "https://billing.amarip.net/api/mobile/login"
+                )
+            } else {
+                listOf(
+                    "https://billing.webvoice.net/api/mobile/login",
+                    "https://sip.amarip.net/api/mobile/login"
+                )
+            }
 
-                val conn = java.net.URL(urlString).openConnection() as java.net.HttpURLConnection
-                conn.requestMethod = "POST"
-                conn.setRequestProperty("Content-Type", "application/json")
-                conn.doOutput = true
-                conn.connectTimeout = 10000
-                conn.readTimeout = 10000
+            for (urlString in endpoints) {
+                try {
+                    val conn = java.net.URL(urlString).openConnection() as java.net.HttpURLConnection
+                    conn.requestMethod = "POST"
+                    conn.setRequestProperty("Content-Type", "application/json")
+                    conn.setRequestProperty("Accept", "application/json")
+                    conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
+                    conn.doOutput = true
+                    conn.connectTimeout = 10000
+                    conn.readTimeout = 10000
 
-                val jsonBody = org.json.JSONObject().apply {
-                    put("username", account.username.trim())
-                    put("password", account.password.trim())
-                }
+                    val jsonBody = org.json.JSONObject().apply {
+                        put("username", username)
+                        put("password", password)
+                    }
 
-                conn.outputStream.use { os ->
-                    os.write(jsonBody.toString().toByteArray(Charsets.UTF_8))
-                }
+                    conn.outputStream.use { os ->
+                        os.write(jsonBody.toString().toByteArray(Charsets.UTF_8))
+                    }
 
-                val responseCode = conn.responseCode
-                if (responseCode in 200..299) {
-                    val body = conn.inputStream.bufferedReader().use { it.readText() }
-                    val json = org.json.JSONObject(body)
-                    val status = json.optBoolean("status", false) || json.optInt("status", 0) == 1
-                    if (status) {
+                    val responseCode = conn.responseCode
+                    if (responseCode in 200..299) {
+                        val body = conn.inputStream.bufferedReader().use { it.readText() }
+                        android.util.Log.d("SipViewModel", "fetchBalance response from $urlString for $username: $body")
+                        val json = org.json.JSONObject(body)
                         val dataObj = json.optJSONObject("data")
                         val clientObj = dataObj?.optJSONObject("client")
                         val balance = clientObj?.optString("balance_text")
@@ -609,21 +627,23 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                             ?: dataObj?.optString("balance_text")
                             ?.ifBlank { null }
                             ?: json.optString("balance_text", "")
-                        
+
                         if (balance.isNotBlank()) {
-                            val current = _balances.value.toMutableMap()
-                            current[account.id] = balance
-                            _balances.value = current
-                            android.util.Log.d("SipViewModel", "fetchBalance SUCCEEDED for ${account.username}: $balance")
+                            withContext(Dispatchers.Main) {
+                                val current = _balances.value.toMutableMap()
+                                current[account.id] = balance
+                                current[username] = balance
+                                _balances.value = current
+                            }
+                            android.util.Log.d("SipViewModel", "fetchBalance SUCCEEDED for $username: $balance")
+                            break
                         }
                     } else {
-                        android.util.Log.w("SipViewModel", "fetchBalance response status false for ${account.username}: $body")
+                        android.util.Log.w("SipViewModel", "fetchBalance $urlString HTTP $responseCode for $username")
                     }
-                } else {
-                    android.util.Log.e("SipViewModel", "fetchBalance HTTP error $responseCode for ${account.username}")
+                } catch (e: Exception) {
+                    android.util.Log.e("SipViewModel", "fetchBalance exception at $urlString: ${e.message}")
                 }
-            } catch (e: Exception) {
-                android.util.Log.e("SipViewModel", "fetchBalance exception for ${account.username}: ${e.message}")
             }
         }
     }

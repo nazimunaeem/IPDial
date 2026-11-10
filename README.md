@@ -19,7 +19,9 @@ IPDial is a clean, modern, and high-performance SIP (Session Initiation Protocol
 
 ## 🤝 Open Source & Support
 
-IPDial is an open-source project. If you find this project useful, consider supporting the developer by starring the repository or sharing it with others.
+IPDial is an open-source project. If you find this project useful, consider supporting the developer or starring the repository.
+
+<a href="https://www.supportkori.com/nazimunaeem"><img src="https://img.shields.io/badge/Support%20Kori-Support%20the%20Developer-1E6B3C?style=for-the-badge" alt="Support Kori"></a>
 
 ---
 

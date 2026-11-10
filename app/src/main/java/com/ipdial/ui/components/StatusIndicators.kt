@@ -64,9 +64,9 @@ fun TopBarBalanceChip(
 
     val context = LocalContext.current
     val balanceMap by vm.balances.collectAsState()
-    val balance = balanceMap[account.id]
+    val balance = balanceMap[account.id] ?: balanceMap[account.username.trim()]
 
-    LaunchedEffect(account.id) {
+    LaunchedEffect(account.id, account.username) {
         vm.fetchBalance(account, context)
     }
 
