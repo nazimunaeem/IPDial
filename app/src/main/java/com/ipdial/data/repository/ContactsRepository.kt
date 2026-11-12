@@ -26,6 +26,14 @@ class ContactsRepository(private val context: Context) {
         entities.map { it.toContact() }
     }
 
+    init {
+        try {
+            kotlinx.coroutines.runBlocking(Dispatchers.IO) {
+                buildNumberIndex()
+            }
+        } catch (_: Throwable) {}
+    }
+
     // Suffix lengths to store and try for cross-format matching
     // (e.g. local "01729979896" vs international "+8801729979896")
     private val suffixLengths = intArrayOf(10, 11, 12, 13)
