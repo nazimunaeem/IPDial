@@ -438,7 +438,13 @@ class SipService : Service() {
 
         scope.launch {
             SipEngine.registrationEvents.collect { (accountId, status, statusCode) ->
-                repo.updateRegStatus(accountId, status)
+                val statusText = when (status) {
+                    RegStatus.REGISTERED -> "Registered (200 OK)"
+                    RegStatus.REGISTERING -> "Registering..."
+                    RegStatus.ERROR -> if (statusCode > 0) "Error ($statusCode)" else "Error / Offline"
+                    else -> "Unregistered"
+                }
+                repo.updateRegStatus(accountId, status, statusText)
                 when {
                     status == RegStatus.REGISTERED -> {
                         if (authFailedAccounts.remove(accountId)) {

@@ -24,6 +24,8 @@ import com.ipdial.data.model.SipAccount
 import com.ipdial.data.model.ThemeMode
 import com.ipdial.data.model.TurnTransport
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import java.util.UUID
@@ -103,11 +105,25 @@ class AccountRepository(private val context: Context) {
         }
     }
 
-    val accounts: Flow<List<SipAccount>> = context.dataStore.data.map { prefs ->
-        val json = prefs[accountsKey] ?: return@map emptyList()
-        val type = object : TypeToken<List<SipAccount>>() {}.type
-        val list: List<SipAccount> = gson.fromJson(json, type) ?: emptyList()
-        list.map { unsecureAccount(it) }
+    private val _liveRegStatus = MutableStateFlow<Map<String, Pair<RegStatus, String>>>(emptyMap())
+
+    val accounts: Flow<List<SipAccount>> = combine(
+        context.dataStore.data.map { prefs ->
+            val json = prefs[accountsKey] ?: return@map emptyList()
+            val type = object : TypeToken<List<SipAccount>>() {}.type
+            val list: List<SipAccount> = gson.fromJson(json, type) ?: emptyList()
+            list.map { unsecureAccount(it) }
+        },
+        _liveRegStatus
+    ) { accountList, statusMap ->
+        accountList.map { acc ->
+            val live = statusMap[acc.id]
+            if (live != null) {
+                acc.copy(regStatus = live.first, regStatusText = live.second)
+            } else {
+                acc
+            }
+        }
     }
 
     val globalRingtone: Flow<String?> = context.dataStore.data.map { prefs ->
@@ -249,10 +265,10 @@ class AccountRepository(private val context: Context) {
         saveAccounts(current)
     }
 
-    suspend fun updateRegStatus(accountId: String, status: RegStatus) {
-        val current = accounts.first()
-        val updated = current.map { if (it.id == accountId) it.copy(regStatus = status) else it }
-        saveAccounts(updated)
+    suspend fun updateRegStatus(accountId: String, status: RegStatus, text: String = "") {
+        val current = _liveRegStatus.value.toMutableMap()
+        current[accountId] = Pair(status, text)
+        _liveRegStatus.value = current
     }
 
     private fun secureAccount(acc: SipAccount): SipAccount {

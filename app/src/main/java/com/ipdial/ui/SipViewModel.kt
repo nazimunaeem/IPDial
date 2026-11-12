@@ -133,12 +133,26 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     private val _inspectionRunning = MutableStateFlow(false)
     val inspectionRunning: StateFlow<Boolean> = _inspectionRunning.asStateFlow()
 
-    val searchQuery: StateFlow<String> = MutableStateFlow("")
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+
     val favoriteContacts: StateFlow<List<Contact>> = contactsRepo.favoriteContacts.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
-    val groupedContacts: StateFlow<Map<Char, List<Contact>>> = contactsRepo.allContacts.map { list -> list.groupBy { it.name.firstOrNull()?.uppercaseChar() ?: '#' } }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+    val groupedContacts: StateFlow<Map<Char, List<Contact>>> = combine(contactsRepo.allContacts, _searchQuery) { list, query ->
+        val filtered = if (query.isBlank()) list else {
+            val q = query.trim()
+            val digits = q.filter { it.isDigit() }
+            list.filter { c ->
+                c.name.contains(q, ignoreCase = true) ||
+                (digits.isNotBlank() && c.numbers.any { num -> num.replace(" ", "").contains(digits) })
+            }
+        }
+        filtered.groupBy { it.name.firstOrNull()?.uppercaseChar() ?: '#' }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
     val mostCalledContacts: StateFlow<List<Contact>> = MutableStateFlow(emptyList())
 
-    fun onSearchQueryChanged(q: String) {}
+    fun onSearchQueryChanged(q: String) {
+        _searchQuery.value = q
+    }
     fun setAdsEnabled(enabled: Boolean) {}
     fun dismissAd() {}
     fun dismissAdGate() {}

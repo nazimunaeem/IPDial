@@ -47,12 +47,11 @@ class ContactsRepository(private val context: Context) {
                 val digits = number.filter { it.isDigit() }
                 if (digits.length >= 3) {
                     index[digits] = contact
-                    if (digits.length >= 10) {
-                        for (len in suffixLengths) {
-                            if (len < digits.length) {
-                                index[digits.takeLast(len)] = contact
-                            }
-                        }
+                    if (digits.isNotBlank()) {
+                        index[digits] = contact
+                        if (digits.length >= 10) index[digits.takeLast(10)] = contact
+                        if (digits.length >= 8) index[digits.takeLast(8)] = contact
+                        if (digits.length >= 6) index[digits.takeLast(6)] = contact
                     }
                 }
             }
@@ -62,28 +61,32 @@ class ContactsRepository(private val context: Context) {
     }
 
     /**
-     * Fast O(1) contact lookup by phone number. Tries full digits and multiple
-     * suffix lengths to handle local vs international format differences.
+     * Fast contact lookup by phone number. Tries exact full digits, suffix lengths
+     * (10, 8, 6 digits), and fallback iteration for format differences.
      */
     fun findContactByNumber(phoneNumber: String): Contact? {
-        if (!indexBuilt) return null
         val cleanNum = phoneNumber.replace("<", "").replace(">", "").removePrefix("sip:").substringBefore("@").substringBefore(";")
         val digits = cleanNum.filter { it.isDigit() }
-        if (digits.length < 10) return null
-        // Exact full match wins
+        if (digits.isBlank()) return null
+
+        // Exact match
         normalizedNumberIndex[digits]?.let { return it }
-        // Otherwise match on the last 10 digits so that a local number
-        // (e.g. 01729979896) matches an international saved number
-        // (+8801729979896) and vice versa.
-        val last10 = digits.takeLast(10)
-        normalizedNumberIndex[last10]?.let { return it }
-        if (digits.length > 10) {
-            for (len in suffixLengths) {
-                if (len > 10 && len < digits.length) {
-                    normalizedNumberIndex[digits.takeLast(len)]?.let { return it }
-                }
-            }
+
+        // Last 10 digits
+        if (digits.length >= 10) {
+            normalizedNumberIndex[digits.takeLast(10)]?.let { return it }
         }
+
+        // Last 8 digits
+        if (digits.length >= 8) {
+            normalizedNumberIndex[digits.takeLast(8)]?.let { return it }
+        }
+
+        // Last 6 digits
+        if (digits.length >= 6) {
+            normalizedNumberIndex[digits.takeLast(6)]?.let { return it }
+        }
+
         return null
     }
 
