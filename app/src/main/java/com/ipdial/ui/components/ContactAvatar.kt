@@ -61,17 +61,26 @@ fun ContactAvatar(
             val request = remember(photoUri) {
                 coil.request.ImageRequest.Builder(context)
                     .data(photoUri)
-                    .size(size.value.toInt() * 2, size.value.toInt() * 2)
                     .crossfade(true)
                     .diskCachePolicy(coil.request.CachePolicy.ENABLED)
                     .memoryCachePolicy(coil.request.CachePolicy.ENABLED)
                     .build()
             }
-            coil.compose.AsyncImage(
+            coil.compose.SubcomposeAsyncImage(
                 model = request,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize(),
+                error = {
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                        Text(
+                            text = name.firstOrNull()?.uppercase() ?: "?",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = contentColor
+                        )
+                    }
+                }
             )
         } else {
             Text(
@@ -102,7 +111,8 @@ fun ContactItem(
                 text = contact.name,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                fontWeight = if (isFav) FontWeight.Bold else FontWeight.Normal
+                fontWeight = if (isFav) FontWeight.Bold else FontWeight.Normal,
+                color = MaterialTheme.colorScheme.onSurface
             )
         },
         supportingContent = {

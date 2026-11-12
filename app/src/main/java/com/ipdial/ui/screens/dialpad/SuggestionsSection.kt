@@ -49,6 +49,7 @@ fun SuggestedContactRow(contact: Contact, onNumberClick: (String) -> Unit) {
                 text = contact.name,
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )

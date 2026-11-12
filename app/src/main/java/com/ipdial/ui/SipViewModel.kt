@@ -540,14 +540,11 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                     com.ipdial.service.SipConnectionService.disconnectCall(id, causeCode)
                 }
             }
-            // Fallback watchdog: if session is still active after 1s, force clear it
-            delay(1000)
-            if (SipEngine.callSession.value != null) {
-                android.util.Log.w("SipViewModel", "hangup watchdog triggered — force clearing session")
+            // 500ms delay to ensure CANCEL/BYE reaches remote callee and smooth disappear animation plays
+            delay(500)
+            withContext(Dispatchers.Main) {
                 SipEngine.forceClearCallSession()
-                withContext(Dispatchers.Main) {
-                    _isEndingCall.value = false
-                }
+                _isEndingCall.value = false
             }
         }
     }
