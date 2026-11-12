@@ -238,7 +238,9 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
                             .height(56.dp)
                             .clip(RoundedCornerShape(28.dp))
                             .background(EndRed)
-                            .then(if (isEndingCall) Modifier else Modifier.clickableNoRipple { vm.hangup() })
+                            .clickableNoRipple {
+                                if (isEndingCall) vm.forceEndCall() else vm.hangup()
+                            }
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -307,7 +309,9 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
                     .height(56.dp)
                     .clip(RoundedCornerShape(28.dp))
                     .background(EndRed)
-                    .then(if (isEndingCall) Modifier else Modifier.clickableNoRipple { vm.hangup() })
+                    .clickableNoRipple {
+                        if (isEndingCall) vm.forceEndCall() else vm.hangup()
+                    }
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,

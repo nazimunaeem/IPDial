@@ -1118,7 +1118,25 @@ object SipEngine {
         }
     }
 
+    fun forceClearCallSession() {
+        disconnectGraceUntilMs = 0L
+        val session = _callSession.value
+        val id = session?.callId ?: -1
+        log("forceClearCallSession: clearing session for callId=$id")
+        if (id >= 0) {
+            val call = callMap.remove(id)
+            if (call != null) {
+                runOnPjsipThread {
+                    try { call.delete() } catch (_: Throwable) {}
+                }
+            }
+            SipConnectionService.disconnectCall(id, android.telecom.DisconnectCause.LOCAL)
+        }
+        _callSession.value = null
+    }
+
     fun hangupCall(callId: Int = -1) {
+        disconnectGraceUntilMs = 0L
         runOnPjsipThread {
             registerCurrentThreadEx()
             hangupCallOnThread(callId)
@@ -1126,108 +1144,55 @@ object SipEngine {
     }
 
     private fun hangupCallOnThread(callId: Int) {
-        val id = if (callId >= 0) callId else _callSession.value?.callId ?: return
+        disconnectGraceUntilMs = 0L
+        val id = if (callId >= 0) callId else _callSession.value?.callId ?: -1
         log("Hangup requested for callId=$id")
         
         // Handle pending outgoing call (callId == -1 while INVITE is in-flight)
         val pendingCall = if (id == -1) pendingOutgoingCall else null
         val call = callMap[id] ?: pendingCall
         
-        if (call != null) {
-            val actualId = if (id == -1 && pendingCall != null) {
-                // The native call doesn't have a callId yet, but we can still hang it up
-                log("Hangup: cancelling pending outgoing call (callId not yet assigned)")
-                true
-            } else {
-                false
-            }
-            try {
-                val stateText = try { call.info.stateText } catch (_: Throwable) { "Unknown" }
-                val session = _callSession.value
-                log("hangupCall execution: callId=$id state=$stateText direction=${session?.direction} callState=${session?.state}")
-
-                val sipStatusCode = CallHangupResolver.resolveSipStatusCode(session)
-                log("hangupCall: resolved sipStatusCode=$sipStatusCode for session state=${session?.state}")
-
-                val telecomCause = CallHangupResolver.resolveDisconnectCause(session)
-                localHangupCauses[id] = telecomCause
-                log("hangupCall: recording local telecomCause=$telecomCause for callId=$id")
-
-                val prm = CallOpParam().apply {
-                    val pjCode = sipStatusCode
-                    if (pjCode != null) {
-                        statusCode = pjCode
-                    }
-                }
-                call.hangup(prm)
-                log("hangupCall: call.hangup() sent successfully for callId=$id (sipStatusCode=$sipStatusCode, telecomCause=$telecomCause)")
-            } catch (e: Throwable) {
-                log("hangupCall failed: ${e.message}", true)
-                val session = _callSession.value
-
-                // Pending outgoing call that never received a real native callId
-                // (callId == -1): no delegate callback is guaranteed to fire and the
-                // zombie watchdog (nullSessionIfStale) explicitly skips callId == -1,
-                // so clean the session up directly. delete() on a pending INVITE makes
-                // PJSIP send a CANCEL for us.
-                if (session != null && session.callId == -1 && id == -1) {
-                    pendingOutgoingCall = null
-                    try { call.delete() } catch (_: Throwable) {}
-                    _callSession.value = null
-                    try { onCallDisconnected?.invoke(id) } catch (_: Throwable) {}
-                    SipConnectionService.disconnectCall(id, CallHangupResolver.resolveDisconnectCause(session))
-                    return
-                }
-
-                // Established call: do NOT force-clear callMap / null the session here.
-                // hangup() throws most often when the call is ALREADY disconnecting —
-                // double hangup (framework onDisconnect + ViewModel.hangup), or our
-                // local BYE racing the remote BYE. Force-cleaning now removes the
-                // SipCallDelegate from callMap before PJSIP has finished the
-                // BYE/CANCEL transaction, so the 200 OK never reaches the remote and
-                // the far-end call screen stalls — the IPDial↔IPDial hangup bug. Let
-                // onCallState / onCallTsxState own teardown: stamp DISCONNECTED here so
-                // the UI dismisses, hold the zombie watchdog off for the native-delete
-                // window, and always schedule the (idempotent) native delete so a
-                // genuinely dead call can never leak.
-                if (session != null && session.callId >= 0) {
-                    if (_callSession.value?.callId == session.callId) {
-                        _callSession.value = session.copy(state = CallState.DISCONNECTED)
-                    }
-                    SipEngine.beginDisconnectHold(2000)
-                    call.scheduleNativeDelete(id)
-                }
-                try { onCallDisconnected?.invoke(id) } catch (_: Throwable) {}
-                SipConnectionService.disconnectCall(
-                    if (id >= 0) id else session?.callId ?: -1,
-                    CallHangupResolver.resolveDisconnectCause(session)
-                )
-            }
-            pendingOutgoingCall = null
-        } else {
-            // H2 fix: never leave native calls alive when the requested callId is
-            // missing from callMap. A stale/ghost session must not survive a hangup
-            // and later overwrite a new call. If any native calls are still running,
-            // hang them all up so PJSIP actually tears down media (CANCEL/BYE/DECLINE
-            // is chosen by PJSIP based on each call's current state).
-            if (callMap.isNotEmpty()) {
-                log("Hangup: callId=$id not in callMap but ${callMap.size} native call(s) still alive — hanging them all up")
-                callMap.toMap().forEach { (cid, nativeCall) ->
-                    try {
-                        val prm = CallOpParam()
-                        nativeCall.hangup(prm)
-                        log("Hangup: sent hangup for callId=$cid")
-                    } catch (e: Throwable) {
-                        log("Hangup: failed for callId=$cid: ${e.message}", true)
-                        callMap.remove(cid)
-                    }
-                }
-            }
-            pendingOutgoingCall = null
-            if (_callSession.value != null && (_callSession.value?.callId == id || id == -1)) {
-                _callSession.value = null
-            }
+        if (call == null) {
+            log("hangupCall: no active call object found for callId=$id — force-clearing session")
+            _callSession.value = null
+            try { onCallDisconnected?.invoke(id) } catch (_: Throwable) {}
+            SipConnectionService.disconnectCall(id, android.telecom.DisconnectCause.LOCAL)
+            return
         }
+
+        try {
+            val stateText = try { call.info.stateText } catch (_: Throwable) { "Unknown" }
+            val session = _callSession.value
+            log("hangupCall execution: callId=$id state=$stateText direction=${session?.direction} callState=${session?.state}")
+
+            val sipStatusCode = CallHangupResolver.resolveSipStatusCode(session)
+            val telecomCause = CallHangupResolver.resolveDisconnectCause(session)
+            localHangupCauses[id] = telecomCause
+
+            val prm = CallOpParam().apply {
+                val pjCode = sipStatusCode
+                if (pjCode != null) {
+                    statusCode = pjCode
+                }
+            }
+            call.hangup(prm)
+            log("hangupCall: call.hangup() sent successfully for callId=$id")
+            
+            // Mark session DISCONNECTED so UI dismisses immediately
+            if (session != null && session.callId == id) {
+                _callSession.value = session.copy(state = CallState.DISCONNECTED)
+            }
+        } catch (e: Throwable) {
+            log("hangupCall exception: ${e.message} — force clearing session", true)
+            if (id != -1) {
+                try { callMap.remove(id) } catch (_: Throwable) {}
+                try { call.delete() } catch (_: Throwable) {}
+            }
+            _callSession.value = null
+            try { onCallDisconnected?.invoke(id) } catch (_: Throwable) {}
+            SipConnectionService.disconnectCall(id, android.telecom.DisconnectCause.LOCAL)
+        }
+        pendingOutgoingCall = null
     }
 
     private fun PreferredCodec.toCodecId(): String = when (this) {

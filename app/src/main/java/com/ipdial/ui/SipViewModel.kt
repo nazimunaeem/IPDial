@@ -540,7 +540,22 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                     com.ipdial.service.SipConnectionService.disconnectCall(id, causeCode)
                 }
             }
+            // Fallback watchdog: if session is still active after 1s, force clear it
+            delay(1000)
+            if (SipEngine.callSession.value != null) {
+                android.util.Log.w("SipViewModel", "hangup watchdog triggered — force clearing session")
+                SipEngine.forceClearCallSession()
+                withContext(Dispatchers.Main) {
+                    _isEndingCall.value = false
+                }
+            }
         }
+    }
+
+    fun forceEndCall() {
+        android.util.Log.w("SipViewModel", "forceEndCall() invoked by user tap")
+        _isEndingCall.value = false
+        SipEngine.forceClearCallSession()
     }
 
     fun toggleMute() { SipAudioController.setMute(!(callSession.value?.isMuted ?: false)) }
