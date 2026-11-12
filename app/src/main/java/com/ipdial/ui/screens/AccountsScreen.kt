@@ -487,6 +487,8 @@ fun AccountEditSheet(
                         domainError = trimmedDomain.isBlank()
                         if (usernameError || passwordError || domainError) return@Button
 
+                        val currentAccounts = vm.accounts.value
+                        val isFirstAccount = existing == null && currentAccounts.isEmpty()
                         val regAccount = (existing ?: SipAccount()).copy(
                             label = label.trim(),
                             username = trimmedUser,
@@ -495,6 +497,7 @@ fun AccountEditSheet(
                             proxy = proxy.trim(),
                             port = port.trim().toIntOrNull(),
                             transport = transport,
+                            isDefault = if (isFirstAccount || (existing == null && currentAccounts.none { it.isDefault })) true else (existing?.isDefault ?: false),
                             codec = existing?.codec,
                             enabledCodecs = existing?.enabledCodecs ?: com.ipdial.data.model.DEFAULT_ENABLED_CODECS
                         )
