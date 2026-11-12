@@ -519,6 +519,22 @@ fun IPDialApp() {
 
     UpdateCheckDialog()
 
+    val showAccountSelection by vm.showAccountSelectionDialog.collectAsState()
+    val accounts by vm.accounts.collectAsState()
+    val balances by vm.balances.collectAsState()
+    val enabledAccounts = remember(accounts) {
+        accounts.filter { it.isEnabled }
+    }
+
+    if (showAccountSelection && enabledAccounts.isNotEmpty()) {
+        com.ipdial.ui.components.AccountSelectionDialog(
+            enabledAccounts = enabledAccounts,
+            balances = balances,
+            onAccountSelected = { vm.proceedWithCallAfterAccountSelection(it) },
+            onDismiss = { vm.dismissAccountSelection() }
+        )
+    }
+
     val isGlass = com.ipdial.ui.theme.LocalGlassMode.current != com.ipdial.ui.theme.GlassMode.None
 
     Box(modifier = Modifier.fillMaxSize()) {

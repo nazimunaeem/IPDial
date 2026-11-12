@@ -595,19 +595,4 @@ fun DialpadScreen(
             } // end portrait dialpad Column
         } // end portrait Box
     } // end if/else landscape/portrait
-
-    val showAccountSelection by vm.showAccountSelectionDialog.collectAsState()
-    val balances by vm.balances.collectAsState()
-    val enabledAccounts = remember(accounts) {
-        accounts.filter { it.isEnabled }
-    }
-
-    if (showAccountSelection && enabledAccounts.isNotEmpty()) {
-        AccountSelectionDialog(
-            enabledAccounts = enabledAccounts,
-            balances = balances,
-            onAccountSelected = { vm.proceedWithCallAfterAccountSelection(it) },
-            onDismiss = { vm.dismissAccountSelection() }
-        )
-    }
 }

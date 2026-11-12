@@ -339,21 +339,6 @@ fun HomeScreen(
         )
     }
 
-    val showAccountSelection by vm.showAccountSelectionDialog.collectAsState()
-    val balances by vm.balances.collectAsState()
-    val enabledAccounts = remember(accounts) {
-        accounts.filter { it.isEnabled }
-    }
-
-    if (showAccountSelection && enabledAccounts.isNotEmpty()) {
-        AccountSelectionDialog(
-            enabledAccounts = enabledAccounts,
-            balances = balances,
-            onAccountSelected = { vm.proceedWithCallAfterAccountSelection(it) },
-            onDismiss = { vm.dismissAccountSelection() }
-        )
-    }
-
     activeHistoryEntryForDetail?.let { entry ->
         val cleanNumber = cleanUri(entry.remoteUri).filter { it.isDigit() }
         val contact = remember(cleanNumber, contactLookupMap) {
