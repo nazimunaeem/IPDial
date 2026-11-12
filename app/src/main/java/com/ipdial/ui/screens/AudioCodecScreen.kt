@@ -24,6 +24,17 @@ import com.ipdial.data.model.*
 import com.ipdial.ui.components.IPDialTopBar
 import com.ipdial.ui.SipViewModel
 
+private fun matchCodec(codec: PreferredCodec, engineName: String): Boolean {
+    val name = engineName.lowercase()
+    return when (codec) {
+        PreferredCodec.G711A -> name.contains("pcma") || name.contains("g711a")
+        PreferredCodec.G711U -> name.contains("pcmu") || name.contains("g711u") || name.contains("g.711u") || name.contains("pcm")
+        PreferredCodec.G722 -> name.contains("g722")
+        PreferredCodec.G729 -> name.contains("g729")
+        PreferredCodec.Opus -> name.contains("opus")
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AudioCodecScreen(
@@ -35,6 +46,12 @@ fun AudioCodecScreen(
     val availableCodecs = remember { com.ipdial.service.SipEngine.getAvailableCodecs() }
     val accounts by vm.accounts.collectAsState()
     val enabledAccounts = remember(accounts) { accounts.filter { it.isEnabled } }
+
+    val availablePreferredCodecs = remember(availableCodecs) {
+        PreferredCodec.entries.filter { codec ->
+            availableCodecs.any { info -> info.isAvailable && matchCodec(codec, info.name) }
+        }.ifEmpty { PreferredCodec.entries }
+    }
 
     Scaffold(
         topBar = {
@@ -91,15 +108,12 @@ fun AudioCodecScreen(
                     }
                 } else if (activeAccount != null) {
                     val acct = activeAccount!!
-                    items(PreferredCodec.entries) { codec ->
-                        val isEngineAvailable = availableCodecs.any {
-                            it.name.lowercase().contains(codec.name.lowercase().replace("g711", "pcm")) && it.isAvailable
-                        }
+                    items(availablePreferredCodecs) { codec ->
                         CodecSelectionRow(
                             codec = codec,
                             isEnabled = acct.enabledCodecs.contains(codec),
                             isPreferred = acct.codec == codec,
-                            isEngineAvailable = isEngineAvailable,
+                            isEngineAvailable = true,
                             onToggleEnabled = {
                                 val set = acct.enabledCodecs.toMutableSet()
                                 if (set.contains(codec)) set.remove(codec) else set.add(codec)
@@ -146,6 +160,11 @@ fun AccountCodecSection(
     onToggleCodec: (PreferredCodec) -> Unit,
     onSelectPreferred: (PreferredCodec) -> Unit
 ) {
+    val availablePreferredCodecs = remember(availableCodecs) {
+        PreferredCodec.entries.filter { codec ->
+            availableCodecs.any { info -> info.isAvailable && matchCodec(codec, info.name) }
+        }.ifEmpty { PreferredCodec.entries }
+    }
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
@@ -158,15 +177,12 @@ fun AccountCodecSection(
                 color = MaterialTheme.colorScheme.primary
             )
             Spacer(Modifier.height(8.dp))
-            PreferredCodec.entries.forEach { codec ->
-                val isEngineAvailable = availableCodecs.any {
-                    it.name.lowercase().contains(codec.name.lowercase().replace("g711", "pcm")) && it.isAvailable
-                }
+            availablePreferredCodecs.forEach { codec ->
                 CodecSelectionRow(
                     codec = codec,
                     isEnabled = account.enabledCodecs.contains(codec),
                     isPreferred = account.codec == codec,
-                    isEngineAvailable = isEngineAvailable,
+                    isEngineAvailable = true,
                     onToggleEnabled = { onToggleCodec(codec) },
                     onSetPreferred = { onSelectPreferred(codec) }
                 )
