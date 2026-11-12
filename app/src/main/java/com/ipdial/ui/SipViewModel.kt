@@ -596,8 +596,9 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
             }
 
             for (urlString in endpoints) {
+                var conn: java.net.HttpURLConnection? = null
                 try {
-                    val conn = java.net.URL(urlString).openConnection() as java.net.HttpURLConnection
+                    conn = java.net.URL(urlString).openConnection() as java.net.HttpURLConnection
                     conn.requestMethod = "POST"
                     conn.setRequestProperty("Content-Type", "application/json")
                     conn.setRequestProperty("Accept", "application/json")
@@ -643,6 +644,8 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 } catch (e: Exception) {
                     android.util.Log.e("SipViewModel", "fetchBalance exception at $urlString: ${e.message}")
+                } finally {
+                    try { conn?.disconnect() } catch (_: Exception) {}
                 }
             }
         }

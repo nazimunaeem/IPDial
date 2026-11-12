@@ -809,6 +809,9 @@ class SipService : Service() {
     }
 
     override fun onDestroy() {
+        if (::ringtonePlayer.isInitialized) {
+            ringtonePlayer.stopRingtone()
+        }
         if (::wakeLockManager.isInitialized) {
             wakeLockManager.releaseWakeLock()
         }
