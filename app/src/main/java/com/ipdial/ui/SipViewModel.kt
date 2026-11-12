@@ -506,6 +506,12 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
 
+        if (enabledAccounts.size > 1 && _selectedAccountId.value == null) {
+            _pendingCallNumber.value = rawInput
+            _showAccountSelectionDialog.value = true
+            return
+        }
+
         val account = activeAccount.value ?: enabledAccounts.first()
         val finalUri = if (rawInput.contains("@")) rawInput else "sip:$rawInput@${account.domain}"
 

@@ -477,7 +477,6 @@ fun AccountEditSheet(
                     Text("Cancel")
                 }
                 Button(
-                    enabled = !isSaving,
                     onClick = {
                         keyboard?.hide()
                         val trimmedUser = username.trim()
@@ -499,14 +498,8 @@ fun AccountEditSheet(
                             codec = existing?.codec,
                             enabledCodecs = existing?.enabledCodecs ?: com.ipdial.data.model.DEFAULT_ENABLED_CODECS
                         )
-                        if (existing == null || regAccount != existing) {
-                            isSaving = true
-                            regStatusText = "Registering…"
-                            regStatusError = false
-                            savedAccountId = regAccount.id
-                            lastObservedStatus = null
-                            onSave(regAccount)
-                        }
+                        onSave(regAccount)
+                        onDismiss()
                     },
                     modifier = Modifier.weight(1f)
                 ) {
