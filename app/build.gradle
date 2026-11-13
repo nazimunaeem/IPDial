@@ -12,7 +12,7 @@ android {
     defaultConfig {
         applicationId "com.ipdial"
         minSdk 26
-        targetSdk 36
+        targetSdk 35
         versionCode 32
         versionName "1.2.1"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
@@ -121,6 +121,17 @@ kotlin {
         freeCompilerArgs.addAll([
             "-opt-in=androidx.compose.ui.ExperimentalComposeUiApi"
         ])
+    }
+}
+
+configurations.configureEach {
+    resolutionStrategy {
+        eachDependency { details ->
+            if (details.requested.group == 'com.google.android.gms' && details.requested.name == 'play-services-basement' && details.requested.version == '18.8.0') {
+                details.useVersion '18.5.0'
+                details.because 'Version 18.8.0 is not published on Google Maven Repository'
+            }
+        }
     }
 }
 

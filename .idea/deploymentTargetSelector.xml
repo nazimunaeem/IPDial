@@ -4,7 +4,7 @@
     <selectionStates>
       <SelectionState runConfigName="app">
         <option name="selectionMode" value="DROPDOWN" />
-        <DropdownSelection timestamp="2026-11-09T18:18:01.953438Z">
+        <DropdownSelection timestamp="2026-11-13T15:07:16.173869Z">
           <Target type="DEFAULT_BOOT">
             <handle>
               <DeviceId pluginId="LocalEmulator" identifier="path=/Users/igeneration/.android/avd/ipdial-test.avd" />
