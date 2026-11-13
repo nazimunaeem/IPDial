@@ -29,6 +29,7 @@ const val ACTION_START = "com.ipdial.START"
 const val ACTION_STOP = "com.ipdial.STOP"
 const val ACTION_TEST_CALL = "com.ipdial.TEST_CALL"
 const val ACTION_SET_AUDIO_DEVICE = "com.ipdial.SET_AUDIO_DEVICE"
+const val ACTION_SILENCE_RINGER = "com.ipdial.SILENCE_RINGER"
 
 @Volatile var activeCallStartTime: Long = 0L
 

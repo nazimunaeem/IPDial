@@ -40,6 +40,8 @@ class ContactsRepository(private val context: Context) {
 
     // Pre-computed index for O(1) contact lookup by normalized phone number
     private var normalizedNumberIndex: Map<String, Contact> = emptyMap()
+    @Volatile
+    private var cachedContactsList: List<Contact> = emptyList()
     private var indexBuilt = false
 
     /**
@@ -49,18 +51,16 @@ class ContactsRepository(private val context: Context) {
      */
     suspend fun buildNumberIndex() = withContext(Dispatchers.IO) {
         val contacts = contactDao.getAllContacts().first().map { it.toContact() }
+        cachedContactsList = contacts
         val index = mutableMapOf<String, Contact>()
         for (contact in contacts) {
             for (number in contact.numbers) {
                 val digits = number.filter { it.isDigit() }
                 if (digits.length >= 3) {
                     index[digits] = contact
-                    if (digits.isNotBlank()) {
-                        index[digits] = contact
-                        if (digits.length >= 10) index[digits.takeLast(10)] = contact
-                        if (digits.length >= 8) index[digits.takeLast(8)] = contact
-                        if (digits.length >= 6) index[digits.takeLast(6)] = contact
-                    }
+                    if (digits.length >= 10) index[digits.takeLast(10)] = contact
+                    if (digits.length >= 8) index[digits.takeLast(8)] = contact
+                    if (digits.length >= 6) index[digits.takeLast(6)] = contact
                 }
             }
         }
@@ -72,27 +72,46 @@ class ContactsRepository(private val context: Context) {
      * Fast contact lookup by phone number. Tries exact full digits, suffix lengths
      * (10, 8, 6 digits), and fallback iteration for format differences.
      */
-    fun findContactByNumber(phoneNumber: String): Contact? {
-        val cleanNum = phoneNumber.replace("<", "").replace(">", "").removePrefix("sip:").substringBefore("@").substringBefore(";")
+    fun findContactByNumber(phoneNumber: String, fallbackContacts: List<Contact>? = null): Contact? {
+        val cleanNum = phoneNumber.replace("<", "").replace(">", "").removePrefix("sip:").substringBefore("@").substringBefore(";").trim()
         val digits = cleanNum.filter { it.isDigit() }
-        if (digits.isBlank()) return null
 
-        // Exact match
-        normalizedNumberIndex[digits]?.let { return it }
-
-        // Last 10 digits
-        if (digits.length >= 10) {
-            normalizedNumberIndex[digits.takeLast(10)]?.let { return it }
+        // 1. Try fast index lookup
+        if (digits.isNotBlank()) {
+            normalizedNumberIndex[digits]?.let { return it }
+            if (digits.length >= 10) normalizedNumberIndex[digits.takeLast(10)]?.let { return it }
+            if (digits.length >= 8) normalizedNumberIndex[digits.takeLast(8)]?.let { return it }
+            if (digits.length >= 6) normalizedNumberIndex[digits.takeLast(6)]?.let { return it }
         }
 
-        // Last 8 digits
-        if (digits.length >= 8) {
-            normalizedNumberIndex[digits.takeLast(8)]?.let { return it }
-        }
-
-        // Last 6 digits
-        if (digits.length >= 6) {
-            normalizedNumberIndex[digits.takeLast(6)]?.let { return it }
+        // 2. Fallback to searching the provided list or cached contacts
+        val pool = fallbackContacts ?: cachedContactsList
+        if (pool.isNotEmpty()) {
+            // First pass: exact match on number or digits
+            for (c in pool) {
+                for (num in c.numbers) {
+                    val cClean = num.replace("<", "").replace(">", "").removePrefix("sip:").substringBefore("@").substringBefore(";").trim()
+                    val cDigits = cClean.filter { it.isDigit() }
+                    if (cClean == cleanNum || (digits.isNotBlank() && cDigits == digits)) {
+                        return c
+                    }
+                }
+            }
+            // Second pass: suffix matching
+            if (digits.length >= 6) {
+                val searchSuffix = digits.takeLast(minOf(digits.length, 10))
+                for (c in pool) {
+                    for (num in c.numbers) {
+                        val cDigits = num.filter { it.isDigit() }
+                        if (cDigits.length >= 6) {
+                            val cSuffix = cDigits.takeLast(minOf(cDigits.length, 10))
+                            if (searchSuffix == cSuffix || cDigits.endsWith(digits) || digits.endsWith(cDigits)) {
+                                return c
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         return null
@@ -121,6 +140,7 @@ class ContactsRepository(private val context: Context) {
                 ContactsContract.CommonDataKinds.Phone.CONTACT_ID,
                 ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
                 ContactsContract.CommonDataKinds.Phone.NUMBER,
+                ContactsContract.CommonDataKinds.Phone.PHOTO_URI,
                 ContactsContract.CommonDataKinds.Phone.PHOTO_THUMBNAIL_URI,
                 ContactsContract.CommonDataKinds.Phone.STARRED
             )
@@ -137,14 +157,16 @@ class ContactsRepository(private val context: Context) {
                 val idIndex = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.CONTACT_ID)
                 val nameIndex = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
                 val numberIndex = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
-                val photoIndex = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.PHOTO_THUMBNAIL_URI)
+                val photoUriIndex = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.PHOTO_URI)
+                val photoThumbIndex = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.PHOTO_THUMBNAIL_URI)
                 val starredIndex = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.STARRED)
 
                 while (it.moveToNext()) {
                     val id = it.getString(idIndex)
                     val name = it.getString(nameIndex) ?: "Unknown"
                     val number = it.getString(numberIndex) ?: ""
-                    val photoUriStr = it.getString(photoIndex)
+                    val photoUriStr = (if (photoUriIndex >= 0) it.getString(photoUriIndex) else null)
+                        ?: (if (photoThumbIndex >= 0) it.getString(photoThumbIndex) else null)
                     // Local flag wins once cached; only seed from the device's
                     // STARRED flag on the very first sync.
                     val isFavorite = id in existingFavorites ||
@@ -180,6 +202,7 @@ class ContactsRepository(private val context: Context) {
             val entities = (contactsMap.values.map { ContactEntity.fromContact(it) } + orphanedFavorites)
                 .distinctBy { it.id }
             contactDao.refreshContacts(entities)
+            buildNumberIndex()
 
         } catch (e: Exception) {
             android.util.Log.e("ContactsRepo", "Failed to sync contacts: ${e.message}")

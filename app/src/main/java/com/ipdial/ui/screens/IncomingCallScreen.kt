@@ -20,7 +20,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -53,12 +56,14 @@ fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
     }
     Log.d("IncomingCallScreen", "Rendering IncomingCallScreen for ${session.remoteUri}")
     val accounts by vm.accounts.collectAsState()
+    val contacts by vm.contacts.collectAsState()
     
     val account = accounts.firstOrNull { it.id == session.accountId }
     val viaLine  = account?.label?.ifBlank { account.domain } ?: "SIP"
     
-    val contact = remember(session.remoteUri) {
-        vm.findContactByNumber(vm.cleanUri(session.remoteUri))
+    val contact = remember(session.remoteUri, contacts) {
+        val cleanNumber = vm.cleanUri(session.remoteUri)
+        vm.findContactByNumber(cleanNumber, contacts)
     }
     val displayName = contact?.name ?: vm.cleanDisplayName(session.remoteDisplayName, session.remoteUri)
 
@@ -74,35 +79,62 @@ fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
     val isDarkOrObsidian = themeMode == ThemeMode.Dark || themeMode == ThemeMode.Obsidian
 
     // Resolve the caller's hi-res photo for full-screen mode off the main thread.
-    // Full-screen shows only when the setting is ON and a hi-res photo exists.
+    // Full-screen shows only when the setting is ON and a photo exists.
     val context = LocalContext.current
     var fullScreenPhotoUri by remember { mutableStateOf<android.net.Uri?>(null) }
-    LaunchedEffect(contact?.id, fullScreenPhotoEnabled) {
+    LaunchedEffect(contact?.id, contact?.photoUri, fullScreenPhotoEnabled) {
         fullScreenPhotoUri = if (contact != null && fullScreenPhotoEnabled) {
             withContext(Dispatchers.IO) {
-                com.ipdial.util.ContactPhotoUtil.resolveFullScreenUri(context, contact.id)
+                com.ipdial.util.ContactPhotoUtil.resolveFullScreenUri(context, contact.id, contact.photoUri)
             }
         } else null
     }
     val showFullScreenPhoto = fullScreenPhotoEnabled && fullScreenPhotoUri != null
 
     val textColor = if (showFullScreenPhoto) Color.White else MaterialTheme.colorScheme.onBackground
-    val subtitleColor = if (showFullScreenPhoto) Color.White.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant
+    val subtitleColor = if (showFullScreenPhoto) Color.White.copy(alpha = 0.90f) else MaterialTheme.colorScheme.onSurfaceVariant
+    val textShadow = if (showFullScreenPhoto) Shadow(
+        color = Color.Black.copy(alpha = 0.90f),
+        offset = Offset(0f, 2f),
+        blurRadius = 6f
+    ) else null
 
     Box(modifier = Modifier.fillMaxSize()) {
         // Background: full-screen hi-res contact photo when enabled, else the theme
-        // background. A scrim keeps name/number and the answer controls readable.
+        // background. Includes gentle breathing zoom and contrast gradient scrim.
         if (showFullScreenPhoto) {
+            val photoTransition = rememberInfiniteTransition(label = "incomingPhotoZoom")
+            val photoScale by photoTransition.animateFloat(
+                initialValue = 1.0f,
+                targetValue = 1.06f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(durationMillis = 5000, easing = FastOutSlowInEasing),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "photoScale"
+            )
+
             coil.compose.AsyncImage(
                 model = fullScreenPhotoUri,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer(scaleX = photoScale, scaleY = photoScale)
             )
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.4f))
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                Color.Black.copy(alpha = 0.65f),
+                                Color.Black.copy(alpha = 0.35f),
+                                Color.Black.copy(alpha = 0.55f),
+                                Color.Black.copy(alpha = 0.85f)
+                            )
+                        )
+                    )
             )
         } else {
             Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
@@ -117,7 +149,7 @@ fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
                     text = "Incoming Call via $viaLine",
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleMedium.copy(shadow = textShadow),
                     color = subtitleColor,
                 )
             }
@@ -128,7 +160,8 @@ fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
                 text = displayName,
                 style = MaterialTheme.typography.displayMedium.copy(
                     fontWeight = FontWeight.SemiBold,
-                    fontSize = if (displayName.length > 12) 30.sp else 40.sp
+                    fontSize = if (displayName.length > 12) 30.sp else 40.sp,
+                    shadow = textShadow
                 ),
                 textAlign = TextAlign.Center,
                 color = textColor,
@@ -141,16 +174,15 @@ fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
                 Spacer(Modifier.height(12.dp))
                 Text(
                     text = vm.cleanUri(session.remoteUri),
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.titleLarge.copy(shadow = textShadow),
                     color = subtitleColor
                 )
             }
 
             Spacer(Modifier.height(48.dp))
 
-            // Avatar with the same animated ripple rings as the dialing screen,
-            // shown for every incoming call (fallback avatar for unknown numbers).
-            // Hidden in full-screen photo mode — the photo is already the background.
+            // When full-screen photo is enabled, the circular avatar is hidden to avoid redundancy.
+            // When full-screen photo is disabled, the circular avatar with ripple rings is displayed.
             if (!showFullScreenPhoto) {
                 Box(
                     contentAlignment = Alignment.Center,
@@ -163,18 +195,21 @@ fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
                         size = 148.dp,
                         backgroundColor = avatarColor,
                         contentColor = Color.White,
-                        modifier = Modifier.border(3.dp, Color.White.copy(alpha = 0.7f), CircleShape)
+                        modifier = Modifier.border(3.dp, Color.White.copy(alpha = 0.85f), CircleShape)
                     )
                 }
-
                 Spacer(Modifier.height(24.dp))
             } else {
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(48.dp))
             }
 
             // Pulsing status with animated dots — matches the dialing screen's
             // "Calling / Ringing" label during the pre-connected phase.
-            PulsingStateLabel(CallState.INCOMING)
+            PulsingStateLabel(
+                state = CallState.INCOMING,
+                showShadow = showFullScreenPhoto,
+                textColor = if (showFullScreenPhoto) Color.White else null
+            )
         }
 
         if (incomingCallMode == IncomingCallMode.Slider) {

@@ -73,9 +73,6 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     private val _hasBluetoothDevice = MutableStateFlow(false)
     val hasBluetoothDevice: StateFlow<Boolean> = _hasBluetoothDevice.asStateFlow()
 
-    private val _callVolume = MutableStateFlow(com.ipdial.service.SipAudioController.DEFAULT_RX_VOLUME)
-    val callVolume: StateFlow<Float> = _callVolume.asStateFlow()
-
     private val _showFullIncomingScreen = MutableStateFlow(false)
     val showFullIncomingScreen: StateFlow<Boolean> = _showFullIncomingScreen.asStateFlow()
 
@@ -318,13 +315,8 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     fun cleanUri(uri: String): String = com.ipdial.ui.screens.cleanUri(uri)
     fun cleanDisplayName(name: String, uri: String): String = com.ipdial.ui.screens.cleanDisplayName(name, uri)
     fun syncContacts() = viewModelScope.launch { contactsRepo.syncContacts() }
-    fun findContactByNumber(number: String): Contact? = contactsRepo.findContactByNumber(number)
-    fun adjustCallVolumeByHardware(up: Boolean) {
-        val delta = if (up) 0.5f else -0.5f
-        val newVol = (_callVolume.value + delta).coerceIn(0f, 6f)
-        _callVolume.value = newVol
-        com.ipdial.service.SipAudioController.setCallVolume(newVol)
-    }
+    fun findContactByNumber(number: String, fallbackContacts: List<Contact>? = null): Contact? =
+        contactsRepo.findContactByNumber(number, fallbackContacts ?: _contacts.value)
 
     val recordingCounter: StateFlow<Int> = repo.recordingCounter
         .stateIn(viewModelScope, SharingStarted.Eagerly, 0)

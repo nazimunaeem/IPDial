@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -30,13 +31,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.ipdial.data.model.Contact
 import com.ipdial.ui.screens.clickableWithRipple
 import com.ipdial.ui.theme.glass
 
 /**
  * Unified contact avatar composable.
- * Shows contact photo if available, otherwise a colored circle with the first letter.
+ * Shows contact photo if available, otherwise a colored circle with the first letter or contact icon.
  */
 @Composable
 fun ContactAvatar(
@@ -49,6 +51,31 @@ fun ContactAvatar(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val fontSize = (size.value * 0.42f).sp
+    val isLetterInitial = name.firstOrNull()?.isLetter() == true
+    val initialText = if (isLetterInitial) name.firstOrNull()?.uppercase() ?: "" else ""
+
+    @Composable
+    fun PlaceholderContent() {
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+            if (isLetterInitial) {
+                Text(
+                    text = initialText,
+                    fontSize = fontSize,
+                    fontWeight = FontWeight.SemiBold,
+                    color = contentColor
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Default.Person,
+                    contentDescription = null,
+                    modifier = Modifier.size(size * 0.52f),
+                    tint = contentColor
+                )
+            }
+        }
+    }
+
     Box(
         modifier = modifier
             .size(size)
@@ -71,24 +98,11 @@ fun ContactAvatar(
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
-                error = {
-                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                        Text(
-                            text = name.firstOrNull()?.uppercase() ?: "?",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = contentColor
-                        )
-                    }
-                }
+                loading = { PlaceholderContent() },
+                error = { PlaceholderContent() }
             )
         } else {
-            Text(
-                text = name.firstOrNull()?.uppercase() ?: "?",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = contentColor
-            )
+            PlaceholderContent()
         }
     }
 }

@@ -22,7 +22,11 @@ import androidx.compose.ui.unit.dp
 import com.ipdial.data.model.CallState
 
 @Composable
-fun PulsingStateLabel(state: CallState, showShadow: Boolean = false) {
+fun PulsingStateLabel(
+    state: CallState,
+    showShadow: Boolean = false,
+    textColor: Color? = null
+) {
     val infiniteTransition = rememberInfiniteTransition(label = "statePulse")
 
     val alpha by infiniteTransition.animateFloat(
@@ -72,7 +76,7 @@ fun PulsingStateLabel(state: CallState, showShadow: Boolean = false) {
         else -> ""
     }
 
-    val color = when (state) {
+    val color = textColor ?: when (state) {
         CallState.INCOMING -> MaterialTheme.colorScheme.primary
         CallState.CONNECTING -> MaterialTheme.colorScheme.tertiary
         else -> MaterialTheme.colorScheme.onBackground

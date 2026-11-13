@@ -1,5 +1,7 @@
 package com.ipdial.ui.screens.home
 
+import android.content.Intent
+import android.provider.ContactsContract
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -39,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -75,8 +78,10 @@ fun CallLogItem(
     onCall: () -> Unit,
     onCopy: () -> Unit,
     onEdit: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onAddToContact: (() -> Unit)? = null
 ) {
+    val context = LocalContext.current
     var expanded by remember { mutableStateOf(false) }
     val viaLabel  = account?.label?.ifBlank { account.domain } ?: "SIP"
     val callerName = contact?.name ?: cleanDisplayName(entry.remoteDisplayName, entry.remoteUri)
@@ -168,6 +173,28 @@ fun CallLogItem(
                 text = { Text("Copy number") },
                 onClick = { expanded = false; onCopy() }
             )
+            if (contact == null) {
+                DropdownMenuItem(
+                    text = { Text("Add to contact") },
+                    onClick = {
+                        expanded = false
+                        if (onAddToContact != null) {
+                            onAddToContact()
+                        } else {
+                            val number = cleanUri(entry.remoteUri).filter { it.isDigit() || it == '+' }
+                            val intent = Intent(Intent.ACTION_INSERT).apply {
+                                type = ContactsContract.Contacts.CONTENT_TYPE
+                                putExtra(ContactsContract.Intents.Insert.PHONE, number)
+                            }
+                            try {
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                android.widget.Toast.makeText(context, "Could not open contacts app", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                )
+            }
             DropdownMenuItem(
                 text = { Text("Edit before call") },
                 onClick = { expanded = false; onEdit() }
@@ -228,6 +255,7 @@ fun CallHistoryDetailDialog(
     onCall: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val context = LocalContext.current
     val locale = LocalConfiguration.current.locales[0]
     val cleanNumber = cleanUri(selectedEntry.remoteUri)
     val displayName = contact?.name ?: selectedEntry.remoteDisplayName.ifBlank { cleanNumber }
@@ -351,8 +379,29 @@ fun CallHistoryDetailDialog(
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Close")
+            Row {
+                if (contact == null) {
+                    TextButton(
+                        onClick = {
+                            val number = cleanNumber.filter { it.isDigit() || it == '+' }
+                            val intent = android.content.Intent(android.content.Intent.ACTION_INSERT).apply {
+                                type = android.provider.ContactsContract.Contacts.CONTENT_TYPE
+                                putExtra(android.provider.ContactsContract.Intents.Insert.PHONE, number)
+                            }
+                            try {
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                android.widget.Toast.makeText(context, "Could not open contacts app", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                            onDismiss()
+                        }
+                    ) {
+                        Text("Add to contact")
+                    }
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("Close")
+                }
             }
         }
     )

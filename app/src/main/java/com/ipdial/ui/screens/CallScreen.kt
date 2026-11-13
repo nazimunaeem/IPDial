@@ -1,11 +1,13 @@
 package com.ipdial.ui.screens
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -41,7 +43,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -88,27 +94,27 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
     val account = accounts.firstOrNull { it.id == activeSession.accountId }
     val simLabel = account?.displayName ?: ""
 
-    // Contact matching logic using pre-computed index
+    // Contact matching logic using pre-computed index with contacts fallback
     val contact = remember(activeSession.remoteUri, contacts) {
         val cleanNumber = vm.cleanUri(activeSession.remoteUri)
         val cleanedSessionUriDigits = cleanNumber.filter { it.isDigit() }
         if (cleanedSessionUriDigits.length < 3) { // Only attempt contact match for numbers with at least 3 digits
             null
         } else {
-            vm.findContactByNumber(cleanNumber)
+            vm.findContactByNumber(cleanNumber, contacts)
         }
     }
     val displayName = contact?.name ?: vm.cleanDisplayName(activeSession.remoteDisplayName, activeSession.remoteUri)
 
     // Resolve the contact's hi-res photo for full-screen mode off the main
-    // thread. Full-screen is used only when the setting is ON and a hi-res
-    // photo actually exists; otherwise we keep the normal avatar display.
+    // thread. Full-screen is used only when the setting is ON and a photo
+    // exists; otherwise we keep the normal avatar display.
     val context = LocalContext.current
     var fullScreenPhotoUri by remember { mutableStateOf<android.net.Uri?>(null) }
-    LaunchedEffect(contact?.id, fullScreenPhotoEnabled) {
+    LaunchedEffect(contact?.id, contact?.photoUri, fullScreenPhotoEnabled) {
         fullScreenPhotoUri = if (contact != null && fullScreenPhotoEnabled) {
             withContext(Dispatchers.IO) {
-                com.ipdial.util.ContactPhotoUtil.resolveFullScreenUri(context, contact.id)
+                com.ipdial.util.ContactPhotoUtil.resolveFullScreenUri(context, contact.id, contact.photoUri)
             }
         } else null
     }
@@ -153,18 +159,40 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
         modifier = Modifier.fillMaxSize()
     ) {
         // Background: full-screen hi-res contact photo when enabled, else the
-        // theme background. A scrim keeps the name/status/controls readable.
+        // theme background. Includes gentle breathing zoom and contrast gradient scrim.
         if (showFullScreenPhoto) {
+            val photoTransition = rememberInfiniteTransition(label = "fullscreenPhotoZoom")
+            val photoScale by photoTransition.animateFloat(
+                initialValue = 1.0f,
+                targetValue = 1.06f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(durationMillis = 5000, easing = FastOutSlowInEasing),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "photoScale"
+            )
+
             coil.compose.AsyncImage(
                 model = fullScreenPhotoUri,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer(scaleX = photoScale, scaleY = photoScale)
             )
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.38f))
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                Color.Black.copy(alpha = 0.65f),
+                                Color.Black.copy(alpha = 0.35f),
+                                Color.Black.copy(alpha = 0.55f),
+                                Color.Black.copy(alpha = 0.82f)
+                            )
+                        )
+                    )
             )
         } else {
             Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
@@ -365,8 +393,14 @@ private fun CallHeader(
         AudioDeviceMode.EARPIECE -> "Earpiece"
     }
 
-    // Full-screen photo mode: the rounded avatar card behind the contact photo is
-    // intentionally not rendered — the photo is already the whole background.
+    // In full-screen photo mode, the circular avatar is hidden to avoid redundancy
+    // with the full-screen photo background. Text shadow ensures legibility on any image.
+    val textShadow = if (photoMode) Shadow(
+        color = Color.Black.copy(alpha = 0.85f),
+        offset = Offset(0f, 2f),
+        blurRadius = 6f
+    ) else null
+
     val headerContent: @Composable () -> Unit = {
         Column(
             verticalArrangement = Arrangement.Center,
@@ -374,7 +408,11 @@ private fun CallHeader(
             modifier = Modifier.fillMaxWidth()
         ) {
             if (simLabel.isNotBlank()) {
-                Text(simLabel, style = MaterialTheme.typography.labelLarge, color = subtitleColor)
+                Text(
+                    simLabel,
+                    style = MaterialTheme.typography.labelLarge.copy(shadow = textShadow),
+                    color = subtitleColor
+                )
                 Spacer(Modifier.height(4.dp))
             }
 
@@ -402,52 +440,71 @@ private fun CallHeader(
                         size = avatarSize,
                         backgroundColor = avatarColor,
                         contentColor = Color.White,
-                        modifier = Modifier.border(if (compact) 2.dp else 3.dp, Color.White.copy(alpha = 0.7f), CircleShape)
+                        modifier = Modifier.border(if (compact) 2.dp else 3.dp, Color.White.copy(alpha = 0.85f), CircleShape)
                     )
                 }
-
                 Spacer(Modifier.height(if (compact) 6.dp else 10.dp))
             } else {
-                Spacer(Modifier.height(if (compact) 12.dp else 28.dp))
+                Spacer(Modifier.height(if (compact) 12.dp else 24.dp))
             }
+
             Text(
                 text = displayName,
-                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
+                style = MaterialTheme.typography.headlineSmall.copy(
+                    fontWeight = FontWeight.SemiBold,
+                    shadow = textShadow
+                ),
                 color = textColor,
                 textAlign = TextAlign.Center,
                 maxLines = 1,
                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
             )
             if (number.isNotBlank() && displayName != number) {
-                Text(number, style = MaterialTheme.typography.bodyMedium, color = subtitleColor)
+                Text(
+                    number,
+                    style = MaterialTheme.typography.bodyMedium.copy(shadow = textShadow),
+                    color = subtitleColor
+                )
             }
             Spacer(Modifier.height(8.dp))
             if (isActive) {
-                Text(formatDuration(elapsedSeconds), style = if (compact) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineMedium, color = textColor, fontWeight = FontWeight.Bold)
-                Text("Connected  •  $routeLabel", style = MaterialTheme.typography.labelMedium, color = subtitleColor)
+                Text(
+                    formatDuration(elapsedSeconds),
+                    style = (if (compact) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineMedium).copy(
+                        fontWeight = FontWeight.Bold,
+                        shadow = textShadow
+                    ),
+                    color = textColor
+                )
+                Text(
+                    "Connected  •  $routeLabel",
+                    style = MaterialTheme.typography.labelMedium.copy(shadow = textShadow),
+                    color = subtitleColor
+                )
             } else {
-                PulsingStateLabel(state)
+                PulsingStateLabel(
+                    state = state,
+                    showShadow = photoMode,
+                    textColor = if (photoMode) Color.White else null
+                )
             }
         }
     }
 
-    if (photoMode) {
-        headerContent()
-    } else {
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp),
-            shape = RoundedCornerShape(28.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
-            tonalElevation = 4.dp
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp),
+        shape = RoundedCornerShape(28.dp),
+        color = if (photoMode) Color.Black.copy(alpha = 0.48f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
+        border = if (photoMode) BorderStroke(1.dp, Color.White.copy(alpha = 0.22f)) else null,
+        tonalElevation = if (photoMode) 0.dp else 4.dp
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = if (compact) 12.dp else 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Column(
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                headerContent()
-            }
+            headerContent()
         }
     }
 }

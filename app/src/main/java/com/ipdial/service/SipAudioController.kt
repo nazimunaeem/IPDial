@@ -18,12 +18,10 @@ object SipAudioController {
     const val MIC_GAIN_EMULATOR = 2.5f
 
     /**
-     * Default in-app listening volume on the 0..6 volume-bar scale. Set to the
-     * top of the range so a fresh/receiving call is audible out of the box:
-     * the received signal is only as loud as the PJSIP RX gain times the OS
-     * voice stream, and real-world reports showed unity gain (1.0) was too quiet
-     * to hear until the user raised the in-app volume. Mapping 6f -> 2.0x via
-     * [callVolumeToPjsipLevel] restores the audible level immediately on answer.
+     * Fixed default PJSIP RX bridge gain applied at call start. Set to 6f (maps to
+     * 2.0x via [callVolumeToPjsipLevel]) so a fresh call is clear and audible out of the
+     * box, while the phone's native STREAM_VOICE_CALL volume controls the full physical
+     * volume range via the default system volume slider.
      */
     const val DEFAULT_RX_VOLUME = 6f
 

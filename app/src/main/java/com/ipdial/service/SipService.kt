@@ -61,6 +61,17 @@ class SipService : Service() {
                 }
             }
         }
+
+        fun silenceRinger(context: Context) {
+            val intent = Intent(context, SipService::class.java).apply {
+                action = ACTION_SILENCE_RINGER
+            }
+            try {
+                context.startService(intent)
+            } catch (e: Exception) {
+                Log.e("SipService", "Unable to silence ringer", e)
+            }
+        }
     }
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -301,6 +312,12 @@ class SipService : Service() {
             }
             "ACTION_STOP_BANNER" -> {
                 cancelIncomingNotification(this)
+            }
+            ACTION_SILENCE_RINGER -> {
+                Log.d("SipService", "ACTION_SILENCE_RINGER: silencing ringtone and vibration")
+                if (::ringtonePlayer.isInitialized) {
+                    ringtonePlayer.stopRingtone()
+                }
             }
             ACTION_SET_AUDIO_DEVICE -> {
                 val mode = intent.getStringExtra("mode") ?: AudioDeviceMode.EARPIECE.name
