@@ -45,11 +45,13 @@ android {
                 keyPassword keystoreProperties['KEY_PASSWORD']
             }
         }
-        debugConfig {
-            storeFile file("${rootDir}/debug.keystore")
-            storePassword "android"
-            keyAlias "androiddebugkey"
-            keyPassword "android"
+        if (file("${rootDir}/debug.keystore").exists()) {
+            debugConfig {
+                storeFile file("${rootDir}/debug.keystore")
+                storePassword "android"
+                keyAlias "androiddebugkey"
+                keyPassword "android"
+            }
         }
     }
 
@@ -72,7 +74,9 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
         debug {
-            signingConfig signingConfigs.debugConfig
+            if (file("${rootDir}/debug.keystore").exists()) {
+                signingConfig signingConfigs.debugConfig
+            }
             minifyEnabled false
             debuggable true
         }
