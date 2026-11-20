@@ -108,7 +108,7 @@ fun InCallDialpad(vm: SipViewModel, onHide: () -> Unit) {
                                 .clip(RoundedCornerShape(50))
                                 .clickableNoRipple {
                                     dtmfString += digit
-                                    vm.dialPad(digit[0])
+                                    vm.sendDtmf(digit[0])
                                 }
                         ) {
                             Box(contentAlignment = Alignment.Center) {

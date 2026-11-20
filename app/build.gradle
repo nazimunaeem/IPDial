@@ -2,8 +2,6 @@ plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.plugin.compose'
     id 'com.google.devtools.ksp'
-    id 'com.google.gms.google-services'
-    id 'com.google.firebase.crashlytics'
 }
 
 android {
@@ -13,23 +11,13 @@ android {
         applicationId "com.ipdial"
         minSdk 26
         targetSdk 35
-        versionCode 32
-        versionName "1.2.1"
+        versionCode 33
+        versionName "1.2.2"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary true
         }
         resConfigs "en"
-    }
-
-    // ABI splits to keep APK small — users get only the native lib for their CPU
-    splits {
-        abi {
-            enable true
-            reset()
-            include "arm64-v8a", "armeabi-v7a"
-            universalApk true
-        }
     }
 
     def keystorePropertiesFile = rootProject.file("keystore.properties")
@@ -57,13 +45,19 @@ android {
                 keyPassword keystoreProperties['KEY_PASSWORD']
             }
         }
+        debugConfig {
+            storeFile file("${rootDir}/debug.keystore")
+            storePassword "android"
+            keyAlias "androiddebugkey"
+            keyPassword "android"
+        }
     }
 
     // Task to copy and timestamp the signed APK to ~/Downloads
     tasks.register('copySignedApk', Copy) {
         dependsOn 'assembleRelease'
         from 'build/outputs/apk/release/'
-        include 'app-universal-release.apk'
+        include 'app-release.apk'
         into System.getProperty("user.home") + "/Downloads/"
         rename { String filename ->
             "IPDial-v${android.defaultConfig.versionName}-${new Date().format('yyyyMMdd-HHmm')}-signed.apk"
@@ -78,6 +72,7 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
         debug {
+            signingConfig signingConfigs.debugConfig
             minifyEnabled false
             debuggable true
         }
@@ -136,10 +131,6 @@ configurations.configureEach {
 }
 
 dependencies {
-    // Firebase
-    implementation platform('com.google.firebase:firebase-bom:34.15.0')
-    implementation 'com.google.firebase:firebase-crashlytics'
-
     // Compose BOM
     implementation platform('androidx.compose:compose-bom:2026.06.00')
 

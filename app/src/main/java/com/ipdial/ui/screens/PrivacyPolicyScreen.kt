@@ -30,12 +30,6 @@ fun PrivacyPolicyScreen(
     Scaffold(
         topBar = {
             IPDialTopBar(accounts = accounts, vm = vm, title = "Privacy Policy", onBack = onBack)
-        },
-        bottomBar = {
-            com.ipdial.ui.components.StartIoBanner(
-                vm = vm,
-                modifier = Modifier.fillMaxWidth().padding(8.dp)
-            )
         }
     ) { padding ->
         Column(
@@ -57,33 +51,28 @@ fun PrivacyPolicyScreen(
             
             PrivacySection(
                 title = "Information Collection",
-                content = "IPDial collects limited information needed for app features and Pro synchronization, including a device identifier, your email address for Pro registration, and, when used, your Google account identifier."
+                content = "IPDial runs locally on your device without requiring an account or cloud sign-in. SIP account settings, call logs, and recordings stay on your device."
             )
             
             PrivacySection(
                 title = "Permissions",
-                content = "Microphone access enables calls, Contacts access displays your phonebook, and Phone state access helps manage call status. Notifications may be used for call and service alerts."
+                content = "Microphone access enables VoIP calls, Contacts access displays your phonebook and caller names/photos, and Phone State / Telecom permissions manage active call routing. Notifications are used for incoming and ongoing call alerts."
             )
             
             PrivacySection(
                 title = "Data Security",
-                content = "SIP credentials and call logs remain on your device. Email, Pro points, and expiration data may be synchronized through Firebase. IPDial does not upload or store SIP passwords in Firestore."
+                content = "SIP credentials, call logs, and call recordings are stored locally in app-private storage on your device and are only sent to your configured SIP server when registering or placing calls."
             )
 
             PrivacySection(
-                title = "Google Sign-In and Pro Management",
-                content = "Google Sign-In is optional and associates your Pro points and expiration date with your account. Firebase handles authentication; IPDial never receives or stores your Google password."
-            )
-
-            PrivacySection(
-                title = "Third-Party Services",
-                content = "The free version uses Start.io for advertisements. Start.io may process device or usage information for advertising and measurement under its own privacy policy."
+                title = "Network & Update Checks",
+                content = "IPDial connects directly to your configured SIP provider (and optional STUN/TURN servers). Checking for app updates fetches public release metadata from GitHub."
             )
             
             Spacer(Modifier.height(32.dp))
             
             Text(
-                text = "Last updated September, 2026",
+                text = "Last updated November, 2026",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.outline,
                 modifier = Modifier.fillMaxWidth()
@@ -92,6 +81,7 @@ fun PrivacyPolicyScreen(
             Spacer(Modifier.height(8.dp))
 
             val uriHandler = LocalUriHandler.current
+            val context = androidx.compose.ui.platform.LocalContext.current
             Text(
                 text = "View full privacy policy on GitHub",
                 style = MaterialTheme.typography.bodySmall,
@@ -100,7 +90,11 @@ fun PrivacyPolicyScreen(
                 modifier = Modifier.fillMaxWidth()
                     .padding(vertical = 4.dp)
                     .clickable {
-                        uriHandler.openUri("https://github.com/nazimunaeem/IPDial/blob/main/privacy_policy.md")
+                        try {
+                            uriHandler.openUri("https://github.com/nazimunaeem/IPDial/blob/main/privacy_policy.md")
+                        } catch (_: Exception) {
+                            android.widget.Toast.makeText(context, "No browser app found", android.widget.Toast.LENGTH_SHORT).show()
+                        }
                     }
             )
             

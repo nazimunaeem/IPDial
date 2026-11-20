@@ -29,19 +29,36 @@ import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.AnnotatedString
 
-fun cleanUri(uri: String): String =
-    uri.replace("<", "").replace(">", "").removePrefix("sip:")
-        .substringBefore("@")
-        .substringBefore(";")
+fun cleanUri(uri: String): String {
+    val trimmed = uri.trim()
+    val inBrackets = if (trimmed.contains("<") && trimmed.contains(">")) {
+        trimmed.substringAfter("<").substringBefore(">")
+    } else {
+        trimmed
+    }
+    var s = inBrackets.trim()
+    when {
+        s.startsWith("sip:", ignoreCase = true) -> s = s.substring(4)
+        s.startsWith("sips:", ignoreCase = true) -> s = s.substring(5)
+        s.startsWith("tel:", ignoreCase = true) -> s = s.substring(4)
+        s.startsWith("ipdial:", ignoreCase = true) -> s = s.substring(7)
+    }
+    return s.substringBefore("@").substringBefore(";").trim()
+}
 
 fun cleanDisplayName(name: String, uri: String): String {
     val cleanedName = name.replace("\"", "").trim()
-    if (cleanedName.isEmpty() || cleanedName.startsWith("sip:") || cleanedName.startsWith("<sip:")) {
+    if (cleanedName.isEmpty() ||
+        cleanedName.startsWith("sip:", ignoreCase = true) ||
+        cleanedName.startsWith("sips:", ignoreCase = true) ||
+        cleanedName.startsWith("<sip:", ignoreCase = true) ||
+        cleanedName.startsWith("<sips:", ignoreCase = true)
+    ) {
         return cleanUri(uri)
     }
     // If it's "Name" <sip:123@domain>, extract Name
-    if (cleanedName.contains("<sip:")) {
-        return cleanedName.substringBefore("<").trim()
+    if (cleanedName.contains("<sip:", ignoreCase = true) || cleanedName.contains("<sips:", ignoreCase = true)) {
+        return cleanedName.substringBefore("<").trim().ifBlank { cleanUri(uri) }
     }
     return cleanedName
 }
@@ -76,6 +93,7 @@ fun Char.uppercaseCharCompat(): String = this.uppercaseChar().toString()
  */
 fun formatDisplayNumber(raw: String): String {
     if (raw.isEmpty()) return ""
+    if (raw.any { it.isLetter() || it == '@' }) return raw
     // Allow digits, +, *, and #
     val digits = raw.filter { it.isDigit() || it == '+' || it == '*' || it == '#' }
     if (digits.isEmpty()) return ""

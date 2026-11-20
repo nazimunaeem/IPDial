@@ -396,10 +396,12 @@ class MainActivity : ComponentActivity() {
         )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             required.add(Manifest.permission.POST_NOTIFICATIONS)
-            required.add(Manifest.permission.READ_MEDIA_AUDIO)
         }
         val missing = required.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) {
+            vm.syncContacts()
         }
         if (missing.isNotEmpty()) permissionsLauncher.launch(missing.toTypedArray())
 
@@ -563,8 +565,14 @@ fun UpdateCheckDialog() {
             },
             confirmButton = {
                 Button(onClick = {
-                    val intent = Intent(Intent.ACTION_VIEW, updateRelease?.htmlUrl?.toUri())
-                    context.startActivity(intent)
+                    val url = updateRelease?.htmlUrl
+                    if (!url.isNullOrBlank()) {
+                        try {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
+                        } catch (_: Exception) {
+                            android.widget.Toast.makeText(context, "No browser app found", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
                     updateRelease = null
                 }) { Text("Download") }
             },

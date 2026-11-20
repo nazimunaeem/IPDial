@@ -3,22 +3,27 @@ package com.ipdial.ui.screens
 import android.content.Intent
 import android.media.MediaPlayer
 import android.os.Environment
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -57,7 +62,7 @@ fun RecordingsScreen(
     val accounts by vm.accounts.collectAsState()
     
     val internalDir = File(context.filesDir, "recordings") // Keep for legacy cleanup
-    val externalDir = File(context.getExternalFilesDir(Environment.DIRECTORY_MUSIC), "IPDialRecordings")
+    val externalDir = com.ipdial.service.RecordingManager.recordingsFolder(context)
 
     var recordings by remember { mutableStateOf<List<File>>(emptyList()) }
     
@@ -91,12 +96,34 @@ fun RecordingsScreen(
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             if (recordings.isEmpty()) {
-                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    Text("No recordings found", color = MaterialTheme.colorScheme.outline)
+                Box(Modifier.weight(1f).fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.GraphicEq,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
+                            modifier = Modifier.size(48.dp)
+                        )
+                        Text(
+                            text = "No recordings yet",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "Tap Record during a call or enable Auto-Record in Settings.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
                 }
             } else {
                 LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
-                    items(recordings) { file ->
+                    items(recordings, key = { it.absolutePath }) { file ->
                         RecordingItem(
                             file = file,
                             isPlaying = playingFile == file,
@@ -181,31 +208,43 @@ fun RecordingItem(file: File, isPlaying: Boolean, onPlay: () -> Unit, onDelete: 
 
     Surface(
         modifier = Modifier.fillMaxWidth().clickableWithRipple { onPlay() },
-        color = MaterialTheme.colorScheme.surface
-    ) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary
-            )
-            Spacer(Modifier.width(16.dp))
-            Column(Modifier.weight(1f)) {
-                Text(file.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-                Text("$dateStr • $sizeStr", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            
-            IconButton(onClick = onShare) {
-                Icon(Icons.Default.Share, "Share", tint = MaterialTheme.colorScheme.primary)
-            }
-
-            IconButton(onClick = onDelete) {
-                Icon(Icons.Default.Delete, "Delete", tint = MaterialTheme.colorScheme.error)
-            }
+        color = if (isPlaying) {
+            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+        } else {
+            MaterialTheme.colorScheme.surface
         }
-        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Column {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    contentDescription = if (isPlaying) "Pause recording" else "Play recording",
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(Modifier.width(16.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(file.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                    Text("$dateStr • $sizeStr", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+
+                IconButton(
+                    onClick = onShare,
+                    modifier = Modifier.minimumInteractiveComponentSize()
+                ) {
+                    Icon(Icons.Default.Share, "Share recording", tint = MaterialTheme.colorScheme.primary)
+                }
+
+                IconButton(
+                    onClick = onDelete,
+                    modifier = Modifier.minimumInteractiveComponentSize()
+                ) {
+                    Icon(Icons.Default.Delete, "Delete recording", tint = MaterialTheme.colorScheme.error)
+                }
+            }
+            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant)
+        }
     }
 }

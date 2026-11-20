@@ -65,7 +65,19 @@ fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
         val cleanNumber = vm.cleanUri(session.remoteUri)
         vm.findContactByNumber(cleanNumber, contacts)
     }
-    val displayName = contact?.name ?: vm.cleanDisplayName(session.remoteDisplayName, session.remoteUri)
+    var fallbackContact by remember(session.remoteUri) { mutableStateOf<com.ipdial.data.model.Contact?>(null) }
+    LaunchedEffect(session.remoteUri, contact) {
+        if (contact == null) {
+            val cleanNumber = vm.cleanUri(session.remoteUri)
+            if (cleanNumber.count { it.isDigit() } >= 3) {
+                fallbackContact = vm.lookupDeviceContact(cleanNumber)
+            }
+        } else {
+            fallbackContact = null
+        }
+    }
+    val resolvedContact = contact ?: fallbackContact
+    val displayName = resolvedContact?.name ?: vm.cleanDisplayName(session.remoteDisplayName, session.remoteUri)
 
     // Fallback avatar color derived from the caller's name — same palette as the dialing screen.
     val avatarColors = listOf(
@@ -82,10 +94,10 @@ fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
     // Full-screen shows only when the setting is ON and a photo exists.
     val context = LocalContext.current
     var fullScreenPhotoUri by remember { mutableStateOf<android.net.Uri?>(null) }
-    LaunchedEffect(contact?.id, contact?.photoUri, fullScreenPhotoEnabled) {
-        fullScreenPhotoUri = if (contact != null && fullScreenPhotoEnabled) {
+    LaunchedEffect(resolvedContact?.id, resolvedContact?.photoUri, fullScreenPhotoEnabled) {
+        fullScreenPhotoUri = if (resolvedContact != null && fullScreenPhotoEnabled) {
             withContext(Dispatchers.IO) {
-                com.ipdial.util.ContactPhotoUtil.resolveFullScreenUri(context, contact.id, contact.photoUri)
+                com.ipdial.util.ContactPhotoUtil.resolveFullScreenUri(context, resolvedContact.id, resolvedContact.photoUri)
             }
         } else null
     }
@@ -191,7 +203,7 @@ fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
                     IncomingRippleRings()
                     com.ipdial.ui.components.ContactAvatar(
                         name = displayName,
-                        photoUri = contact?.photoUri,
+                        photoUri = resolvedContact?.photoUri,
                         size = 148.dp,
                         backgroundColor = avatarColor,
                         contentColor = Color.White,

@@ -61,6 +61,13 @@ enum class RegStatus {
     ERROR
 }
 
+data class RegistrationEvent(
+    val accountId: String,
+    val status: RegStatus,
+    val statusCode: Int,
+    val reason: String = ""
+)
+
 data class CallSession(
     val callId: Int = -1,
     val accountId: String = "",

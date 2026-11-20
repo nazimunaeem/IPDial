@@ -372,8 +372,15 @@ class SipCallDelegate(
                 if (newState == CallState.CONFIRMED) {
                     log("ONCALLSTATE: Call confirmed, ensuring audio path is active", false)
                     // A recording armed during dialing starts now that the call is
-                    // received: clear the pending flag so the UI shows "Recording".
-                    _callSession.value = _callSession.value?.copy(isRecordingPending = false)
+                    // received: promote pending state to active recording if recorder exists.
+                    _callSession.value?.let { cur ->
+                        if (cur.isRecordingPending) {
+                            _callSession.value = cur.copy(
+                                isRecording = SipEngine.recorder != null,
+                                isRecordingPending = false
+                            )
+                        }
+                    }
                     try {
                         // Restarting the sound device at CONFIRMED time is essential:
                         // during EARLY→CONFIRMED the Android audio framework may re-route

@@ -61,6 +61,12 @@ class SipRingtonePlayer(
 
         ringtoneJob = scope.launch {
             try {
+                val dndEnabled = repo.dndEnabled.first()
+                if (dndEnabled || SipEngine.isDndActive()) {
+                    Log.d(TAG, "DND active (repo=$dndEnabled), aborting ringtone/vibration")
+                    withContext(Dispatchers.Main) { stopRingtone() }
+                    return@launch
+                }
                 val ringtoneUriStr = repo.globalRingtone.first()
                 val vibrateEnabled = repo.globalVibrate.first()
 
@@ -119,7 +125,11 @@ class SipRingtonePlayer(
                         }
                     }
 
-                    if (vibrateEnabled || ringerMode == AudioManager.RINGER_MODE_VIBRATE || ringerMode == AudioManager.RINGER_MODE_SILENT) {
+                    val shouldVibrate = vibrator?.hasVibrator() == true && (
+                        ringerMode == AudioManager.RINGER_MODE_VIBRATE ||
+                            (vibrateEnabled && ringerMode != AudioManager.RINGER_MODE_SILENT)
+                        )
+                    if (shouldVibrate) {
                         val effect = VibrationEffect.createWaveform(longArrayOf(0, 800, 600), 0)
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                             vibrator?.vibrate(
@@ -127,7 +137,13 @@ class SipRingtonePlayer(
                                 VibrationAttributes.createForUsage(VibrationAttributes.USAGE_RINGTONE)
                             )
                         } else {
-                            vibrator?.vibrate(effect)
+                            @Suppress("DEPRECATION")
+                            val attrs = android.media.AudioAttributes.Builder()
+                                .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                                .build()
+                            @Suppress("DEPRECATION")
+                            vibrator?.vibrate(effect, attrs)
                         }
                     }
                 }

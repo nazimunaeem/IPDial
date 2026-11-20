@@ -184,11 +184,12 @@ object SipEngine {
         _confirmedAudioRoute.value = route
     }
 
-    internal val _registrationEvents = MutableSharedFlow<Triple<String, RegStatus, Int>>(
-        replay = 1,
+    internal val _registrationEvents = MutableSharedFlow<RegistrationEvent>(
+        replay = 0,
+        extraBufferCapacity = 16,
         onBufferOverflow = BufferOverflow.DROP_OLDEST
     )
-    val registrationEvents: SharedFlow<Triple<String, RegStatus, Int>> = _registrationEvents.asSharedFlow()
+    val registrationEvents: SharedFlow<RegistrationEvent> = _registrationEvents.asSharedFlow()
 
     @Volatile
     var onIncomingCall: ((CallSession) -> Unit)? = null
@@ -409,7 +410,8 @@ object SipEngine {
                         isLibraryLoaded = true
                         log("#$callId: Native library pjsua2 loaded")
                     } catch (e: Throwable) {
-                        log("#$callId: Failed to load pjsua2: ${e.message}", true)
+                        log("#$callId: Failed to load pjsua2 (ABIs=${Build.SUPPORTED_ABIS.joinToString()}): ${e.message}", true)
+                        return
                     }
                 }
 
@@ -733,6 +735,10 @@ object SipEngine {
             }
         } catch (e: Throwable) {
             log("addAccount failed: ${e.message}", true)
+            _registrationEvents.tryEmit(
+                RegistrationEvent(account.id, RegStatus.ERROR, 0, e.message ?: "Account setup failed")
+            )
+            return false
         }
         return true
     }
@@ -903,6 +909,7 @@ object SipEngine {
                 } catch (e: Throwable) {
                     log("startRecording failed: ${e.message}", true)
                     recorder = null
+                    _callSession.value = _callSession.value?.copy(isRecording = false, isRecordingPending = false)
                 }
             }
         }
@@ -1000,14 +1007,14 @@ object SipEngine {
         }
     }
 
-    fun makeCall(accountId: String, destination: String): Boolean {
+    fun makeCall(accountId: String, destination: String, remoteDisplayName: String = ""): Boolean {
         return runOnPjsipThreadAndWait {
             registerCurrentThreadEx()
-            makeCallOnThread(accountId, destination)
+            makeCallOnThread(accountId, destination, remoteDisplayName)
         } ?: false
     }
 
-    private fun makeCallOnThread(accountId: String, destination: String): Boolean {
+    private fun makeCallOnThread(accountId: String, destination: String, remoteDisplayName: String = ""): Boolean {
         return try {
             // GUARD: never place a second INVITE while a call session is already
             // active. Direct-to-engine calls (Telecom 3s fallback) and late Telecom
@@ -1046,6 +1053,7 @@ object SipEngine {
                 callId = -1,
                 accountId = accountId,
                 remoteUri = destUri,
+                remoteDisplayName = remoteDisplayName,
                 direction = CallDirection.OUTGOING,
                 state = CallState.CALLING
             )
@@ -1560,20 +1568,65 @@ object SipEngine {
         }
     }
 
-    private fun formatSipUri(destination: String, accountId: String? = null): String {
-        if (destination.startsWith("sip:") && destination.contains("@")) return destination
+    fun formatDialUri(destination: String, account: SipAccount?): String {
+        val trimmed = destination.trim()
+        val transportSuffix = when (account?.transport) {
+            Transport.TCP -> ";transport=tcp"
+            Transport.TLS -> ";transport=tls"
+            else -> ""
+        }
+        if ((trimmed.startsWith("sip:", ignoreCase = true) || trimmed.startsWith("sips:", ignoreCase = true)) &&
+            trimmed.contains("@")
+        ) {
+            val cleanedFull = trimmed.filter { !it.isWhitespace() }
+            return if (!cleanedFull.contains("transport=", ignoreCase = true) && transportSuffix.isNotEmpty()) {
+                cleanedFull + transportSuffix
+            } else {
+                cleanedFull
+            }
+        }
+        if (trimmed.contains("@") && !trimmed.contains(" ")) {
+            val noPrefix = trimmed.removePrefix("sip:").removePrefix("sips:")
+            val base = "sip:$noPrefix"
+            return if (!base.contains("transport=", ignoreCase = true) && transportSuffix.isNotEmpty()) {
+                base + transportSuffix
+            } else {
+                base
+            }
+        }
 
-        val cleanDestination = destination.removePrefix("sip:").substringBefore("@")
-        val number = cleanDestination
+        var rawNumber = trimmed
+            .replace("<", "")
+            .replace(">", "")
+        when {
+            rawNumber.startsWith("sip:", ignoreCase = true) -> rawNumber = rawNumber.substring(4)
+            rawNumber.startsWith("sips:", ignoreCase = true) -> rawNumber = rawNumber.substring(5)
+            rawNumber.startsWith("tel:", ignoreCase = true) -> rawNumber = rawNumber.substring(4)
+        }
+        rawNumber = rawNumber.substringBefore("@").substringBefore(";").trim()
+        val number = if (rawNumber.none { it.isLetter() }) {
+            rawNumber.filter { !it.isWhitespace() && it != '-' && it != '(' && it != ')' && it != '.' }
+        } else {
+            rawNumber.filter { !it.isWhitespace() && it != '(' && it != ')' }
+        }
 
-        val targetAccountId = accountId ?: _callSession.value?.accountId
-        val domain = if (targetAccountId != null) accountConfigs[targetAccountId]?.domain else null
-
-        return if (!domain.isNullOrBlank()) {
-            "sip:$number@$domain"
+        val domain = account?.domain?.trim()?.removePrefix("sip:")?.removePrefix("sips:") ?: ""
+        return if (domain.isNotBlank()) {
+            val hostWithPort = if (account?.port != null && account.port > 0 && !domain.contains(":")) {
+                "$domain:${account.port}"
+            } else {
+                domain
+            }
+            "sip:$number@$hostWithPort$transportSuffix"
         } else {
             "sip:$number"
         }
+    }
+
+    private fun formatSipUri(destination: String, accountId: String? = null): String {
+        val targetAccountId = accountId ?: _callSession.value?.accountId
+        val account = if (targetAccountId != null) accountConfigs[targetAccountId] else null
+        return formatDialUri(destination, account)
     }
 
     // ── Server Inspection helpers ────────────────────────────────────

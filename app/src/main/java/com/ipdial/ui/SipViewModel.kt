@@ -145,7 +145,23 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         }
         filtered.groupBy { it.name.firstOrNull()?.uppercaseChar() ?: '#' }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
-    val mostCalledContacts: StateFlow<List<Contact>> = MutableStateFlow(emptyList())
+    val mostCalledContacts: StateFlow<List<Contact>> = combine(logRepo.entries, contactsRepo.allContacts) { logs, contactList ->
+        if (logs.isEmpty() || contactList.isEmpty()) {
+            emptyList()
+        } else {
+            val counts = mutableMapOf<String, Int>()
+            for (entry in logs) {
+                val c = contactsRepo.findContactByNumber(com.ipdial.ui.screens.cleanUri(entry.remoteUri), contactList)
+                if (c != null) {
+                    counts[c.id] = (counts[c.id] ?: 0) + 1
+                }
+            }
+            counts.entries
+                .sortedByDescending { it.value }
+                .take(5)
+                .mapNotNull { entry -> contactList.find { it.id == entry.key } }
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     fun onSearchQueryChanged(q: String) {
         _searchQuery.value = q
@@ -248,7 +264,7 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
             )
             RegStatus.ERROR -> com.ipdial.data.model.RegisterResult(
                 status = InspectStatus.FAIL,
-                statusText = "Registration Error (Auth / Timeout)",
+                statusText = account.regStatusText.ifBlank { "Registration Error (Auth / Timeout)" },
                 transport = account.transport.name
             )
             else -> com.ipdial.data.model.RegisterResult(
@@ -307,16 +323,55 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
     fun answerCall() { val session = callSession.value; if (session != null) SipEngine.answerCall(session.callId) }
-    fun proceedWithCallAfterAccountSelection(accountId: String) { selectAccount(accountId); makeCall() }
-    fun dismissAccountSelection() { _showAccountSelectionDialog.value = false }
+    fun proceedWithCallAfterAccountSelection(accountId: String) {
+        _showAccountSelectionDialog.value = false
+        val num = _pendingCallNumber.value
+        _pendingCallNumber.value = null
+        selectAccount(accountId)
+        makeCall(num)
+    }
+    fun dismissAccountSelection() {
+        _pendingCallNumber.value = null
+        _showAccountSelectionDialog.value = false
+    }
     fun backspace() { dialBackspace() }
-    fun updateBluetoothAvailability() {}
-    fun toggleRecording() {}
+
+    fun updateBluetoothAvailability() {
+        val am = getApplication<Application>().getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val hasBt = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            am.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any {
+                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            am.isBluetoothScoAvailableOffCall
+        }
+        _hasBluetoothDevice.value = hasBt
+    }
+
+    fun toggleRecording() {
+        val session = callSession.value ?: return
+        if (session.isRecording || session.isRecordingPending) {
+            com.ipdial.service.RecordingManager.stopRecording()
+        } else if (session.state == CallState.CONFIRMED) {
+            com.ipdial.service.RecordingManager.startRecording(getApplication(), session)
+        } else {
+            val file = com.ipdial.service.RecordingManager.nextRecordingFile(getApplication(), session)
+            SipAudioController.startRecordingWhenActive(file.absolutePath)
+        }
+    }
+
+    fun sendDtmf(digit: Char) {
+        SipAudioController.sendDtmf(digit)
+    }
+
     fun cleanUri(uri: String): String = com.ipdial.ui.screens.cleanUri(uri)
     fun cleanDisplayName(name: String, uri: String): String = com.ipdial.ui.screens.cleanDisplayName(name, uri)
     fun syncContacts() = viewModelScope.launch { contactsRepo.syncContacts() }
     fun findContactByNumber(number: String, fallbackContacts: List<Contact>? = null): Contact? =
         contactsRepo.findContactByNumber(number, fallbackContacts ?: _contacts.value)
+    suspend fun lookupDeviceContact(number: String): Contact? =
+        contactsRepo.lookupDeviceContactByNumber(number)
 
     val recordingCounter: StateFlow<Int> = repo.recordingCounter
         .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
@@ -436,10 +491,20 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
             contactsRepo.allContacts.collect { _contacts.value = it }
         }
         viewModelScope.launch {
+            SipEngine.confirmedAudioRoute.collect { route ->
+                if (route != null) {
+                    _audioDeviceMode.value = route
+                }
+            }
+        }
+        viewModelScope.launch {
             callSession.map { it == null }.distinctUntilChanged().collect { isNull ->
                 if (isNull) {
                     _isEndingCall.value = false
                     _dialString.value = TextFieldValue("")
+                    _audioDeviceMode.value = AudioDeviceMode.EARPIECE
+                } else {
+                    updateBluetoothAvailability()
                 }
             }
         }
@@ -488,9 +553,21 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
 
     fun selectAccount(id: String) { _selectedAccountId.value = id }
 
+    private fun isNetworkConnected(): Boolean {
+        val cm = getApplication<Application>().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val active = cm.activeNetwork ?: return false
+        val caps = cm.getNetworkCapabilities(active) ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }
+
     fun makeCall(overrideNumber: String? = null) {
         val rawInput = (overrideNumber ?: _dialString.value.text).trim()
         if (rawInput.isBlank()) return
+
+        if (!isNetworkConnected()) {
+            Toast.makeText(getApplication(), "No internet connection", Toast.LENGTH_SHORT).show()
+            return
+        }
 
         val enabledAccounts = accounts.value.filter { it.isEnabled }
         if (enabledAccounts.isEmpty()) {
@@ -505,21 +582,30 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         }
 
         val account = activeAccount.value ?: enabledAccounts.first()
-        val finalUri = if (rawInput.contains("@")) rawInput else "sip:$rawInput@${account.domain}"
+        if (account.regStatus == RegStatus.ERROR &&
+            (account.regStatusText.contains("403") || account.regStatusText.contains("401") || account.regStatusText.contains("Ip not allowed", ignoreCase = true))
+        ) {
+            Toast.makeText(getApplication(), account.regStatusText, Toast.LENGTH_LONG).show()
+            return
+        }
 
-        // Log outgoing call immediately so unanswered outgoing calls are saved in recent history
-        logCall(
-            CallLogEntry(
-                remoteUri = finalUri,
-                remoteDisplayName = cleanDisplayName(cleanUri(finalUri), finalUri),
-                direction = com.ipdial.data.model.CallDirection.OUTGOING,
-                timestampMs = System.currentTimeMillis(),
-                durationSeconds = 0
-            )
-        )
+        val finalUri = SipEngine.formatDialUri(rawInput, account)
 
         viewModelScope.launch(Dispatchers.IO) {
-            SipEngine.makeCall(account.id, finalUri)
+            val numberToSave = cleanUri(rawInput).ifBlank { rawInput }
+            repo.setLastDialedNumber(numberToSave)
+
+            val matchedContact = findContactByNumber(rawInput)
+                ?: contactsRepo.lookupDeviceContactByNumber(rawInput)
+            val resolvedName = matchedContact?.name ?: ""
+
+            val started = SipEngine.makeCall(account.id, finalUri, resolvedName)
+            if (!started) {
+                val msg = account.regStatusText.ifBlank { "Unable to place call — account not ready" }
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(getApplication(), msg, Toast.LENGTH_SHORT).show()
+                }
+            }
         }
     }
 
@@ -558,14 +644,21 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     fun toggleHold() { SipAudioController.holdCall(!(callSession.value?.isOnHold ?: false)) }
 
     fun cycleAudioDevice() {
+        updateBluetoothAvailability()
         val current = _audioDeviceMode.value
         val next = when (current) {
             AudioDeviceMode.EARPIECE -> AudioDeviceMode.SPEAKER
-            AudioDeviceMode.SPEAKER -> AudioDeviceMode.EARPIECE
-            AudioDeviceMode.BLUETOOTH -> AudioDeviceMode.SPEAKER
+            AudioDeviceMode.SPEAKER -> if (_hasBluetoothDevice.value) AudioDeviceMode.BLUETOOTH else AudioDeviceMode.EARPIECE
+            AudioDeviceMode.BLUETOOTH -> AudioDeviceMode.EARPIECE
         }
         _audioDeviceMode.value = next
         SipAudioController.setSpeaker(next == AudioDeviceMode.SPEAKER)
+        val router = SipEngine.audioRouter
+        when (next) {
+            AudioDeviceMode.SPEAKER -> router?.routeAudioToSpeaker(true)
+            AudioDeviceMode.BLUETOOTH -> router?.routeAudioToBluetooth()
+            AudioDeviceMode.EARPIECE -> router?.routeAudioToEarpiece()
+        }
     }
 
     fun saveAccount(account: SipAccount) = viewModelScope.launch(Dispatchers.IO) {

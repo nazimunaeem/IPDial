@@ -167,17 +167,23 @@ fun DialpadScreen(
                                             }
                                         )
                                     }
-                                    DropdownMenuItem(
-                                        text = { Text("Add to contact") },
-                                        onClick = {
-                                            showMenu = false
-                                            val intent = android.content.Intent(android.content.Intent.ACTION_INSERT).apply {
-                                                type = android.provider.ContactsContract.Contacts.CONTENT_TYPE
-                                                putExtra(android.provider.ContactsContract.Intents.Insert.PHONE, dialString)
+                                    if (dialString.isNotEmpty()) {
+                                        DropdownMenuItem(
+                                            text = { Text("Add to contact") },
+                                            onClick = {
+                                                showMenu = false
+                                                try {
+                                                    val intent = android.content.Intent(android.content.Intent.ACTION_INSERT).apply {
+                                                        type = android.provider.ContactsContract.Contacts.CONTENT_TYPE
+                                                        putExtra(android.provider.ContactsContract.Intents.Insert.PHONE, dialString)
+                                                    }
+                                                    context.startActivity(intent)
+                                                } catch (_: Exception) {
+                                                    android.widget.Toast.makeText(context, "Contacts app unavailable", android.widget.Toast.LENGTH_SHORT).show()
+                                                }
                                             }
-                                            context.startActivity(intent)
-                                        }
-                                    )
+                                        )
+                                    }
                                 }
                             }
                             InterceptPlatformTextInput(interceptor = { _, _ -> awaitCancellation() }) {
@@ -330,8 +336,7 @@ fun DialpadScreen(
                             mostCalled.forEach { contact ->
                                 key(contact.id) {
                                     SuggestedContactRow(contact) { num ->
-                                        vm.clearDial()
-                                        num.filter { it.isDigit() || it == '+' || it == '*' || it == '#' }.forEach { vm.dialPad(it) }
+                                        vm.prefillDialer(num)
                                         vm.makeCall()
                                     }
                                 }
@@ -346,8 +351,7 @@ fun DialpadScreen(
                             suggestedContacts.forEach { contact ->
                                 key(contact.id) {
                                     SuggestedContactRow(contact) { num ->
-                                        vm.clearDial()
-                                        num.filter { it.isDigit() || it == '+' || it == '*' || it == '#' }.forEach { vm.dialPad(it) }
+                                        vm.prefillDialer(num)
                                         vm.makeCall()
                                     }
                                 }
@@ -405,8 +409,7 @@ fun DialpadScreen(
                         mostCalled.forEach { contact ->
                             key(contact.id) {
                                 SuggestedContactRow(contact) { num ->
-                                    vm.clearDial()
-                                    num.filter { it.isDigit() || it == '+' || it == '*' || it == '#' }.forEach { vm.dialPad(it) }
+                                    vm.prefillDialer(num)
                                     vm.makeCall()
                                 }
                             }
@@ -421,8 +424,7 @@ fun DialpadScreen(
                         suggestedContacts.forEach { contact ->
                             key(contact.id) {
                                 SuggestedContactRow(contact) { num ->
-                                    vm.clearDial()
-                                    num.filter { it.isDigit() || it == '+' || it == '*' || it == '#' }.forEach { vm.dialPad(it) }
+                                    vm.prefillDialer(num)
                                     vm.makeCall()
                                 }
                             }
@@ -480,17 +482,23 @@ fun DialpadScreen(
                                     }
                                 )
                             }
-                            DropdownMenuItem(
-                                text = { Text("Add to contact") },
-                                onClick = {
-                                    showMenu = false
-                                    val intent = android.content.Intent(android.content.Intent.ACTION_INSERT).apply {
-                                        type = android.provider.ContactsContract.Contacts.CONTENT_TYPE
-                                        putExtra(android.provider.ContactsContract.Intents.Insert.PHONE, dialString)
+                            if (dialString.isNotEmpty()) {
+                                DropdownMenuItem(
+                                    text = { Text("Add to contact") },
+                                    onClick = {
+                                        showMenu = false
+                                        try {
+                                            val intent = android.content.Intent(android.content.Intent.ACTION_INSERT).apply {
+                                                type = android.provider.ContactsContract.Contacts.CONTENT_TYPE
+                                                putExtra(android.provider.ContactsContract.Intents.Insert.PHONE, dialString)
+                                            }
+                                            context.startActivity(intent)
+                                        } catch (_: Exception) {
+                                            android.widget.Toast.makeText(context, "Contacts app unavailable", android.widget.Toast.LENGTH_SHORT).show()
+                                        }
                                     }
-                                    context.startActivity(intent)
-                                }
-                            )
+                                )
+                            }
                         }
                     }
                     InterceptPlatformTextInput(interceptor = { _, _ -> awaitCancellation() }) {

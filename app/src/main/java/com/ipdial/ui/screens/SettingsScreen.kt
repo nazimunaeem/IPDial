@@ -298,8 +298,13 @@ fun SettingsScreen(
             confirmButton = {
                 TextButton(onClick = {
                     showUpdateDialog = false
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(release.htmlUrl))
-                    context.startActivity(intent)
+                    if (release.htmlUrl.isNotBlank()) {
+                        try {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(release.htmlUrl)))
+                        } catch (_: Exception) {
+                            android.widget.Toast.makeText(context, "No browser app found", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
                 }) { Text("Download") }
             },
             dismissButton = {
@@ -311,12 +316,6 @@ fun SettingsScreen(
     Scaffold(
         topBar = {
             IPDialTopBar(accounts = accounts, vm = vm, title = "All Settings", onBack = onBack)
-        },
-        bottomBar = {
-            com.ipdial.ui.components.StartIoBanner(
-                vm = vm,
-                modifier = Modifier.fillMaxWidth().padding(8.dp)
-            )
         }
     ) { padding ->
         Box(

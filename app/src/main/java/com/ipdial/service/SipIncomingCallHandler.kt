@@ -49,7 +49,7 @@ class SipIncomingCallHandler(
                 }
 
                 val displayName = session.remoteDisplayName
-                val cleanNum = session.remoteUri.replace("<", "").replace(">", "").removePrefix("sip:").substringBefore("@").substringBefore(";")
+                val cleanNum = com.ipdial.ui.screens.cleanUri(session.remoteUri)
 
                 Log.d(TAG, "Processing incoming call from $cleanNum")
 
@@ -58,6 +58,7 @@ class SipIncomingCallHandler(
                 var matchedContact: com.ipdial.data.model.Contact? = null
                 if (cleanedSessionDigits.length >= 3) {
                     matchedContact = contactsRepo.findContactByNumber(cleanNum)
+                        ?: contactsRepo.lookupDeviceContactByNumber(cleanNum)
                 }
 
                 val finalDisplayName = matchedContact?.name ?: cleanNum.ifBlank { displayName }

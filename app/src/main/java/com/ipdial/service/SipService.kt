@@ -92,9 +92,46 @@ class SipService : Service() {
     private var callStartTime = 0L
     @Volatile private var lastSession: com.ipdial.data.model.CallSession? = null
     private var autoRecordedCallId = -1
+    private var vibratedForCallId = -1
     private val authFailedAccounts = java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
     private fun isPermanentAuthFailure(statusCode: Int) = statusCode == 401 || statusCode == 403
+
+    private fun isNetworkAvailable(cm: ConnectivityManager): Boolean {
+        val active = cm.activeNetwork ?: return false
+        val caps = cm.getNetworkCapabilities(active) ?: return false
+        return caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }
+
+    private fun triggerCallConnectVibration() {
+        try {
+            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as android.os.VibratorManager
+                vm.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                getSystemService(Context.VIBRATOR_SERVICE) as android.os.Vibrator
+            }
+            if (!vibrator.hasVibrator()) return
+            val effect = android.os.VibrationEffect.createOneShot(150L, android.os.VibrationEffect.DEFAULT_AMPLITUDE)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                vibrator.vibrate(
+                    effect,
+                    android.os.VibrationAttributes.createForUsage(android.os.VibrationAttributes.USAGE_COMMUNICATION_REQUEST)
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                val attrs = android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(effect, attrs)
+            }
+        } catch (e: Throwable) {
+            Log.w("SipService", "Call connect vibration failed: ${e.message}")
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -183,8 +220,8 @@ class SipService : Service() {
                 Log.e("SipService", "Failed to build contact number index", e)
             }
 
-            registerAccountsFromDataStore()
             registerDefaultNetworkCallback()
+            registerAccountsFromDataStore()
         }
 
         observeCallState()
@@ -201,6 +238,18 @@ class SipService : Service() {
 
     private fun registerDefaultNetworkCallback() {
         val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val initialNet = connectivityManager.activeNetwork
+        val initiallyConnected = isNetworkAvailable(connectivityManager)
+        isConnected = initiallyConnected
+        lastNetwork = if (initiallyConnected) initialNet else null
+        if (!initiallyConnected) {
+            scope.launch(Dispatchers.IO) {
+                repo.accounts.first().filter { it.isEnabled }.forEach {
+                    repo.updateRegStatus(it.id, RegStatus.ERROR, "Offline (no internet)")
+                }
+            }
+        }
+
         try {
             connectivityManager.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) {
@@ -222,16 +271,17 @@ class SipService : Service() {
                         if (enabledAccounts.isEmpty()) return@launch
 
                         val hasUnregistered = enabledAccounts.any { it.regStatus != RegStatus.REGISTERED }
+                        val hasMissingInEngine = enabledAccounts.any { !SipEngine.accountConfigs.containsKey(it.id) }
                         val shouldReconnect = if (!isInitial) {
-                            networkChanged || wasOffline
+                            networkChanged || wasOffline || hasUnregistered || hasMissingInEngine
                         } else {
-                            hasUnregistered
+                            hasUnregistered || hasMissingInEngine
                         }
 
                         if (shouldReconnect) {
                             Log.d("SipService", "Default network active/changed (isInitial=$isInitial, wasOffline=$wasOffline, networkChanged=$networkChanged). Reconnecting...")
                             enabledAccounts.forEach { account ->
-                                repo.updateRegStatus(account.id, RegStatus.REGISTERING)
+                                repo.updateRegStatus(account.id, RegStatus.REGISTERING, "Registering...")
                             }
 
                             // If a call is in progress, preserve its audio path during
@@ -243,7 +293,15 @@ class SipService : Service() {
                                 Log.d("SipService", "Active call during network change — re-registering registration only, preserving call media")
                                 SipEngine.handleIpChange()
                             } else {
-                                SipEngine.reconnectOnNetworkChange(network, applicationContext)
+                                if (SipEngine.accountConfigs.isNotEmpty()) {
+                                    SipEngine.reconnectOnNetworkChange(network, applicationContext)
+                                }
+                                enabledAccounts.forEach { account ->
+                                    if (!SipEngine.accountConfigs.containsKey(account.id)) {
+                                        activeConfigs[account.id] = account
+                                        SipEngine.addAccount(account)
+                                    }
+                                }
                             }
                         }
                     }
@@ -251,12 +309,14 @@ class SipService : Service() {
 
                 override fun onLost(network: Network) {
                     Log.d("SipService", "onLost default network: $network")
-                    if (lastNetwork == network) {
+                    val stillConnected = isNetworkAvailable(connectivityManager)
+                    if (!stillConnected) {
                         isConnected = false
-                        scope.launch {
+                        lastNetwork = null
+                        scope.launch(Dispatchers.IO) {
                             val freshAccounts = repo.accounts.first()
-                            freshAccounts.forEach {
-                                repo.updateRegStatus(it.id, RegStatus.ERROR)
+                            freshAccounts.filter { it.isEnabled }.forEach {
+                                repo.updateRegStatus(it.id, RegStatus.ERROR, "Offline (no internet)")
                             }
                         }
                     }
@@ -348,29 +408,7 @@ class SipService : Service() {
                         if (acc != null) {
                             Log.d("SipService", "Test calling $number with account ${acc.id}")
 
-                            val transportSuffix = when (acc.transport) {
-                                com.ipdial.data.model.Transport.TCP -> ";transport=tcp"
-                                com.ipdial.data.model.Transport.TLS -> ";transport=tls"
-                                else -> ""
-                            }
-
-                            val finalUri = if (number.contains("@")) {
-                                val base = if (number.startsWith("sip:")) number else "sip:$number"
-                                if (!base.contains("transport=") && transportSuffix.isNotEmpty()) {
-                                    base + transportSuffix
-                                } else {
-                                    base
-                                }
-                            } else {
-                                val num = number.removePrefix("sip:")
-
-                                val host = if (acc.port != null && acc.port > 0 && !acc.domain.contains(":")) {
-                                    "${acc.domain}:${acc.port}"
-                                } else {
-                                    acc.domain
-                                }
-                                "sip:$num@$host$transportSuffix"
-                            }
+                            val finalUri = SipEngine.formatDialUri(number, acc)
 
                             Log.d("SipService", "Dialing URI: $finalUri")
                             Log.d("SipService", "Test call codec: ${acc.codec}")
@@ -398,6 +436,9 @@ class SipService : Service() {
     private fun registerAccountsFromDataStore() {
         scope.launch {
             repo.accounts.collect { accounts ->
+                val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+                val hasNet = isNetworkAvailable(cm)
+                isConnected = hasNet
                 accounts.forEach { account ->
                     if (account.isEnabled) {
                         val active = activeConfigs[account.id]
@@ -416,7 +457,12 @@ class SipService : Service() {
                         if (hasChanged) {
                             authFailedAccounts.remove(account.id)
                             activeConfigs[account.id] = account
-                            SipEngine.addAccount(account)
+                            if (hasNet) {
+                                repo.updateRegStatus(account.id, RegStatus.REGISTERING, "Registering...")
+                                SipEngine.addAccount(account)
+                            } else {
+                                repo.updateRegStatus(account.id, RegStatus.ERROR, "Offline (no internet)")
+                            }
                         }
                     } else {
                         authFailedAccounts.remove(account.id)
@@ -426,7 +472,7 @@ class SipService : Service() {
                         }
                         if (account.regStatus != RegStatus.UNREGISTERED) {
                             scope.launch {
-                                repo.updateRegStatus(account.id, RegStatus.UNREGISTERED)
+                                repo.updateRegStatus(account.id, RegStatus.UNREGISTERED, "Disabled")
                             }
                         }
                     }
@@ -454,32 +500,50 @@ class SipService : Service() {
         }
 
         scope.launch {
-            SipEngine.registrationEvents.collect { (accountId, status, statusCode) ->
-                val statusText = when (status) {
+            SipEngine.registrationEvents.collect { event ->
+                val (accountId, status, statusCode, reason) = event
+                val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+                val hasNet = isNetworkAvailable(cm)
+                isConnected = hasNet
+
+                val effectiveStatus = if (!hasNet && status != RegStatus.UNREGISTERED) {
+                    RegStatus.ERROR
+                } else {
+                    status
+                }
+                val statusText = when (effectiveStatus) {
                     RegStatus.REGISTERED -> "Registered (200 OK)"
                     RegStatus.REGISTERING -> "Registering..."
-                    RegStatus.ERROR -> if (statusCode > 0) "Error ($statusCode)" else "Error / Offline"
+                    RegStatus.ERROR -> when {
+                        !hasNet -> "Offline (no internet)"
+                        statusCode > 0 && reason.isNotBlank() -> "Error ($statusCode): $reason"
+                        statusCode > 0 -> "Error ($statusCode)"
+                        reason.isNotBlank() -> reason
+                        else -> "Error / Offline"
+                    }
                     else -> "Unregistered"
                 }
-                repo.updateRegStatus(accountId, status, statusText)
+                repo.updateRegStatus(accountId, effectiveStatus, statusText)
                 when {
-                    status == RegStatus.REGISTERED -> {
+                    effectiveStatus == RegStatus.REGISTERED -> {
                         if (authFailedAccounts.remove(accountId)) {
                             Log.i("SipService", "Account $accountId re-registered, removed from auth-failed watchlist")
                         }
                     }
-                    status == RegStatus.ERROR && isPermanentAuthFailure(statusCode) -> {
+                    effectiveStatus == RegStatus.ERROR && isPermanentAuthFailure(statusCode) -> {
                         authFailedAccounts.add(accountId)
-                        Log.w("SipService", "Account $accountId permanent auth failure (code=$statusCode). Pausing auto-retry until credentials change.")
+                        Log.w("SipService", "Account $accountId permanent auth failure (code=$statusCode, reason=$reason). Pausing auto-retry until credentials change.")
                     }
-                    status == RegStatus.UNREGISTERED -> {
+                    effectiveStatus == RegStatus.UNREGISTERED -> {
                         authFailedAccounts.remove(accountId)
+                        if (!hasNet) return@collect
                         val accounts = repo.accounts.first()
                         val targetAcc = accounts.firstOrNull { it.id == accountId }
                         if (targetAcc != null && targetAcc.isEnabled) {
                             Log.w("SipService", "Account $accountId unregistered. Scheduling quick retry in 5s.")
                             scope.launch {
                                 delay(5_000)
+                                if (!isNetworkAvailable(cm)) return@launch
                                 val freshAccounts = repo.accounts.first()
                                 val freshAcc = freshAccounts.firstOrNull { it.id == accountId }
                                 if (freshAcc != null && freshAcc.isEnabled &&
@@ -487,30 +551,42 @@ class SipService : Service() {
                                     accountId !in authFailedAccounts
                                 ) {
                                     Log.i("SipService", "Quick retry re-adding account $accountId")
-                                    repo.updateRegStatus(accountId, RegStatus.REGISTERING)
+                                    repo.updateRegStatus(accountId, RegStatus.REGISTERING, "Registering...")
                                     SipEngine.addAccount(freshAcc)
                                 }
                             }
                         }
                     }
-                    status == RegStatus.ERROR -> {
-                        // Non-permanent errors (e.g. DNS failure, network unreachable)
+                    effectiveStatus == RegStatus.ERROR -> {
+                        // Non-permanent errors (e.g. DNS failure, 503 Network is unreachable)
                         authFailedAccounts.remove(accountId)
+                        if (!hasNet) return@collect
                         val accounts = repo.accounts.first()
                         val targetAcc = accounts.firstOrNull { it.id == accountId }
                         if (targetAcc != null && targetAcc.isEnabled) {
-                            Log.w("SipService", "Account $accountId error (code=$statusCode). Scheduling retry in 10s.")
+                            Log.w("SipService", "Account $accountId error (code=$statusCode, reason=$reason). Scheduling retry in 10s.")
                             scope.launch {
                                 delay(10_000)
+                                if (!isNetworkAvailable(cm)) {
+                                    repo.updateRegStatus(accountId, RegStatus.ERROR, "Offline (no internet)")
+                                    return@launch
+                                }
                                 val freshAccounts = repo.accounts.first()
                                 val freshAcc = freshAccounts.firstOrNull { it.id == accountId }
                                 if (freshAcc != null && freshAcc.isEnabled &&
                                     freshAcc.regStatus != RegStatus.REGISTERED &&
                                     accountId !in authFailedAccounts
                                 ) {
-                                    Log.i("SipService", "Retrying account $accountId")
-                                    repo.updateRegStatus(accountId, RegStatus.REGISTERING)
-                                    SipEngine.addAccount(freshAcc)
+                                    val hasActiveCall = SipEngine.callSession.value != null &&
+                                        SipEngine.callSession.value?.state != CallState.DISCONNECTED
+                                    repo.updateRegStatus(accountId, RegStatus.REGISTERING, "Registering...")
+                                    if (!hasActiveCall && (statusCode == 503 || statusCode == 408 || statusCode == 0)) {
+                                        Log.i("SipService", "Rebuilding PJSIP transport on network error ($statusCode) for $accountId")
+                                        SipEngine.reconnectOnNetworkChange(cm.activeNetwork, applicationContext)
+                                    } else {
+                                        Log.i("SipService", "Retrying account $accountId")
+                                        SipEngine.addAccount(freshAcc)
+                                    }
                                 }
                             }
                         }
@@ -523,28 +599,48 @@ class SipService : Service() {
             while (true) {
                 delay(30_000)
                 try {
+                    val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+                    val hasNet = isNetworkAvailable(cm)
+                    isConnected = hasNet
                     val accounts = repo.accounts.first()
                     val enabledAccounts = accounts.filter { it.isEnabled }
+                    if (!hasNet) {
+                        enabledAccounts.forEach { acc ->
+                            if (acc.regStatus != RegStatus.ERROR || acc.regStatusText != "Offline (no internet)") {
+                                repo.updateRegStatus(acc.id, RegStatus.ERROR, "Offline (no internet)")
+                            }
+                        }
+                        continue
+                    }
+
                     for (account in enabledAccounts) {
                         if (account.id in authFailedAccounts) continue
-                        // Skip accounts that are already in the process of registering
+                        // Skip accounts that are already registered or registering
                         if (account.regStatus == RegStatus.REGISTERED || account.regStatus == RegStatus.REGISTERING) continue
-                        
+
                         Log.d("SipService", "Keep-alive: Account ${account.id} not registered (status=${account.regStatus}). Attempting re-registration.")
-                        // First try lightweight re-registration
-                        SipEngine.reconnectAccount(account.id)
-                        // Allow time for transaction to complete before checking
+                        if (SipEngine.accountConfigs.containsKey(account.id)) {
+                            SipEngine.reconnectAccount(account.id)
+                        } else {
+                            SipEngine.addAccount(account)
+                        }
                         delay(15_000)
-                        // If still not registered and not in progress, force full re-add
+                        if (!isNetworkAvailable(cm)) continue
                         val freshAccounts = repo.accounts.first()
                         val freshAccount = freshAccounts.firstOrNull { it.id == account.id }
                         if (freshAccount != null && freshAccount.isEnabled &&
                             freshAccount.regStatus != RegStatus.REGISTERED &&
                             freshAccount.regStatus != RegStatus.REGISTERING
                         ) {
-                            Log.w("SipService", "Keep-alive: Re-registration failed for ${account.id}. Force re-adding account.")
-                            repo.updateRegStatus(account.id, RegStatus.REGISTERING)
-                            SipEngine.addAccount(freshAccount)
+                            val hasActiveCall = SipEngine.callSession.value != null &&
+                                SipEngine.callSession.value?.state != CallState.DISCONNECTED
+                            repo.updateRegStatus(account.id, RegStatus.REGISTERING, "Registering...")
+                            if (!hasActiveCall) {
+                                Log.w("SipService", "Keep-alive: Rebuilding transport & re-registering for ${account.id}.")
+                                SipEngine.reconnectOnNetworkChange(cm.activeNetwork, applicationContext)
+                            } else {
+                                SipEngine.addAccount(freshAccount)
+                            }
                         }
                     }
                 } catch (e: Exception) {
@@ -633,6 +729,7 @@ class SipService : Service() {
                     activeCallStartTime = 0L
                     lastSession = null
                     autoRecordedCallId = -1
+                    vibratedForCallId = -1
 
                     val idleType = if (Build.VERSION.SDK_INT >= 34) {
                         1073741824 // ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
@@ -676,6 +773,11 @@ class SipService : Service() {
                             }
                             audioManager.isMicrophoneMute = session.isMuted
                             ringtonePlayer.stopRingtone()
+
+                            if (vibratedForCallId != session.callId && !SipEngine.isDndActive()) {
+                                vibratedForCallId = session.callId
+                                triggerCallConnectVibration()
+                            }
 
                             if (stateChanged || speakerChanged) {
                                 scope.launch {
@@ -748,7 +850,7 @@ class SipService : Service() {
     private suspend fun autoStartRecordingIfEnabled(session: com.ipdial.data.model.CallSession) {
         try {
             if (autoRecordedCallId == session.callId) return
-            if (session.isRecording) return
+            if (session.isRecording || session.isRecordingPending) return
 
             val enabled = repo.autoRecordEnabled.first()
             if (!enabled) return

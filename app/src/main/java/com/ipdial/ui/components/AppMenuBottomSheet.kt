@@ -117,7 +117,7 @@ fun AppMenuBottomSheet(
     val regStatusText = when (currentAccount?.regStatus) {
         RegStatus.REGISTERED  -> "Online"
         RegStatus.REGISTERING -> "Registering..."
-        RegStatus.ERROR       -> "Error / Offline"
+        RegStatus.ERROR       -> currentAccount.regStatusText.ifBlank { "Error / Offline" }
         else                  -> if (currentAccount != null) "Unregistered" else "No Account"
     }
 

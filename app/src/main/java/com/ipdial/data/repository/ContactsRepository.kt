@@ -34,15 +34,15 @@ class ContactsRepository(private val context: Context) {
         } catch (_: Throwable) {}
     }
 
-    // Suffix lengths to store and try for cross-format matching
-    // (e.g. local "01729979896" vs international "+8801729979896")
-    private val suffixLengths = intArrayOf(10, 11, 12, 13)
-
-    // Pre-computed index for O(1) contact lookup by normalized phone number
-    private var normalizedNumberIndex: Map<String, Contact> = emptyMap()
-    @Volatile
-    private var cachedContactsList: List<Contact> = emptyList()
-    private var indexBuilt = false
+    companion object {
+        // Pre-computed shared index for O(1) contact lookup across Service and ViewModel
+        @Volatile
+        private var normalizedNumberIndex: Map<String, Contact> = emptyMap()
+        @Volatile
+        private var cachedContactsList: List<Contact> = emptyList()
+        @Volatile
+        private var indexBuilt = false
+    }
 
     /**
      * Build a lookup index from normalized (digits-only) phone numbers to Contact.
@@ -73,7 +73,7 @@ class ContactsRepository(private val context: Context) {
      * (10, 8, 6 digits), and fallback iteration for format differences.
      */
     fun findContactByNumber(phoneNumber: String, fallbackContacts: List<Contact>? = null): Contact? {
-        val cleanNum = phoneNumber.replace("<", "").replace(">", "").removePrefix("sip:").substringBefore("@").substringBefore(";").trim()
+        val cleanNum = com.ipdial.ui.screens.cleanUri(phoneNumber)
         val digits = cleanNum.filter { it.isDigit() }
 
         // 1. Try fast index lookup
@@ -90,7 +90,7 @@ class ContactsRepository(private val context: Context) {
             // First pass: exact match on number or digits
             for (c in pool) {
                 for (num in c.numbers) {
-                    val cClean = num.replace("<", "").replace(">", "").removePrefix("sip:").substringBefore("@").substringBefore(";").trim()
+                    val cClean = com.ipdial.ui.screens.cleanUri(num)
                     val cDigits = cClean.filter { it.isDigit() }
                     if (cClean == cleanNum || (digits.isNotBlank() && cDigits == digits)) {
                         return c
@@ -115,6 +115,58 @@ class ContactsRepository(private val context: Context) {
         }
 
         return null
+    }
+
+    /**
+     * Fallback lookup directly against Android ContactsContract.PhoneLookup
+     * in case Room sync has not completed yet or a new contact was just saved.
+     */
+    suspend fun lookupDeviceContactByNumber(phoneNumber: String): Contact? = withContext(Dispatchers.IO) {
+        if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_CONTACTS)
+            != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            return@withContext null
+        }
+        val cleanNum = com.ipdial.ui.screens.cleanUri(phoneNumber)
+        if (cleanNum.isBlank()) return@withContext null
+        try {
+            val lookupUri = android.net.Uri.withAppendedPath(
+                ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
+                android.net.Uri.encode(cleanNum)
+            )
+            val projection = arrayOf(
+                ContactsContract.PhoneLookup.CONTACT_ID,
+                ContactsContract.PhoneLookup.DISPLAY_NAME,
+                ContactsContract.PhoneLookup.NUMBER,
+                ContactsContract.PhoneLookup.PHOTO_URI,
+                ContactsContract.PhoneLookup.PHOTO_THUMBNAIL_URI
+            )
+            context.contentResolver.query(lookupUri, projection, null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val idIdx = cursor.getColumnIndex(ContactsContract.PhoneLookup.CONTACT_ID)
+                    val nameIdx = cursor.getColumnIndex(ContactsContract.PhoneLookup.DISPLAY_NAME)
+                    val numIdx = cursor.getColumnIndex(ContactsContract.PhoneLookup.NUMBER)
+                    val photoIdx = cursor.getColumnIndex(ContactsContract.PhoneLookup.PHOTO_URI)
+                    val thumbIdx = cursor.getColumnIndex(ContactsContract.PhoneLookup.PHOTO_THUMBNAIL_URI)
+
+                    val id = if (idIdx >= 0) cursor.getString(idIdx) ?: cleanNum else cleanNum
+                    val name = if (nameIdx >= 0) cursor.getString(nameIdx) ?: cleanNum else cleanNum
+                    val num = if (numIdx >= 0) cursor.getString(numIdx) ?: cleanNum else cleanNum
+                    val photoStr = (if (photoIdx >= 0) cursor.getString(photoIdx) else null)
+                        ?: (if (thumbIdx >= 0) cursor.getString(thumbIdx) else null)
+                    return@withContext Contact(
+                        id = id,
+                        name = name,
+                        numbers = listOf(num),
+                        photoUri = photoStr?.toUri(),
+                        isFavorite = false
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("ContactsRepo", "PhoneLookup failed for $cleanNum: ${e.message}")
+        }
+        null
     }
 
     /**
@@ -172,19 +224,21 @@ class ContactsRepository(private val context: Context) {
                     val isFavorite = id in existingFavorites ||
                         (isFirstSync && it.getInt(starredIndex) == 1)
 
+                    val photoUri = photoUriStr?.toUri()
                     val existingContact = contactsMap[id]
                     if (existingContact != null) {
+                        val updatedPhoto = existingContact.photoUri ?: photoUri
                         if (number.isNotBlank()) {
                             val normalizedNew = number.filter { it.isDigit() }
-                            val alreadyHas = existingContact.numbers.any { existingNum -> 
-                                existingNum.filter { char -> char.isDigit() } == normalizedNew 
+                            val alreadyHas = existingContact.numbers.any { existingNum ->
+                                existingNum.filter { char -> char.isDigit() } == normalizedNew
                             }
-                            if (!alreadyHas) {
-                                contactsMap[id] = existingContact.copy(numbers = existingContact.numbers + number)
-                            }
+                            val updatedNumbers = if (!alreadyHas) existingContact.numbers + number else existingContact.numbers
+                            contactsMap[id] = existingContact.copy(numbers = updatedNumbers, photoUri = updatedPhoto)
+                        } else if (updatedPhoto != existingContact.photoUri) {
+                            contactsMap[id] = existingContact.copy(photoUri = updatedPhoto)
                         }
                     } else if (number.isNotBlank()) {
-                        val photoUri = photoUriStr?.toUri()
                         contactsMap[id] = Contact(id, name, listOf(number), photoUri, isFavorite)
                     }
                 }

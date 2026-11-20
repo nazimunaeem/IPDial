@@ -98,23 +98,35 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
     val contact = remember(activeSession.remoteUri, contacts) {
         val cleanNumber = vm.cleanUri(activeSession.remoteUri)
         val cleanedSessionUriDigits = cleanNumber.filter { it.isDigit() }
-        if (cleanedSessionUriDigits.length < 3) { // Only attempt contact match for numbers with at least 3 digits
+        if (cleanedSessionUriDigits.length < 3) {
             null
         } else {
             vm.findContactByNumber(cleanNumber, contacts)
         }
     }
-    val displayName = contact?.name ?: vm.cleanDisplayName(activeSession.remoteDisplayName, activeSession.remoteUri)
+    var fallbackContact by remember(activeSession.remoteUri) { mutableStateOf<com.ipdial.data.model.Contact?>(null) }
+    LaunchedEffect(activeSession.remoteUri, contact) {
+        if (contact == null) {
+            val cleanNumber = vm.cleanUri(activeSession.remoteUri)
+            if (cleanNumber.count { it.isDigit() } >= 3) {
+                fallbackContact = vm.lookupDeviceContact(cleanNumber)
+            }
+        } else {
+            fallbackContact = null
+        }
+    }
+    val resolvedContact = contact ?: fallbackContact
+    val displayName = resolvedContact?.name ?: vm.cleanDisplayName(activeSession.remoteDisplayName, activeSession.remoteUri)
 
     // Resolve the contact's hi-res photo for full-screen mode off the main
     // thread. Full-screen is used only when the setting is ON and a photo
     // exists; otherwise we keep the normal avatar display.
     val context = LocalContext.current
     var fullScreenPhotoUri by remember { mutableStateOf<android.net.Uri?>(null) }
-    LaunchedEffect(contact?.id, contact?.photoUri, fullScreenPhotoEnabled) {
-        fullScreenPhotoUri = if (contact != null && fullScreenPhotoEnabled) {
+    LaunchedEffect(resolvedContact?.id, resolvedContact?.photoUri, fullScreenPhotoEnabled) {
+        fullScreenPhotoUri = if (resolvedContact != null && fullScreenPhotoEnabled) {
             withContext(Dispatchers.IO) {
-                com.ipdial.util.ContactPhotoUtil.resolveFullScreenUri(context, contact.id, contact.photoUri)
+                com.ipdial.util.ContactPhotoUtil.resolveFullScreenUri(context, resolvedContact.id, resolvedContact.photoUri)
             }
         } else null
     }
@@ -129,12 +141,9 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
     val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
 
     // Check for Bluetooth devices when call is active
-    val view = androidx.compose.ui.platform.LocalView.current
     LaunchedEffect(isActive) {
         if (isActive) {
             vm.updateBluetoothAvailability()
-            // Haptic feedback on call connect
-            view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
         }
     }
 
@@ -222,7 +231,7 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
                         state = activeSession.state,
                         elapsedSeconds = elapsedSeconds,
                         audioDeviceMode = audioDeviceMode,
-                        contactPhotoUri = contact?.photoUri,
+                        contactPhotoUri = resolvedContact?.photoUri,
                         avatarName = displayName,
                         textColor = textColor,
                         subtitleColor = subtitleColor,
@@ -296,7 +305,7 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
                 state = activeSession.state,
                 elapsedSeconds = elapsedSeconds,
                 audioDeviceMode = audioDeviceMode,
-                contactPhotoUri = contact?.photoUri,
+                contactPhotoUri = resolvedContact?.photoUri,
                 avatarName = displayName,
                 textColor = textColor,
                 subtitleColor = subtitleColor,

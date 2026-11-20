@@ -6,6 +6,7 @@ import com.ipdial.data.model.CallDirection
 import com.ipdial.data.model.CallSession
 import com.ipdial.data.model.CallState
 import com.ipdial.data.model.RegStatus
+import com.ipdial.data.model.RegistrationEvent
 import org.pjsip.pjsua2.*
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,7 +20,7 @@ class SipAccountDelegate(
     private val callMap: MutableMap<Int, SipCallDelegate>,
     private val accountConfigs: MutableMap<String, com.ipdial.data.model.SipAccount>,
     private val _callSession: MutableStateFlow<CallSession?>,
-    private val _registrationEvents: MutableSharedFlow<Triple<String, RegStatus, Int>>,
+    private val _registrationEvents: MutableSharedFlow<RegistrationEvent>,
     private val onIncomingCall: ((CallSession) -> Unit)?,
     private val log: (String, Boolean) -> Unit
 ) : Account() {
@@ -44,27 +45,33 @@ class SipAccountDelegate(
                 } catch (e: Throwable) {
                     0
                 }
-                log("onRegState: Account $accountId code=$statusCode reason=${ai.regStatusText} active=${ai.regIsActive} activeFlag=${ai.regIsActive}", false)
-            
+                val reasonText = try {
+                    ai.regStatusText ?: ""
+                } catch (_: Throwable) {
+                    ""
+                }
+                log("onRegState: Account $accountId code=$statusCode reason=$reasonText active=${ai.regIsActive}", false)
+
                 val status = when {
-                    ai.regIsActive || statusCode in 200..299 -> RegStatus.REGISTERED
-                    statusCode == 0 || statusCode in 100..199 -> RegStatus.REGISTERING
                     statusCode == 401 || statusCode == 403 -> {
-                        log("REG_AUTH_FAILED: Account $accountId auth failed (code=$statusCode). Check credentials.", true)
+                        log("REG_AUTH_FAILED: Account $accountId auth failed (code=$statusCode, reason=$reasonText).", true)
                         RegStatus.ERROR
                     }
-                    statusCode == 408 || statusCode == 423 || statusCode in 500..599 || statusCode == 480 -> {
-                        log("REG_TRANSIENT: Account $accountId code=$statusCode (${ai.regStatusText}) - stack will retry", false)
+                    statusCode == 423 -> {
+                        log("REG_TRANSIENT: Account $accountId code=423 ($reasonText) - stack will retry", false)
                         RegStatus.REGISTERING
                     }
                     statusCode >= 300 -> {
-                        log("REG_ERROR: Account $accountId code=$statusCode (${ai.regStatusText})", true)
+                        log("REG_ERROR: Account $accountId code=$statusCode ($reasonText)", true)
                         RegStatus.ERROR
                     }
+                    ai.regIsActive && (statusCode == 0 || statusCode in 200..299) -> RegStatus.REGISTERED
+                    !ai.regIsActive && statusCode in 200..299 -> RegStatus.UNREGISTERED
+                    statusCode == 0 || statusCode in 100..199 -> RegStatus.REGISTERING
                     else -> RegStatus.UNREGISTERED
                 }
-                log("REG_UPDATE: Account $accountId -> $status (code=$statusCode)", false)
-                _registrationEvents.tryEmit(Triple(accountId, status, statusCode))
+                log("REG_UPDATE: Account $accountId -> $status (code=$statusCode, reason=$reasonText)", false)
+                _registrationEvents.tryEmit(RegistrationEvent(accountId, status, statusCode, reasonText))
             } catch (e: Throwable) {
                 log("onRegState failed for account $accountId: ${e.message}", true)
             }

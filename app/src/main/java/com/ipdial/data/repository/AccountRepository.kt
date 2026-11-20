@@ -105,7 +105,9 @@ class AccountRepository(private val context: Context) {
         }
     }
 
-    private val _liveRegStatus = MutableStateFlow<Map<String, Pair<RegStatus, String>>>(emptyMap())
+    companion object {
+        private val _liveRegStatus = MutableStateFlow<Map<String, Pair<RegStatus, String>>>(emptyMap())
+    }
 
     val accounts: Flow<List<SipAccount>> = combine(
         context.dataStore.data.map { prefs ->
@@ -117,11 +119,15 @@ class AccountRepository(private val context: Context) {
         _liveRegStatus
     ) { accountList, statusMap ->
         accountList.map { acc ->
-            val live = statusMap[acc.id]
-            if (live != null) {
-                acc.copy(regStatus = live.first, regStatusText = live.second)
+            if (!acc.isEnabled) {
+                acc.copy(regStatus = RegStatus.UNREGISTERED, regStatusText = "Disabled")
             } else {
-                acc
+                val live = statusMap[acc.id]
+                if (live != null) {
+                    acc.copy(regStatus = live.first, regStatusText = live.second)
+                } else {
+                    acc.copy(regStatus = RegStatus.UNREGISTERED, regStatusText = "")
+                }
             }
         }
     }
@@ -257,6 +263,7 @@ class AccountRepository(private val context: Context) {
 
     suspend fun deleteAccount(id: String) {
         val current = accounts.first().filter { it.id != id }
+        _liveRegStatus.value = _liveRegStatus.value - id
         saveAccounts(current)
     }
 
@@ -272,8 +279,9 @@ class AccountRepository(private val context: Context) {
     }
 
     private fun secureAccount(acc: SipAccount): SipAccount {
-        if (acc.password.isBlank()) return acc
-        return acc.copy(password = encryptPassword(acc.password))
+        val sanitized = acc.copy(regStatus = RegStatus.UNREGISTERED, regStatusText = "")
+        if (sanitized.password.isBlank()) return sanitized
+        return sanitized.copy(password = encryptPassword(sanitized.password))
     }
 
     private fun unsecureAccount(acc: SipAccount): SipAccount {

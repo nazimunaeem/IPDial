@@ -202,6 +202,14 @@ fun AccountSettingsRow(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                if (account.regStatusText.isNotBlank()) {
+                    Text(
+                        account.regStatusText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (account.regStatus == RegStatus.ERROR) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
 
             Switch(
@@ -278,16 +286,15 @@ fun AccountEditSheet(
         val live = allAccounts.firstOrNull { it.id == id } ?: return@LaunchedEffect
         when (live.regStatus) {
             RegStatus.REGISTERED -> {
-                // Auto-close only on a transition INTO REGISTERED.
-                // If the account was already registered before this save and nothing
-                // meaningful changed, keep the sheet open so the edit UI stays usable.
-                if (lastObservedStatus != RegStatus.REGISTERED) {
-                    isSaving = false
-                    regStatusText = "Registered"
-                    regStatusError = false
-                    savedAccountId = null
-                    onDismiss()
-                }
+                isSaving = false
+                regStatusText = "Registered (200 OK)"
+                regStatusError = false
+                savedAccountId = null
+                onDismiss()
+            }
+            RegStatus.REGISTERING -> {
+                regStatusText = "Registering..."
+                regStatusError = false
             }
             RegStatus.ERROR -> {
                 isSaving = false
@@ -297,7 +304,7 @@ fun AccountEditSheet(
                 regStatusError = true
                 savedAccountId = null
             }
-            else -> {} // REGISTERING / UNREGISTERED: keep waiting
+            else -> {}
         }
         lastObservedStatus = live.regStatus
     }
@@ -501,9 +508,27 @@ fun AccountEditSheet(
                             codec = existing?.codec,
                             enabledCodecs = existing?.enabledCodecs ?: com.ipdial.data.model.DEFAULT_ENABLED_CODECS
                         )
+                        val registrationChanged = existing == null ||
+                            existing.username != regAccount.username ||
+                            existing.password != regAccount.password ||
+                            existing.domain != regAccount.domain ||
+                            existing.proxy != regAccount.proxy ||
+                            existing.port != regAccount.port ||
+                            existing.transport != regAccount.transport ||
+                            existing.regStatus != RegStatus.REGISTERED
+
                         onSave(regAccount)
-                        onDismiss()
+                        if (!registrationChanged) {
+                            onDismiss()
+                        } else {
+                            isSaving = true
+                            regStatusText = "Registering..."
+                            regStatusError = false
+                            lastObservedStatus = existing?.regStatus
+                            savedAccountId = regAccount.id
+                        }
                     },
+                    enabled = !isSaving,
                     modifier = Modifier.weight(1f)
                 ) {
                     Text(if (isSaving) "Saving…" else "Register")
