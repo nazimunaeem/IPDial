@@ -62,8 +62,8 @@ APP_DETAILS.md
 PROJECT_UNDERSTANDING.md
 CRASH_FIXES_*.md
 SCREEN_AND_AUDIO_FIXES_*.md
-ic.png
-ipdial_ringtone.mp3
+/ic.png
+/ipdial_ringtone.mp3
 
 .artifacts/
 gradlew.bat

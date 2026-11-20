@@ -75,7 +75,7 @@ class SipRingtonePlayer(
                         return@withContext
                     }
 
-                    if (ringerMode == AudioManager.RINGER_MODE_NORMAL) {
+                    if (ringerMode == AudioManager.RINGER_MODE_NORMAL && ringtoneUriStr != "silent") {
                         val ringtoneUri = if (ringtoneUriStr != null) {
                             normalizeRingtoneUri(ringtoneUriStr)
                         } else {
