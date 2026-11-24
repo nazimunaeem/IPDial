@@ -1,6 +1,43 @@
-# IPDial — Open-Source SIP Client for Android
+<div align="center">
+
+# 📞 IPDial
+
+**A clean, modern, open-source SIP softphone for Android.**
+
+[![Latest release](https://img.shields.io/github/v/release/nazimunaeem/IPDial?style=flat-square&logo=github&label=latest)](https://github.com/nazimunaeem/IPDial/releases/latest)
+[![Total downloads](https://img.shields.io/github/downloads/nazimunaeem/IPDial/total?style=flat-square&logo=github&label=downloads)](https://github.com/nazimunaeem/IPDial/releases)
+[![Stars](https://img.shields.io/github/stars/nazimunaeem/IPDial?style=flat-square&logo=github&label=stars)](https://github.com/nazimunaeem/IPDial/stargazers)
+[![Forks](https://img.shields.io/github/forks/nazimunaeem/IPDial?style=flat-square&logo=github&label=forks)](https://github.com/nazimunaeem/IPDial/forks)
+[![Issues](https://img.shields.io/github/issues/nazimunaeem/IPDial?style=flat-square&logo=github&label=issues)](https://github.com/nazimunaeem/IPDial/issues)
+[![Last commit](https://img.shields.io/github/last-commit/nazimunaeem/IPDial?style=flat-square&logo=github)](https://github.com/nazimunaeem/IPDial/commits/main)
+[![License](https://img.shields.io/github/license/nazimunaeem/IPDial?style=flat-square&label=license)](LICENSE)
+
+![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?style=flat-square&logo=android&logoColor=white)
+![Kotlin](https://img.shields.io/badge/Kotlin-2.x-7F52FF?style=flat-square&logo=kotlin&logoColor=white)
+![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-Material%203-4285F4?style=flat-square&logo=jetpackcompose&logoColor=white)
+![PJSIP](https://img.shields.io/badge/PJSIP-2.5-1E6B3C?style=flat-square)
+![Min SDK](https://img.shields.io/badge/minSdk-26-3DDC84?style=flat-square)
+
+[**⬇️ Download the latest APK**](https://github.com/nazimunaeem/IPDial/releases/latest) · [Report a bug](https://github.com/nazimunaeem/IPDial/issues/new) · [Support the developer](https://www.supportkori.com/nazimunaeem)
+
+</div>
+
+---
 
 IPDial is a clean, modern, and high-performance SIP (Session Initiation Protocol) softphone for Android. Built with the latest Android technologies, it provides a seamless VoIP experience with a focus on privacy, simplicity, and ease of use.
+
+## 📥 Download
+
+<a href="https://github.com/nazimunaeem/IPDial/releases/latest">
+  <img src="https://img.shields.io/badge/Download_Latest_APK-1E6B3C?style=for-the-badge&logo=android&logoColor=white" alt="Download latest APK">
+</a>
+
+- **Latest version:** [![Latest release](https://img.shields.io/github/v/release/nazimunaeem/IPDial?style=flat-square&label=)](https://github.com/nazimunaeem/IPDial/releases/latest) · **latest downloads:** [![Latest downloads](https://img.shields.io/github/downloads/nazimunaeem/IPDial/latest/total?style=flat-square&label=)](https://github.com/nazimunaeem/IPDial/releases/latest)
+- **All versions:** [GitHub Releases](https://github.com/nazimunaeem/IPDial/releases)
+- **Total downloads:** [![Total downloads](https://img.shields.io/github/downloads/nazimunaeem/IPDial/total?style=flat-square&label=)](https://github.com/nazimunaeem/IPDial/releases)
+- **Requirements:** Android 8.0+ (API 26) on a 64-bit ARM (arm64-v8a) device
+
+> Every release is built and signed automatically by GitHub Actions. The APK is safe to sideload; enable **Install unknown apps** for your browser or file manager when prompted.
 
 ## 🚀 Key Features
 
@@ -15,13 +52,30 @@ IPDial is a clean, modern, and high-performance SIP (Session Initiation Protocol
 - **Stay Updated**: Automatic notifications for new versions to ensure you always have the latest features and security fixes.
 - **Reliable & Fast**: Optimized for performance to ensure fast loading and minimal battery impact.
 
----
+## 🧱 Tech Stack
+
+| Area | Technology |
+| --- | --- |
+| Language | Kotlin |
+| UI | Jetpack Compose + Material 3 |
+| SIP / media | PJSIP 2.5 (`pjsua2`) |
+| Persistence | Room + DataStore |
+| Calls on Android | Telecom `ConnectionService` (self-managed SIP account) |
+| CI / releases | GitHub Actions (signed APK + AAB) |
 
 ## 🤝 Open Source & Support
 
-IPDial is an open-source project. If you find this project useful, consider supporting the developer or starring the repository.
+IPDial is an open-source project. If you find it useful, please **star the repository** — it helps others discover the project.
+
+- ⭐ [Star this repo](https://github.com/nazimunaeem/IPDial/stargazers)
+- 🐛 [Report a bug or request a feature](https://github.com/nazimunaeem/IPDial/issues)
+- 🔀 [Fork and contribute](https://github.com/nazimunaeem/IPDial/fork)
 
 <a href="https://www.supportkori.com/nazimunaeem"><img src="https://img.shields.io/badge/Support%20Kori-Support%20the%20Developer-1E6B3C?style=for-the-badge" alt="Support Kori"></a>
+
+<a href="https://star-history.com/#nazimunaeem/IPDial&Date">
+  <img src="https://api.star-history.com/svg?repos=nazimunaeem/IPDial&type=Date" alt="Star history" width="600">
+</a>
 
 ---
 
@@ -75,4 +129,4 @@ point the same **TURN server / username / password** fields at your own host.
 
 ## 📄 License
 
-Distributed under the MIT License.
+Distributed under the MIT License. See [LICENSE](LICENSE) for details.

@@ -1,63 +1,51 @@
-name: Release signed APK
+name: Release
 
-# Builds, tests, and publishes a signed release APK to GitHub Releases.
-# Automatic triggers are disabled — trigger manually from the Actions tab (workflow_dispatch).
+# Builds, signs and publishes IPDial.
+#   • Manual run:  Actions → Release → Run workflow
+#   • Tag run:     git push origin v1.2.2   (tag must equal app version)
 #
-# Required repository secrets:
-#   KEYSTORE_BASE64   base64-encoded signing keystore (.jks / .keystore)
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   KEYSTORE_BASE64   base64 of the release keystore (.jks / .keystore)
 #   STORE_PASSWORD    keystore password
 #   KEY_ALIAS         signing key alias
 #   KEY_PASSWORD      signing key password
+#
+# See RELEASING.md for the full walkthrough.
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      draft:
+        description: "Publish as a draft release"
+        required: false
+        default: false
+        type: boolean
+      prerelease:
+        description: "Mark the release as a pre-release"
+        required: false
+        default: false
+        type: boolean
+  push:
+    tags:
+      - "v*"
 
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  check-version-bump:
-    name: Detect version bump
+  build:
+    name: Build & sign
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.check.outputs.version }}
-      code: ${{ steps.check.outputs.code }}
-      bumped: ${{ steps.check.outputs.bumped }}
+      version: ${{ steps.version.outputs.version }}
+      code: ${{ steps.version.outputs.code }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
-
-      - name: Check version in app/build.gradle
-        id: check
-        run: |
-          NEW_NAME=$(grep -E '^\s*versionName\s' app/build.gradle | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
-          NEW_CODE=$(grep -E '^\s*versionCode\s' app/build.gradle | head -1 | sed -E 's/[^0-9]*([0-9]+).*/\1/')
-          OLD_NAME=$(git show HEAD~1:app/build.gradle 2>/dev/null | grep -E '^\s*versionName\s' | head -1 | sed -E 's/.*"([^"]+)".*/\1/' || echo "none")
-          OLD_CODE=$(git show HEAD~1:app/build.gradle 2>/dev/null | grep -E '^\s*versionCode\s' | head -1 | sed -E 's/[^0-9]*([0-9]+).*/\1/' || echo "0")
-          echo "version=$NEW_NAME" >> "$GITHUB_OUTPUT"
-          echo "code=$NEW_CODE" >> "$GITHUB_OUTPUT"
-
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            echo "bumped=true" >> "$GITHUB_OUTPUT"
-            echo "Release triggered (${{ github.event_name }}): $NEW_NAME ($NEW_CODE)"
-          elif [ "$NEW_NAME" != "$OLD_NAME" ] || [ "$NEW_CODE" != "$OLD_CODE" ]; then
-            echo "bumped=true" >> "$GITHUB_OUTPUT"
-            echo "Version bumped: $OLD_NAME ($OLD_CODE) -> $NEW_NAME ($NEW_CODE)"
-          else
-            echo "bumped=false" >> "$GITHUB_OUTPUT"
-            echo "No version change ($NEW_NAME @ $NEW_CODE); skipping release."
-          fi
-
-  build-release:
-    name: Build signed APK
-    needs: check-version-bump
-    if: needs.check-version-bump.outputs.bumped == 'true'
-    runs-on: ubuntu-latest
-    env:
-      ORG_GRADLE_PROJECT_org.gradle.jvmargs: "-Xmx4g"
-    steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
@@ -68,51 +56,120 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Setup Gradle
+      - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Run unit tests
+      - name: Read version from app/build.gradle
+        id: version
         run: |
-          chmod +x gradlew
-          ./gradlew :app:testDebugUnitTest
-
-      - name: Decode signing keystore
-        run: |
-          if [ -z "${{ secrets.KEYSTORE_BASE64 }}" ]; then
-            echo "::error::KEYSTORE_BASE64 secret is missing."
+          VERSION=$(sed -nE 's/^[[:space:]]*versionName[[:space:]]+"([^"]+)".*/\1/p' app/build.gradle | head -1)
+          CODE=$(sed -nE 's/^[[:space:]]*versionCode[[:space:]]+([0-9]+).*/\1/p' app/build.gradle | head -1)
+          if [ -z "$VERSION" ] || [ -z "$CODE" ]; then
+            echo "::error::Could not read versionName/versionCode from app/build.gradle"
             exit 1
           fi
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > keystore.jks
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "Building IPDial $VERSION (build $CODE)"
 
-      - name: Build signed release APK
-        run: ./gradlew :app:assembleRelease
+      - name: Verify tag matches app version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          if [ "${GITHUB_REF_NAME}" != "v${{ steps.version.outputs.version }}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match app version v${{ steps.version.outputs.version }}. Bump versionName in app/build.gradle or push the correct tag."
+            exit 1
+          fi
+
+      # gradle.properties is gitignored, so CI must recreate the flags the build needs.
+      - name: Configure Gradle for CI
+        run: |
+          {
+            echo "android.disallowKotlinSourceSets=false"
+            echo "org.gradle.jvmargs=-Xmx4g -XX:+UseG1GC"
+            echo "org.gradle.daemon=false"
+          } > gradle.properties
+
+      - name: Decode signing keystore
         env:
-          STORE_FILE: ${{ github.workspace }}/keystore.jks
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::KEYSTORE_BASE64 secret is missing. Add it in Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/ipdial-release.jks"
+          test -s "$RUNNER_TEMP/ipdial-release.jks" || { echo "::error::Decoded keystore is empty — is KEYSTORE_BASE64 a valid base64 .jks?"; exit 1; }
+
+      - name: Run unit tests
+        run: ./gradlew :app:testDebugUnitTest --stacktrace
+
+      - name: Build signed APK and App Bundle
+        env:
+          STORE_FILE: ${{ runner.temp }}/ipdial-release.jks
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew :app:assembleRelease :app:bundleRelease --stacktrace
 
-      - name: Prepare release APK
+      - name: Verify APK signature
         run: |
-          cd app/build/outputs/apk/release
-          if [ ! -f app-release.apk ]; then
-            echo "::error::Expected app-release.apk was not generated."
-            ls -la
-            exit 1
-          fi
-          cp app-release.apk "IPDial-v${{ needs.check-version-bump.outputs.version }}.apk"
-          ls -lh "IPDial-v${{ needs.check-version-bump.outputs.version }}.apk"
+          APK=app/build/outputs/apk/release/app-release.apk
+          test -f "$APK" || { echo "::error::$APK was not generated"; exit 1; }
+          APKSIGNER=$(find "${ANDROID_HOME}/build-tools" -name apksigner -type f | sort -V | tail -1)
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
 
-      - name: Publish GitHub Release
+      - name: Stage release artifacts
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          mkdir -p dist
+          cp app/build/outputs/apk/release/app-release.apk "dist/IPDial-v${VERSION}.apk"
+          if [ -f app/build/outputs/bundle/release/app-release.aab ]; then
+            cp app/build/outputs/bundle/release/app-release.aab "dist/IPDial-v${VERSION}.aab"
+          fi
+          (cd dist && sha256sum ./* > SHA256SUMS.txt)
+          ls -lh dist
+
+      - name: Remove signing keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/ipdial-release.jks"
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ipdial-release
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ipdial-release
+          path: dist
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ needs.check-version-bump.outputs.version }}
-          name: IPDial v${{ needs.check-version-bump.outputs.version }} (build ${{ needs.check-version-bump.outputs.code }})
+          tag_name: v${{ needs.build.outputs.version }}
+          name: IPDial v${{ needs.build.outputs.version }} (build ${{ needs.build.outputs.code }})
           generate_release_notes: true
           body: |
-            Release **IPDial v${{ needs.check-version-bump.outputs.version }}** (build ${{ needs.check-version-bump.outputs.code }}).
+            **IPDial v${{ needs.build.outputs.version }}** (build ${{ needs.build.outputs.code }})
+
+            - Signed release APK: `IPDial-v${{ needs.build.outputs.version }}.apk`
+            - Play Store bundle: `IPDial-v${{ needs.build.outputs.version }}.aab`
+            - SHA-256 checksums: `SHA256SUMS.txt`
+
             Built from commit `${{ github.sha }}`.
-          draft: false
-          prerelease: false
+          draft: ${{ inputs.draft || false }}
+          prerelease: ${{ inputs.prerelease || false }}
+          fail_on_unmatched_files: true
           files: |
-            app/build/outputs/apk/release/IPDial-v${{ needs.check-version-bump.outputs.version }}.apk
+            dist/IPDial-v${{ needs.build.outputs.version }}.apk
+            dist/IPDial-v${{ needs.build.outputs.version }}.aab
+            dist/SHA256SUMS.txt

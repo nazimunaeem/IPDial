@@ -54,6 +54,17 @@ Thumbs.db
 *.key
 *.pub
 *.asc
+*.p12
+*.pfx
+*.p8
+signing_credentials.md
+*.b64
+.env
+.env.*
+keystore/
+
+# Heap dumps / crash artifacts
+*.hprof
 
 # Plan and documentation files
 plan*.md
