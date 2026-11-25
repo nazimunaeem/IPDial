@@ -35,7 +35,7 @@ object UpdateChecker {
         null
     }
 
-    private fun isNewerVersion(current: String, latest: String): Boolean {
+    internal fun isNewerVersion(current: String, latest: String): Boolean {
         val currParts = current.split(".").mapNotNull { it.toIntOrNull() }
         val lateParts = latest.split(".").mapNotNull { it.toIntOrNull() }
         

@@ -40,7 +40,6 @@ import com.ipdial.ui.SipViewModel
 import com.ipdial.ui.components.AccountSelectionDialog
 import com.ipdial.ui.components.ContactItem
 import com.ipdial.ui.components.NumberPickerDialog
-import com.ipdial.ui.components.StartIoBanner
 import com.ipdial.ui.screens.cleanUri
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -141,8 +140,6 @@ fun HomeScreen(
             groups
         }.toList().sortedByDescending { it.second.firstOrNull()?.mainEntry?.timestampMs ?: 0L }
     }
-
-    val showAd by vm.showAd.collectAsState()
 
     val isWide = LocalConfiguration.current.screenWidthDp >= 600
 
@@ -310,24 +307,6 @@ fun HomeScreen(
                     }
                 )
             }
-        }
-
-        if (showAd) {
-            StartIoBanner(
-                vm = vm,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 76.dp)
-                    .then(
-                        if (isWide) {
-                            Modifier
-                                .align(Alignment.CenterHorizontally)
-                                .widthIn(max = 640.dp)
-                        } else {
-                            Modifier
-                        }
-                    )
-            )
         }
     }
 

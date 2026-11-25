@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -43,6 +44,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -209,24 +211,56 @@ fun AccountSettingsRow(
                         color = if (account.regStatus == RegStatus.ERROR) MaterialTheme.colorScheme.error
                         else MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    if (account.regStatus == RegStatus.ERROR) {
+                        registrationTroubleshootingHint(account.regStatusText)?.let { hint ->
+                            Text(
+                                text = hint,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (account.isEnabled && account.regStatus != RegStatus.REGISTERED) {
+                IconButton(
+                    onClick = { vm.retryRegistration(account) },
+                    modifier = Modifier.minimumInteractiveComponentSize()
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "Retry registration",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
                 }
             }
 
             Switch(
                 checked = account.isEnabled,
                 onCheckedChange = { onToggleEnabled() },
-                modifier = Modifier.size(40.dp, 24.dp)
+                modifier = Modifier.minimumInteractiveComponentSize()
             )
 
             Box {
-                IconButton(onClick = { showMenu = true }) {
-                    Icon(Icons.Default.MoreVert, null)
+                IconButton(
+                    onClick = { showMenu = true },
+                    modifier = Modifier.minimumInteractiveComponentSize()
+                ) {
+                    Icon(Icons.Default.MoreVert, contentDescription = "Account options")
                 }
                 DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
                     DropdownMenuItem(
                         text = { Text("Edit") },
                         onClick = { showMenu = false; onEdit() }
                     )
+                    if (account.isEnabled && account.regStatus != RegStatus.REGISTERED) {
+                        DropdownMenuItem(
+                            text = { Text("Retry registration") },
+                            onClick = { showMenu = false; vm.retryRegistration(account) }
+                        )
+                    }
                     DropdownMenuItem(
                         text = { Text("Set as default") },
                         onClick = { showMenu = false; onSetDefault() }
@@ -254,9 +288,10 @@ fun AccountEditSheet(
     onSave: (SipAccount) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var label     by remember { mutableStateOf(existing?.label ?: "") }
-    var username  by remember { mutableStateOf(existing?.username ?: "") }
-    var password  by remember { mutableStateOf(existing?.password ?: "") }
+    var label        by remember { mutableStateOf(existing?.label ?: "") }
+    var username     by remember { mutableStateOf(existing?.username ?: "") }
+    var authUsername by remember { mutableStateOf(existing?.authUsername ?: "") }
+    var password     by remember { mutableStateOf(existing?.password ?: "") }
     var domain    by remember { mutableStateOf(existing?.domain ?: "") }
     var proxy     by remember { mutableStateOf(existing?.proxy ?: "") }
     var port      by remember { mutableStateOf(existing?.port?.toString() ?: "") }
@@ -401,6 +436,16 @@ fun AccountEditSheet(
                 modifier = Modifier.fillMaxWidth()
             )
             OutlinedTextField(
+                value = authUsername,
+                onValueChange = { authUsername = it },
+                label = { Text("Auth Username / ID (optional)") },
+                placeholder = { Text("Leave blank to use SIP Username") },
+                supportingText = { Text("Optional digest auth ID if different from username") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
                 value = password, onValueChange = { password = it; if (it.isNotBlank()) passwordError = false },
                 label = { Text("Password *") },
                 singleLine = true,
@@ -477,6 +522,16 @@ fun AccountEditSheet(
                     else MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.fillMaxWidth()
                 )
+                if (regStatusError) {
+                    registrationTroubleshootingHint(regStatusText ?: "")?.let { hint ->
+                        Text(
+                            text = hint,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -487,6 +542,7 @@ fun AccountEditSheet(
                     onClick = {
                         keyboard?.hide()
                         val trimmedUser = username.trim()
+                        val trimmedAuthUser = authUsername.trim().ifBlank { null }
                         val trimmedPass = password.trim()
                         val trimmedDomain = domain.trim()
                         usernameError = trimmedUser.isBlank()
@@ -499,6 +555,7 @@ fun AccountEditSheet(
                         val regAccount = (existing ?: SipAccount()).copy(
                             label = label.trim(),
                             username = trimmedUser,
+                            authUsername = trimmedAuthUser,
                             password = trimmedPass,
                             domain = trimmedDomain,
                             proxy = proxy.trim(),
@@ -510,6 +567,7 @@ fun AccountEditSheet(
                         )
                         val registrationChanged = existing == null ||
                             existing.username != regAccount.username ||
+                            (existing.authUsername ?: "") != (regAccount.authUsername ?: "") ||
                             existing.password != regAccount.password ||
                             existing.domain != regAccount.domain ||
                             existing.proxy != regAccount.proxy ||
@@ -569,4 +627,18 @@ private fun SuggestionChips(
             }
         }
     }
+}
+
+private fun registrationTroubleshootingHint(statusText: String): String? = when {
+    statusText.contains("403") || statusText.contains("Ip not allowed", ignoreCase = true) ->
+        "Provider rejected this IP or device. Check IP whitelisting in your provider portal or ask support to allow your IP."
+    statusText.contains("401") ->
+        "Authentication failed — double-check your SIP username, Auth ID, password, and domain."
+    statusText.contains("503") ||
+        statusText.contains("408") ||
+        statusText.contains("Offline", ignoreCase = true) ||
+        statusText.contains("network", ignoreCase = true) ||
+        statusText.contains("timeout", ignoreCase = true) ->
+        "Server unreachable — check your internet connection, server host/port, or try TCP transport."
+    else -> null
 }

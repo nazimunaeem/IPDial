@@ -89,12 +89,6 @@ fun AboutScreen(
     Scaffold(
         topBar = {
             IPDialTopBar(accounts = accounts, vm = vm, title = "About", onBack = onBack)
-        },
-        bottomBar = {
-            com.ipdial.ui.components.StartIoBanner(
-                vm = vm,
-                modifier = Modifier.fillMaxWidth().padding(8.dp)
-            )
         }
     ) { padding ->
         Column(

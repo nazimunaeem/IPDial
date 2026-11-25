@@ -6,6 +6,7 @@ data class SipAccount(
     val id: String = UUID.randomUUID().toString(),
     val label: String = "",          // Friendly name, e.g. "Work", "Personal"
     val username: String = "",
+    val authUsername: String? = null, // Optional digest auth ID (falls back to username when blank/null)
     val password: String = "",
     val domain: String = "",
     val proxy: String = "",          // Optional outbound proxy

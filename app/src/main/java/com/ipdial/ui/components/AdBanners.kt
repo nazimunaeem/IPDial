@@ -18,12 +18,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.ipdial.ui.SipViewModel
-
-@Composable
-fun StartIoBanner(modifier: Modifier = Modifier, vm: SipViewModel? = null) {
-    // Ad-free version: no banner shown.
-}
 
 @Composable
 fun SupportKoriBanner(modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {

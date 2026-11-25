@@ -125,7 +125,6 @@ import com.ipdial.ui.screens.CallScreen
 import com.ipdial.ui.screens.ContactsScreen
 import com.ipdial.ui.screens.DialpadScreen
 import com.ipdial.ui.screens.DialpadStyleScreen
-import com.ipdial.ui.screens.GetProScreen
 import com.ipdial.ui.screens.home.HomeScreen
 import com.ipdial.ui.screens.IncomingCallScreen
 import com.ipdial.ui.screens.IncomingCallSettingsScreen

@@ -637,6 +637,7 @@ fun NatTraversalDialog(
 ) {
     var showTurnPass by remember { mutableStateOf(false) }
     val uriHandler = LocalUriHandler.current
+    val context = LocalContext.current
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("NAT Traversal / TURN") },
@@ -708,7 +709,13 @@ fun NatTraversalDialog(
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { uriHandler.openUri("https://www.metered.ca/tools/openrelay/") }
+                        .clickable {
+                            try {
+                                uriHandler.openUri("https://www.metered.ca/tools/openrelay/")
+                            } catch (_: Throwable) {
+                                android.widget.Toast.makeText(context, "Unable to open browser", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        }
                         .padding(vertical = 4.dp)
                 )
                 Text(

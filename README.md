@@ -104,17 +104,19 @@ no audio.
 
 - Sign up at [metered.ca](https://www.metered.ca/) and copy the TURN
   **username** and **password** from the dashboard.
-- In IPDial → **SIP Accounts** → open an account → **Advanced — NAT Traversal**:
-  - **TURN server** is pre-filled with `staticauth.openrelay.metered.ca:80`.
+- In IPDial → **Settings** → **Network** → **NAT Traversal / TURN**:
+  - **TURN server** can be set to `staticauth.openrelay.metered.ca:80` (or your own coturn host).
   - Paste your **TURN username** and **TURN password** from the dashboard.
-  - Leave username/password blank to skip TURN entirely (the default for
+  - Leave username/password blank to skip ICE + TURN entirely (the default for
     accounts that already work fine).
-- Only calls that **need** the relay consume quota — calls that connect directly
-  use 0 bytes. If the 20 GB/month is exhausted, only the harder-NAT subset of
-  calls degrades until the monthly reset; direct calls are unaffected.
+- When a TURN server and username are configured, IPDial automatically enables
+  ICE + TURN across all accounts; only calls that **need** the relay consume
+  quota — direct calls connect peer-to-peer. If the 20 GB/month is exhausted,
+  only the harder-NAT subset of calls degrades until the monthly reset; direct
+  calls are unaffected.
 
-**TURN transport (Advanced):** the pre-filled server uses UDP. On networks that
-block UDP outright, switch the account's **TURN Transport** to **TCP** (port 80)
+**TURN transport (Advanced):** UDP is the fastest default. On networks that
+block UDP outright, switch **TURN Transport** to **TCP** (port 80)
 or **TLS** (port 443) to force the relay over a TCP connection that passes more
 restrictive firewalls.
 

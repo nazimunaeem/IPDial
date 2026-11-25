@@ -65,7 +65,6 @@ import androidx.compose.ui.unit.sp
 import com.ipdial.data.model.KeypadDesign
 import com.ipdial.ui.SipViewModel
 import com.ipdial.ui.components.AccountSelectionDialog
-import com.ipdial.ui.components.StartIoBanner
 import com.ipdial.ui.screens.dialpad.DialpadKeypad
 import com.ipdial.ui.screens.dialpad.SuggestedContactRow
 import com.ipdial.ui.screens.dialpad.T9_MAP

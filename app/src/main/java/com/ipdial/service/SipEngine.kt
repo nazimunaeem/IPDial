@@ -554,6 +554,29 @@ object SipEngine {
         } ?: false
     }
 
+    fun reregisterAccount(account: SipAccount) {
+        logEx("reregisterAccount requested: id=${account.id} user=${account.username}")
+        runOnPjsipThread {
+            registerCurrentThreadEx()
+            val existing = accountMap[account.id]
+            if (existing != null) {
+                try {
+                    existing.setRegistration(true)
+                    return@runOnPjsipThread
+                } catch (e: Throwable) {
+                    val isBusy = e.message?.contains("PJSIP_EBUSY", ignoreCase = true) == true ||
+                            e.message?.contains("Object is busy", ignoreCase = true) == true
+                    if (isBusy) {
+                        log("Account ${account.id} registration already in flight")
+                        return@runOnPjsipThread
+                    }
+                    log("reregisterAccount setRegistration failed for ${account.id}, re-adding: ${e.message}", true)
+                }
+            }
+            addAccountOnPjsipThread(account)
+        }
+    }
+
     private fun addAccountOnPjsipThread(account: SipAccount): Boolean {
         registerCurrentThreadEx()
         logEx("addAccount: id=${account.id} user=${account.username} passLen=${account.password.length}")
@@ -565,6 +588,7 @@ object SipEngine {
             val existingConfig = accountConfigs[account.id]
             if (existingConfig != null) {
                 val hasChanged = existingConfig.username != account.username ||
+                        existingConfig.authUsername != account.authUsername ||
                         existingConfig.password != account.password ||
                         existingConfig.domain != account.domain ||
                         existingConfig.proxy != account.proxy ||
@@ -644,7 +668,8 @@ object SipEngine {
                 regConfig.firstRetryIntervalSec = 15
                 regConfig.delayBeforeRefreshSec = 90
 
-                val cred = AuthCredInfo("digest", "*", cleanUsername, 0, account.password)
+                val authUser = account.authUsername?.trim()?.ifBlank { cleanUsername } ?: cleanUsername
+                val cred = AuthCredInfo("digest", "*", authUser, 0, account.password)
                 sipConfig.authCreds.add(cred)
 
                 if (cleanProxy.isNotBlank()) {
@@ -675,29 +700,28 @@ object SipEngine {
                 }
 
                 natConfig.apply {
-                    // ICE and IPv6 media are DISABLED by default.
-                    //
-                    // In this PJSIP 2.5 build, enabling ICE (iceEnabled=true,
-                    // iceAggressiveNomination=true) and IPv6 media candidates
-                    // (AccountMediaConfig.ipv6Use) changes the SDP offer in a way that
-                    // several SIP providers silently drop — the outgoing INVITE gets no
-                    // response and the call stays on "CALLING" forever with no ringing,
-                    // and hangup then waits for the CANCEL to time out (20-30s).
-                    // v1.1.5/v1.1.6 shipped with iceEnabled=false and call signaling
-                    // works on the vast majority of providers.
-                    iceEnabled = false
-
-                    // TURN stays wired in (Settings → Network) as an opt-in relay for
-                    // symmetric/CGNAT callers, but it is ignored here because TURN
-                    // relaying requires ICE negotiation to be enabled. Kept dormant so
-                    // future ICE opt-in can reuse the same credentials.
-                    turnEnabled = false
+                    // ICE and TURN remain OFF by default so direct SIP providers don't
+                    // stall on SDP offers with relay/ICE candidates. When the user
+                    // explicitly configures a TURN server and username in Settings →
+                    // Network, opt into ICE + TURN for symmetric/CGNAT media relay.
                     val gServer = resultOrNull(globalTurnServer)
-                    if (gServer != null && globalTurnUsername != null) {
-                        log(
-                            "INFO: TURN server configured but ICE is disabled — TURN ignored. Enable ICE to use the relay.",
-                            isError = false
-                        )
+                    val turnCredUser = globalTurnUsername?.trim()?.ifBlank { null }
+                    if (gServer != null && turnCredUser != null) {
+                        iceEnabled = true
+                        iceAggressiveNomination = true
+                        turnEnabled = true
+                        turnServer = gServer
+                        turnUserName = turnCredUser
+                        turnPassword = globalTurnPassword ?: ""
+                        turnConnType = when (globalTurnTransport) {
+                            TurnTransport.TCP -> pj_turn_tp_type.PJ_TURN_TP_TCP
+                            TurnTransport.TLS -> pj_turn_tp_type.PJ_TURN_TP_TLS
+                            TurnTransport.UDP -> pj_turn_tp_type.PJ_TURN_TP_UDP
+                        }
+                        log("Opt-in ICE + TURN enabled: server=$gServer transport=$globalTurnTransport", isError = false)
+                    } else {
+                        iceEnabled = false
+                        turnEnabled = false
                     }
                     sipStunUse = pjsua_stun_use.PJSUA_STUN_USE_DEFAULT
                     contactRewriteUse = 1

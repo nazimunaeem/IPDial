@@ -45,12 +45,6 @@ class IPDialApplication : Application() {
         }
 
         CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
-            try {
-                com.ipdial.util.RemoteConfigHelper.init(this@IPDialApplication)
-            } catch (e: Throwable) {
-                android.util.Log.e("IPDialApp", "RemoteConfig init failed", e)
-            }
-
             // Sync icon alias on startup
             try {
                 val repo = com.ipdial.data.repository.AccountRepository(this@IPDialApplication)

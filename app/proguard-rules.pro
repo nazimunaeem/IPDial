@@ -8,26 +8,17 @@
     native <methods>;
 }
 
-# Keep our SIP service
--keep class com.ipdial.service.** { *; }
--keep class com.ipdial.data.model.** { *; }
--keep class com.ipdial.data.repository.** { *; }
--keep class com.ipdial.ui.** { *; }
+# Keep targeted SIP components & callbacks
+-keep class com.ipdial.service.SipEngine { *; }
+-keep class com.ipdial.service.SipAccountDelegate { *; }
+-keep class com.ipdial.service.SipCallDelegate { *; }
+-keep class com.ipdial.service.SipService { *; }
+-keep class com.ipdial.service.SipConnectionService { *; }
+-keep class com.ipdial.service.BootReceiver { *; }
 
-# Firebase & Firestore
--keep class com.google.firebase.** { *; }
--dontwarn com.google.firebase.**
--keep class com.google.android.gms.tasks.** { *; }
--keep class com.google.firebase.firestore.** { *; }
--keep class com.google.firebase.common.** { *; }
--keep class com.google.firebase.components.** { *; }
--keep class com.google.firebase.inject.** { *; }
--keep class com.google.firebase.installations.** { *; }
--keep class com.google.firebase.platforminfo.** { *; }
--keep class com.google.firebase.heartbeatinfo.** { *; }
--keep class com.google.firebase.tracing.** { *; }
--keep class com.google.firebase.analytics.** { *; }
--keep class com.google.firebase.crashlytics.** { *; }
+# Keep data models & Room entities for Gson / Room
+-keep class com.ipdial.data.model.** { *; }
+-keep class com.ipdial.data.local.** { *; }
 
 # Room
 -keep class androidx.room.** { *; }
@@ -58,15 +49,3 @@
 -keep class androidx.compose.material.ripple.** { *; }
 -keep class androidx.compose.material3.ripple.** { *; }
 -keep interface androidx.compose.foundation.IndicationNodeFactory { *; }
-
-# More aggressive shrinking - Disabled assumed side effects for logs to keep some debugging info if needed
-#-assumenosideeffects class android.util.Log {
-#    public static *** d(...);
-#    public static *** v(...);
-#    public static *** i(...);
-#}
-
-# Start.io Ads
--keep class com.startapp.** { *; }
--dontwarn com.startapp.**
--keep class com.startapp.sdk.** { *; }

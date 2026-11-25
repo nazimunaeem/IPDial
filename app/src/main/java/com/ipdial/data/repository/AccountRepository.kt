@@ -23,6 +23,7 @@ import com.ipdial.data.model.RegStatus
 import com.ipdial.data.model.SipAccount
 import com.ipdial.data.model.ThemeMode
 import com.ipdial.data.model.TurnTransport
+import com.ipdial.util.CryptoHelper
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
@@ -289,21 +290,7 @@ class AccountRepository(private val context: Context) {
         return acc.copy(password = decryptPassword(acc.password))
     }
 
-    private fun encryptPassword(plain: String): String {
-        return try {
-            val bytes = plain.toByteArray(Charsets.UTF_8)
-            android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
-        } catch (_: Exception) {
-            plain
-        }
-    }
+    private fun encryptPassword(plain: String): String = CryptoHelper.encrypt(plain)
 
-    private fun decryptPassword(cipher: String): String {
-        return try {
-            val decoded = android.util.Base64.decode(cipher, android.util.Base64.NO_WRAP)
-            String(decoded, Charsets.UTF_8)
-        } catch (_: Exception) {
-            cipher
-        }
-    }
+    private fun decryptPassword(cipher: String): String = CryptoHelper.decrypt(cipher)
 }

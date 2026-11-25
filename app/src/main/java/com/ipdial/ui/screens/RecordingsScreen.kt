@@ -128,35 +128,33 @@ fun RecordingsScreen(
                             file = file,
                             isPlaying = playingFile == file,
                             onPlay = {
-                                vm.incrementRecordingAction {
-                                    if (playingFile == file) {
-                                        try {
-                                            mediaPlayer.stop()
-                                            mediaPlayer.reset()
-                                        } catch (e: Exception) {}
-                                        playingFile = null
-                                    } else {
-                                        try {
-                                            mediaPlayer.reset()
-                                            java.io.FileInputStream(file).use { fis ->
-                                                mediaPlayer.setDataSource(fis.fd)
-                                            }
-                                            mediaPlayer.setAudioAttributes(
-                                                android.media.AudioAttributes.Builder()
-                                                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
-                                                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
-                                                    .build()
-                                            )
-                                            mediaPlayer.prepare()
-                                            mediaPlayer.start()
-                                            playingFile = file
-                                            mediaPlayer.setOnCompletionListener { 
-                                                playingFile = null
-                                            }
-                                        } catch (e: Exception) {
-                                            playingFile = null
-                                            android.widget.Toast.makeText(context, "Playback failed", android.widget.Toast.LENGTH_SHORT).show()
+                                if (playingFile == file) {
+                                    try {
+                                        mediaPlayer.stop()
+                                        mediaPlayer.reset()
+                                    } catch (e: Exception) {}
+                                    playingFile = null
+                                } else {
+                                    try {
+                                        mediaPlayer.reset()
+                                        java.io.FileInputStream(file).use { fis ->
+                                            mediaPlayer.setDataSource(fis.fd)
                                         }
+                                        mediaPlayer.setAudioAttributes(
+                                            android.media.AudioAttributes.Builder()
+                                                .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                                                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                                                .build()
+                                        )
+                                        mediaPlayer.prepare()
+                                        mediaPlayer.start()
+                                        playingFile = file
+                                        mediaPlayer.setOnCompletionListener {
+                                            playingFile = null
+                                        }
+                                    } catch (e: Exception) {
+                                        playingFile = null
+                                        android.widget.Toast.makeText(context, "Playback failed", android.widget.Toast.LENGTH_SHORT).show()
                                     }
                                 }
                             },
@@ -174,22 +172,20 @@ fun RecordingsScreen(
                                 recordings = (iList + eList).sortedByDescending { it.lastModified() }
                             },
                             onShare = {
-                                vm.incrementRecordingAction {
-                                    try {
-                                        val uri = androidx.core.content.FileProvider.getUriForFile(
-                                            context,
-                                            "${context.packageName}.provider",
-                                            file
-                                        )
-                                        val intent = Intent(Intent.ACTION_SEND).apply {
-                                            type = "audio/*"
-                                            putExtra(Intent.EXTRA_STREAM, uri)
-                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                        }
-                                        context.startActivity(Intent.createChooser(intent, "Share/Export Recording"))
-                                    } catch (e: Exception) {
-                                        android.widget.Toast.makeText(context, "Error: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
+                                try {
+                                    val uri = androidx.core.content.FileProvider.getUriForFile(
+                                        context,
+                                        "${context.packageName}.provider",
+                                        file
+                                    )
+                                    val intent = Intent(Intent.ACTION_SEND).apply {
+                                        type = "audio/*"
+                                        putExtra(Intent.EXTRA_STREAM, uri)
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                     }
+                                    context.startActivity(Intent.createChooser(intent, "Share/Export Recording"))
+                                } catch (e: Exception) {
+                                    android.widget.Toast.makeText(context, "Error: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
                                 }
                             }
                         )

@@ -93,7 +93,6 @@ fun AppMenuBottomSheet(
     val context = LocalContext.current
     val accounts by vm.accounts.collectAsState()
     val activeAccount by vm.activeAccount.collectAsState()
-    val isPro by vm.isPro.collectAsState()
     val glassMode = LocalGlassMode.current
     val isGlass = glassMode != GlassMode.None
     val isQuartz = glassMode == GlassMode.Quartz

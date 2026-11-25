@@ -52,29 +52,32 @@ class SipAccountDelegate(
                 }
                 log("onRegState: Account $accountId code=$statusCode reason=$reasonText active=${ai.regIsActive}", false)
 
-                val status = when {
-                    statusCode == 401 || statusCode == 403 -> {
+                val status = classifyRegStatus(statusCode, ai.regIsActive)
+                when {
+                    statusCode == 401 || statusCode == 403 ->
                         log("REG_AUTH_FAILED: Account $accountId auth failed (code=$statusCode, reason=$reasonText).", true)
-                        RegStatus.ERROR
-                    }
-                    statusCode == 423 -> {
+                    statusCode == 423 ->
                         log("REG_TRANSIENT: Account $accountId code=423 ($reasonText) - stack will retry", false)
-                        RegStatus.REGISTERING
-                    }
-                    statusCode >= 300 -> {
+                    statusCode >= 300 ->
                         log("REG_ERROR: Account $accountId code=$statusCode ($reasonText)", true)
-                        RegStatus.ERROR
-                    }
-                    ai.regIsActive && (statusCode == 0 || statusCode in 200..299) -> RegStatus.REGISTERED
-                    !ai.regIsActive && statusCode in 200..299 -> RegStatus.UNREGISTERED
-                    statusCode == 0 || statusCode in 100..199 -> RegStatus.REGISTERING
-                    else -> RegStatus.UNREGISTERED
                 }
                 log("REG_UPDATE: Account $accountId -> $status (code=$statusCode, reason=$reasonText)", false)
                 _registrationEvents.tryEmit(RegistrationEvent(accountId, status, statusCode, reasonText))
             } catch (e: Throwable) {
                 log("onRegState failed for account $accountId: ${e.message}", true)
             }
+        }
+    }
+
+    companion object {
+        internal fun classifyRegStatus(statusCode: Int, isActive: Boolean): RegStatus = when {
+            statusCode == 401 || statusCode == 403 -> RegStatus.ERROR
+            statusCode == 423 -> RegStatus.REGISTERING
+            statusCode >= 300 -> RegStatus.ERROR
+            isActive && (statusCode == 0 || statusCode in 200..299) -> RegStatus.REGISTERED
+            !isActive && statusCode in 200..299 -> RegStatus.UNREGISTERED
+            statusCode == 0 || statusCode in 100..199 -> RegStatus.REGISTERING
+            else -> RegStatus.UNREGISTERED
         }
     }
 

@@ -98,12 +98,6 @@ fun ActivityLogScreen(
                 ),
                 modifier = Modifier.then(if (isGlass) Modifier.glass(RoundedCornerShape(0.dp)) else Modifier)
             )
-        },
-        bottomBar = {
-            com.ipdial.ui.components.StartIoBanner(
-                vm = vm,
-                modifier = Modifier.fillMaxWidth().padding(8.dp)
-            )
         }
     ) { innerPadding ->
         Box(

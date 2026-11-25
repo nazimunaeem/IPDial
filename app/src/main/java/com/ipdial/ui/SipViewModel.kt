@@ -115,15 +115,6 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     val deviceId: StateFlow<String> = repo.deviceId.map { it ?: "" }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
-    val isPro: StateFlow<Boolean> = MutableStateFlow(true)
-    val adsEnabled: StateFlow<Boolean> = MutableStateFlow(false)
-    val isSignedIn: StateFlow<Boolean> = MutableStateFlow(false)
-    val userDisplayId: StateFlow<String> = MutableStateFlow("")
-    val userCode: StateFlow<String> = MutableStateFlow("")
-    val showAdGate: StateFlow<Boolean> = MutableStateFlow(false)
-    val showAd: StateFlow<Boolean> = MutableStateFlow(false)
-    val adGateCallback: StateFlow<(() -> Unit)?> = MutableStateFlow(null)
-    val showProBlockPopup: StateFlow<Boolean> = MutableStateFlow(false)
     private val _inspection = MutableStateFlow(com.ipdial.data.model.ServerInspection())
     val inspection: StateFlow<com.ipdial.data.model.ServerInspection> = _inspection.asStateFlow()
 
@@ -166,15 +157,6 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     fun onSearchQueryChanged(q: String) {
         _searchQuery.value = q
     }
-    fun setAdsEnabled(enabled: Boolean) {}
-    fun dismissAd() {}
-    fun dismissAdGate() {}
-    fun dismissProPopup() {}
-    fun showProPopup() {}
-    fun showAdGate(context: Context? = null, onComplete: (() -> Unit)? = null) { onComplete?.invoke() }
-    fun triggerAdGate(context: Context) {}
-    fun incrementRecordingAction(context: Context? = null, onAction: () -> Unit = {}) { onAction() }
-    fun resetSettings(context: Context? = null) {}
 
     fun runServerInspection(host: String) {
         val targetHost = host.trim().removePrefix("sip:").substringBefore(":").substringBefore("@")
@@ -665,6 +647,17 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         repo.saveAccount(account)
         if (account.label.isNotBlank()) repo.addSavedLabel(account.label)
         if (account.domain.isNotBlank()) repo.addSavedHost(account.domain)
+    }
+
+    fun retryRegistration(account: SipAccount) {
+        if (!isNetworkConnected()) {
+            Toast.makeText(getApplication(), "No internet connection", Toast.LENGTH_SHORT).show()
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            repo.updateRegStatus(account.id, RegStatus.REGISTERING, "Registering...")
+            SipEngine.reregisterAccount(account)
+        }
     }
 
     fun deleteAccount(id: String) = viewModelScope.launch(Dispatchers.IO) {

@@ -10,7 +10,9 @@ name: Release
 #   KEY_ALIAS         signing key alias
 #   KEY_PASSWORD      signing key password
 #
-# See RELEASING.md for the full walkthrough.
+# To release a new version:
+#   1. Bump versionCode and versionName in app/build.gradle and commit/push.
+#   2. Trigger via Actions -> Release -> Run workflow, or push tag v<versionName>.
 
 on:
   workflow_dispatch:
@@ -84,10 +86,16 @@ jobs:
       - name: Configure Gradle for CI
         run: |
           {
+            echo "android.useAndroidX=true"
+            echo "android.nonTransitiveRClass=true"
+            echo "android.uniquePackageNames=false"
+            echo "android.r8.strictFullModeForKeepRules=false"
+            echo "android.r8.optimizedResourceShrinking=true"
             echo "android.disallowKotlinSourceSets=false"
             echo "org.gradle.jvmargs=-Xmx4g -XX:+UseG1GC"
             echo "org.gradle.daemon=false"
           } > gradle.properties
+          chmod +x gradlew
 
       - name: Decode signing keystore
         env:

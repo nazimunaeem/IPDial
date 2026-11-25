@@ -444,6 +444,7 @@ class SipService : Service() {
                         val active = activeConfigs[account.id]
                         val hasChanged = active == null ||
                                 active.username != account.username ||
+                                active.authUsername != account.authUsername ||
                                 active.password != account.password ||
                                 active.domain != account.domain ||
                                 active.proxy != account.proxy ||
@@ -529,6 +530,9 @@ class SipService : Service() {
                         if (authFailedAccounts.remove(accountId)) {
                             Log.i("SipService", "Account $accountId re-registered, removed from auth-failed watchlist")
                         }
+                    }
+                    effectiveStatus == RegStatus.REGISTERING -> {
+                        authFailedAccounts.remove(accountId)
                     }
                     effectiveStatus == RegStatus.ERROR && isPermanentAuthFailure(statusCode) -> {
                         authFailedAccounts.add(accountId)
