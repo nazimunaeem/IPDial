@@ -139,6 +139,9 @@ import kotlinx.coroutines.launch
 
 object AppState {
     var isForeground = false
+    // Mirrors the "Disable proximity sensor" setting so the SIP service can skip the
+    // proximity wake lock without touching DataStore from the service thread.
+    var disableProximitySensor = false
 }
 
 class MainActivity : ComponentActivity() {
@@ -152,6 +155,9 @@ class MainActivity : ComponentActivity() {
         if (results[Manifest.permission.READ_PHONE_STATE] == true) {
             vm.refreshSimAccounts()
         }
+        if (results[Manifest.permission.READ_CALL_LOG] == true) {
+            vm.refreshCallHistory()
+        }
         if (results[Manifest.permission.RECORD_AUDIO] == true) {
             startSipServiceIfPermitted()
         }
@@ -163,6 +169,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         AppState.isForeground = true
         vm.refreshSimAccounts()
+        vm.refreshCallHistory()
         val session = vm.callSession.value
         if (session != null && session.state != CallState.DISCONNECTED) {
             applyLockScreenFlags()
@@ -397,6 +404,8 @@ class MainActivity : ComponentActivity() {
             Manifest.permission.CALL_PHONE,
             Manifest.permission.READ_CONTACTS,
             Manifest.permission.WRITE_CONTACTS,
+            Manifest.permission.READ_CALL_LOG,
+            Manifest.permission.WRITE_CALL_LOG,
         )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             required.add(Manifest.permission.POST_NOTIFICATIONS)
@@ -497,6 +506,7 @@ fun IPDialApp() {
     val simLines by vm.simLines.collectAsState()
     val accounts by vm.accounts.collectAsState()
     val balances by vm.balances.collectAsState()
+    val selectedLineId by vm.selectedAccountId.collectAsState()
     val enabledAccounts = remember(accounts) {
         accounts.filter { it.isEnabled }
     }
@@ -507,10 +517,24 @@ fun IPDialApp() {
             simLines = simLines,
             enabledAccounts = enabledAccounts,
             balances = balances,
+            selectedLineId = selectedLineId,
             onSimSelected = { vm.proceedWithSimCall(it) },
             onAccountSelected = { vm.proceedWithCallAfterAccountSelection(it) },
             onDismiss = { vm.dismissAccountSelection() }
         )
+    }
+
+    // "Open dialpad at launch" — jump to the keypad the first time the setting resolves.
+    val openDialpadAtLaunch by vm.openDialpadAtLaunch.collectAsState()
+    var appliedLaunchTab by remember { mutableStateOf(false) }
+    LaunchedEffect(openDialpadAtLaunch, currentRoute) {
+        if (!appliedLaunchTab && openDialpadAtLaunch && currentRoute == NavDest.Home.route) {
+            appliedLaunchTab = true
+            navController.navigate(NavDest.Keypad.route) {
+                popUpTo(NavDest.Home.route) { inclusive = true }
+                launchSingleTop = true
+            }
+        }
     }
 
     val isGlass = com.ipdial.ui.theme.LocalGlassMode.current != com.ipdial.ui.theme.GlassMode.None

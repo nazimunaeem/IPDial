@@ -13,6 +13,7 @@ import android.net.NetworkRequest
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.provider.CallLog
 import android.telephony.SubscriptionManager
 import android.widget.Toast
 import androidx.compose.ui.text.TextRange
@@ -20,6 +21,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.gson.Gson
+import com.ipdial.AppState
 import com.ipdial.data.model.AudioDeviceMode
 import com.ipdial.data.model.CallDirection
 import com.ipdial.data.model.CallLogEntry
@@ -38,6 +40,7 @@ import com.ipdial.data.model.TurnTransport
 import com.ipdial.data.repository.AccountRepository
 import com.ipdial.data.repository.CallLogRepository
 import com.ipdial.data.repository.ContactsRepository
+import com.ipdial.data.repository.SystemCallLogRepository
 import com.ipdial.service.SipAudioController
 import com.ipdial.service.SipEngine
 import com.ipdial.service.sim.DefaultDialerHelper
@@ -80,8 +83,18 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     private val _simLines = MutableStateFlow<List<SimLine>>(emptyList())
     val simLines: StateFlow<List<SimLine>> = _simLines.asStateFlow()
 
-    val alwaysAskLine: StateFlow<Boolean> = repo.alwaysAskDialLine
+    val dialpadVibrate: StateFlow<Boolean> = repo.dialpadVibrate
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+    val dialpadBeep: StateFlow<Boolean> = repo.dialpadBeep
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    val hideDialpadDigits: StateFlow<Boolean> = repo.hideDialpadDigits
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    val openDialpadAtLaunch: StateFlow<Boolean> = repo.openDialpadAtLaunch
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    val groupSubsequentCalls: StateFlow<Boolean> = repo.groupSubsequentCalls
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+    val disableProximitySensor: StateFlow<Boolean> = repo.disableProximitySensor
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     private val _showFullIncomingScreen = MutableStateFlow(false)
     val showFullIncomingScreen: StateFlow<Boolean> = _showFullIncomingScreen.asStateFlow()
@@ -327,11 +340,7 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         _showAccountSelectionDialog.value = false
         val num = _pendingCallNumber.value
         _pendingCallNumber.value = null
-        if (!alwaysAskLine.value) {
-            selectAccount(accountId)
-        } else {
-            rememberDialLine(accountId)
-        }
+        selectAccount(accountId)
         val account = accounts.value.firstOrNull { it.id == accountId && it.isEnabled } ?: return
         if (!num.isNullOrBlank()) {
             placeSipCallInternal(num, account)
@@ -342,11 +351,7 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         _showAccountSelectionDialog.value = false
         val num = _pendingCallNumber.value
         _pendingCallNumber.value = null
-        if (!alwaysAskLine.value) {
-            selectAccount(simLine.id)
-        } else {
-            rememberDialLine(simLine.id)
-        }
+        selectAccount(simLine.id)
         if (!num.isNullOrBlank()) {
             placeSimCallInternal(num, simLine)
         }
@@ -382,13 +387,12 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                 sm.removeOnSubscriptionsChangedListener(listener)
             }
         } catch (_: Throwable) {}
+        try {
+            getApplication<Application>().contentResolver.unregisterContentObserver(callLogObserver)
+        } catch (_: Throwable) {}
         subscriptionManager = null
         subscriptionsChangedListener = null
         super.onCleared()
-    }
-
-    fun setAlwaysAskLine(ask: Boolean) = viewModelScope.launch {
-        repo.setAlwaysAskDialLine(ask)
     }
 
     fun backspace() { dialBackspace() }
@@ -475,6 +479,12 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     fun setDnd(enabled: Boolean) = viewModelScope.launch { repo.setDnd(enabled) }
     fun setGlobalVibrate(enabled: Boolean) = viewModelScope.launch { repo.setGlobalVibrate(enabled) }
     fun setFullScreenContactPhoto(enabled: Boolean) = viewModelScope.launch { repo.setFullScreenContactPhoto(enabled) }
+    fun setDialpadVibrate(enabled: Boolean) = viewModelScope.launch { repo.setDialpadVibrate(enabled) }
+    fun setDialpadBeep(enabled: Boolean) = viewModelScope.launch { repo.setDialpadBeep(enabled) }
+    fun setHideDialpadDigits(hidden: Boolean) = viewModelScope.launch { repo.setHideDialpadDigits(hidden) }
+    fun setOpenDialpadAtLaunch(enabled: Boolean) = viewModelScope.launch { repo.setOpenDialpadAtLaunch(enabled) }
+    fun setGroupSubsequentCalls(enabled: Boolean) = viewModelScope.launch { repo.setGroupSubsequentCalls(enabled) }
+    fun setDisableProximitySensor(disabled: Boolean) = viewModelScope.launch { repo.setDisableProximitySensor(disabled) }
     
     fun setFontSize(context: Context, multiplier: Float) = viewModelScope.launch { repo.setFontSizeMultiplier(multiplier) }
     fun setAppIcon(context: Context, alias: String) = viewModelScope.launch { repo.setAppIconAlias(alias) }
@@ -506,6 +516,10 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
 
     suspend fun clearCallHistory() {
         logRepo.deleteAll()
+        withContext(Dispatchers.IO) {
+            SystemCallLogRepository.clear(getApplication())
+        }
+        _deviceCallLog.value = emptyList()
     }
 
     // Unified Call Engine state (SIP calls + cellular SIM InCallService calls)
@@ -535,9 +549,6 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     private val _selectedAccountId = MutableStateFlow<String?>(null)
     val selectedAccountId: StateFlow<String?> = _selectedAccountId.asStateFlow()
 
-    // One-shot line chosen from the dialpad chip; overrides "ask every time" for the next call.
-    private val _dialLineOverride = MutableStateFlow<String?>(null)
-
     private val _pendingCallNumber = MutableStateFlow<String?>(null)
     val pendingCallNumber: StateFlow<String?> = _pendingCallNumber.asStateFlow()
 
@@ -561,8 +572,11 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     private val _contacts = MutableStateFlow<List<Contact>>(emptyList())
     val contacts: StateFlow<List<Contact>> = _contacts.asStateFlow()
 
-    val callLog: StateFlow<List<CallLogEntry>> = logRepo.entries
-        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    private val _deviceCallLog = MutableStateFlow<List<CallLogEntry>>(emptyList())
+
+    val callLog: StateFlow<List<CallLogEntry>> = combine(logRepo.entries, _deviceCallLog) { appEntries, deviceEntries ->
+        mergeCallLogs(appEntries, deviceEntries)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     // Dialer state
     private val _dialString = MutableStateFlow(TextFieldValue(""))
@@ -574,6 +588,12 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     // Keeps the SIM line list fresh when SIMs are inserted/removed or the default data SIM changes.
     private var subscriptionManager: SubscriptionManager? = null
     private var subscriptionsChangedListener: SubscriptionManager.OnSubscriptionsChangedListener? = null
+
+    private val callLogObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) {
+            refreshCallHistory()
+        }
+    }
 
     init {
         refreshSimAccounts()
@@ -591,6 +611,17 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
             }
         } catch (_: Throwable) {
             // READ_PHONE_STATE missing or telephony unavailable — manual refresh still works.
+        }
+        try {
+            getApplication<Application>().contentResolver.registerContentObserver(
+                CallLog.Calls.CONTENT_URI,
+                true,
+                callLogObserver
+            )
+        } catch (_: Throwable) {}
+        refreshCallHistory()
+        viewModelScope.launch {
+            repo.disableProximitySensor.collect { AppState.disableProximitySensor = it }
         }
         viewModelScope.launch {
             val savedLine = repo.lastDialLineId.first()
@@ -668,16 +699,6 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         rememberDialLine(id)
     }
 
-    /**
-     * Line picked explicitly from the dialpad chip. Applies to the next outgoing call even when
-     * "Ask SIM / IP Account on Call" is enabled, so the choice the user just made is respected.
-     */
-    fun chooseDialLine(id: String) {
-        _selectedAccountId.value = id
-        _dialLineOverride.value = id
-        rememberDialLine(id)
-    }
-
     private fun hasActiveSipSession(): Boolean {
         val session = SipEngine.callSession.value ?: return false
         return session.state != CallState.DISCONNECTED
@@ -693,13 +714,23 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     fun makeCall(overrideNumber: String? = null) {
         val rawInput = (overrideNumber ?: _dialString.value.text).trim()
         if (rawInput.isBlank()) return
+        promptLineSelection(rawInput)
+    }
 
+    /**
+     * Always asks which line to use (SIM cards + IP accounts) before dialing.
+     * History call-backs pass the original line so the modal can pre-highlight it.
+     */
+    fun promptLineSelection(
+        rawInput: String,
+        preferredLineId: String? = null,
+        preferredLabel: String? = null
+    ) {
         val currentSims = SimPhoneAccountHelper.getAvailableSimLines(getApplication())
         _simLines.value = currentSims
         val enabledAccounts = accounts.value.filter { it.isEnabled }
-        val totalLines = currentSims.size + enabledAccounts.size
 
-        if (totalLines == 0) {
+        if (currentSims.isEmpty() && enabledAccounts.isEmpty()) {
             if (!isNetworkConnected()) {
                 Toast.makeText(getApplication(), "No internet connection", Toast.LENGTH_SHORT).show()
             } else {
@@ -708,37 +739,20 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
 
-        val overrideId = _dialLineOverride.value
-        _dialLineOverride.value = null
-        val selectedId = overrideId ?: _selectedAccountId.value
-        val selectedSim = currentSims.firstOrNull { it.id == selectedId }
-        val selectedSip = enabledAccounts.firstOrNull { it.id == selectedId }
-        val lineChosen = overrideId != null && (selectedSim != null || selectedSip != null)
-        val hasValidPreselection = lineChosen ||
-            (!alwaysAskLine.value && (selectedSim != null || selectedSip != null))
-        val staleSelection = selectedId != null && selectedSim == null && selectedSip == null
-
-        if (totalLines > 1 && (!hasValidPreselection || staleSelection)) {
-            _pendingCallNumber.value = rawInput
-            _showAccountSelectionDialog.value = true
-            return
+        val preferredSim = currentSims.firstOrNull {
+            it.id == preferredLineId || it.handle.id == preferredLineId ||
+                (!preferredLabel.isNullOrBlank() && it.label.equals(preferredLabel, ignoreCase = true))
+        }
+        val preferredSip = enabledAccounts.firstOrNull {
+            it.id == preferredLineId || (!preferredLabel.isNullOrBlank() && it.label.equals(preferredLabel, ignoreCase = true))
+        }
+        val resolvedPreference = preferredSim?.id ?: preferredSip?.id ?: _selectedAccountId.value
+        if (resolvedPreference != null) {
+            _selectedAccountId.value = resolvedPreference
         }
 
-        when {
-            selectedSim != null && (lineChosen || !alwaysAskLine.value) ->
-                placeSimCallInternal(rawInput, selectedSim)
-            selectedSip != null && (lineChosen || !alwaysAskLine.value) ->
-                placeSipCallInternal(rawInput, selectedSip)
-            currentSims.size == 1 && enabledAccounts.isEmpty() -> placeSimCallInternal(rawInput, currentSims.first())
-            else -> {
-                val account = activeAccount.value ?: enabledAccounts.firstOrNull()
-                if (account != null) {
-                    placeSipCallInternal(rawInput, account)
-                } else if (currentSims.isNotEmpty()) {
-                    placeSimCallInternal(rawInput, currentSims.first())
-                }
-            }
-        }
+        _pendingCallNumber.value = rawInput
+        _showAccountSelectionDialog.value = true
     }
 
     private fun placeSimCallInternal(rawInput: String, simLine: SimLine) {
@@ -952,28 +966,59 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun deleteCallLog(entry: CallLogEntry) = viewModelScope.launch {
-        logRepo.delete(entry)
+        if (entry.id.startsWith("sys_")) {
+            withContext(Dispatchers.IO) {
+                SystemCallLogRepository.delete(getApplication(), entry.id)
+            }
+            refreshCallHistory()
+        } else {
+            logRepo.delete(entry)
+        }
     }
 
     fun callBack(entry: CallLogEntry) {
         val number = cleanUri(entry.remoteUri)
         if (number.isBlank()) return
-        if (entry.transport == CallTransport.SIM) {
-            val simLines = SimPhoneAccountHelper.getAvailableSimLines(getApplication())
-            val sim = simLines.firstOrNull { it.id == entry.accountId }
-                ?: simLines.firstOrNull { it.label.equals(entry.lineLabel, ignoreCase = true) }
-            if (sim != null) {
-                placeSimCallInternal(number, sim)
-                return
+        promptLineSelection(
+            rawInput = number,
+            preferredLineId = entry.accountId.takeIf { it.isNotBlank() },
+            preferredLabel = entry.lineLabel.takeIf { it.isNotBlank() }
+        )
+    }
+
+    fun refreshCallHistory() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _deviceCallLog.value = SystemCallLogRepository.read(getApplication())
+        }
+    }
+
+    fun importCallLog(entries: List<CallLogEntry>) = viewModelScope.launch(Dispatchers.IO) {
+        logRepo.importAll(entries)
+    }
+
+    private fun mergeCallLogs(
+        appEntries: List<CallLogEntry>,
+        deviceEntries: List<CallLogEntry>
+    ): List<CallLogEntry> {
+        if (deviceEntries.isEmpty()) return appEntries
+        val merged = ArrayList<CallLogEntry>(appEntries.size + deviceEntries.size)
+        merged.addAll(appEntries)
+        for (deviceEntry in deviceEntries) {
+            val deviceKey = digitsKey(deviceEntry.remoteUri)
+            val isDuplicate = deviceKey.isNotEmpty() && appEntries.any { appEntry ->
+                digitsKey(appEntry.remoteUri) == deviceKey &&
+                    kotlin.math.abs(appEntry.timestampMs - deviceEntry.timestampMs) <= 30_000L
             }
-        } else {
-            val account = accounts.value.firstOrNull { it.id == entry.accountId && it.isEnabled }
-            if (account != null) {
-                placeSipCallInternal(number, account)
-                return
+            if (!isDuplicate) {
+                merged.add(deviceEntry)
             }
         }
-        makeCall(number)
+        return merged.sortedByDescending { it.timestampMs }
+    }
+
+    private fun digitsKey(uri: String): String {
+        val digits = uri.filter { it.isDigit() }
+        return if (digits.length > 9) digits.takeLast(9) else digits
     }
 
     fun logCall(entry: CallLogEntry) = viewModelScope.launch {

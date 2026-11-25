@@ -46,6 +46,7 @@ import com.ipdial.ui.theme.glass
 import com.ipdial.util.UpdateChecker
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.UUID
 
 val fontSizeOptions = listOf(
     "Small" to 0.85f,
@@ -76,7 +77,6 @@ fun SettingsScreen(
     val fontSizeMultiplier by vm.fontSizeMultiplier.collectAsState()
     val appIconAlias by vm.appIconAlias.collectAsState()
     val keypadDesign by vm.keypadDesign.collectAsState()
-    val alwaysAskLine by vm.alwaysAskLine.collectAsState()
 
     var isDefaultDialer by remember {
         mutableStateOf(com.ipdial.service.sim.DefaultDialerHelper.isDefaultDialer(context))
@@ -193,6 +193,94 @@ fun SettingsScreen(
                     android.widget.Toast.makeText(context, label, android.widget.Toast.LENGTH_SHORT).show()
                 }
             }
+        }
+    }
+
+    // Export / import the full call history (app + device log) as JSON.
+    val exportHistoryLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val count = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    val entries = vm.callLog.value
+                    val array = org.json.JSONArray()
+                    entries.forEach { entry ->
+                        array.put(org.json.JSONObject().apply {
+                            put("id", entry.id)
+                            put("accountId", entry.accountId)
+                            put("remoteUri", entry.remoteUri)
+                            put("remoteDisplayName", entry.remoteDisplayName)
+                            put("direction", entry.direction.name)
+                            put("missed", entry.missed)
+                            put("timestampMs", entry.timestampMs)
+                            put("durationSeconds", entry.durationSeconds)
+                            put("transport", entry.transport.name)
+                            put("lineLabel", entry.lineLabel)
+                        })
+                    }
+                    context.contentResolver.openOutputStream(uri)?.use { out ->
+                        out.write(array.toString(2).toByteArray())
+                    }
+                    entries.size
+                } catch (e: Exception) {
+                    -1
+                }
+            }
+            android.widget.Toast.makeText(
+                context,
+                if (count >= 0) "Exported $count call(s)" else "Export failed",
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    val importHistoryLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val count = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    val text = context.contentResolver.openInputStream(uri)
+                        ?.bufferedReader()
+                        ?.use { it.readText() }
+                        .orEmpty()
+                    val array = org.json.JSONArray(text)
+                    val entries = ArrayList<CallLogEntry>(array.length())
+                    for (i in 0 until array.length()) {
+                        val obj = array.optJSONObject(i) ?: continue
+                        entries.add(
+                            CallLogEntry(
+                                id = obj.optString("id").ifBlank { UUID.randomUUID().toString() },
+                                accountId = obj.optString("accountId"),
+                                remoteUri = obj.optString("remoteUri"),
+                                remoteDisplayName = obj.optString("remoteDisplayName"),
+                                direction = runCatching {
+                                    CallDirection.valueOf(obj.optString("direction"))
+                                }.getOrDefault(CallDirection.OUTGOING),
+                                missed = obj.optBoolean("missed", false),
+                                timestampMs = obj.optLong("timestampMs", System.currentTimeMillis()),
+                                durationSeconds = obj.optLong("durationSeconds", 0L),
+                                transport = runCatching {
+                                    CallTransport.valueOf(obj.optString("transport"))
+                                }.getOrDefault(CallTransport.SIP),
+                                lineLabel = obj.optString("lineLabel"),
+                            )
+                        )
+                    }
+                    vm.importCallLog(entries)
+                    entries.size
+                } catch (e: Exception) {
+                    -1
+                }
+            }
+            android.widget.Toast.makeText(
+                context,
+                if (count >= 0) "Imported $count call(s)" else "Import failed — invalid file",
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
         }
     }
 
@@ -358,32 +446,136 @@ fun SettingsScreen(
                 }
             }
 
-            stickyHeader { SettingsSection("Updates") }
+            // ── Accounts & Lines ──
+            stickyHeader { SettingsSection("Accounts & Lines") }
             item {
                 SettingsRow(
-                    icon = Icons.Default.SystemUpdate,
-                    title = "Check for Updates",
-                    subtitle = if (checkingUpdate) "Checking…" else "Current version: $currentVersion",
-                    trailing = { if (checkingUpdate) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp) },
+                    icon = Icons.Default.PhoneAndroid,
+                    title = "Default Phone App",
+                    subtitle = if (isDefaultDialer) {
+                        "Active — IPDial handles SIM & SIP call screens"
+                    } else {
+                        "Tap to set IPDial as default phone app for SIM call UI"
+                    },
+                    trailing = {
+                        if (isDefaultDialer) {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = "Active",
+                                tint = Color(0xFF2E7D32)
+                            )
+                        }
+                    },
                     onClick = {
-                        if (!checkingUpdate) {
-                            checkingUpdate = true
-                            scope.launch {
-                                val release = UpdateChecker.checkForUpdates(currentVersion)
-                                checkingUpdate = false
-                                if (release != null) {
-                                    updateRelease = release
-                                    showUpdateDialog = true
-                                } else {
-                                    android.widget.Toast.makeText(context, "You're on the latest version!", android.widget.Toast.LENGTH_SHORT).show()
-                                }
+                        val intent = com.ipdial.service.sim.DefaultDialerHelper.createRequestDefaultDialerIntent(context)
+                        if (intent != null) {
+                            try {
+                                defaultDialerLauncher.launch(intent)
+                            } catch (_: Exception) {
+                                android.widget.Toast.makeText(
+                                    context,
+                                    "Could not open Default Phone App settings",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
                             }
+                        } else {
+                            android.widget.Toast.makeText(
+                                context,
+                                if (isDefaultDialer) "IPDial is already your Default Phone App" else "Default dialer prompt unavailable",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
                         }
                     }
                 )
             }
 
-            stickyHeader { SettingsSection("Audio") }
+            // ── Dialpad ──
+            stickyHeader { SettingsSection("Dialpad") }
+            item {
+                SettingsRow(
+                    icon = Icons.Default.GridOn,
+                    title = "Keypad Design",
+                    subtitle = if (keypadDesign == KeypadDesign.Rounded) "Fully Rounded" else "Grid",
+                    trailing = {
+                        Switch(
+                            checked = keypadDesign == KeypadDesign.Rounded,
+                            onCheckedChange = {
+                                vm.setKeypadDesign(context, if (it) KeypadDesign.Rounded else KeypadDesign.Grid)
+                            }
+                        )
+                    },
+                    onClick = {
+                        vm.setKeypadDesign(context, if (keypadDesign == KeypadDesign.Rounded) KeypadDesign.Grid else KeypadDesign.Rounded)
+                    }
+                )
+            }
+
+            item {
+                val dialpadVibrate by vm.dialpadVibrate.collectAsState()
+                SettingsRow(
+                    icon = Icons.Default.Vibration,
+                    title = "Vibrate on Keypress",
+                    subtitle = "Haptic feedback while dialing",
+                    trailing = {
+                        Switch(
+                            checked = dialpadVibrate,
+                            onCheckedChange = { vm.setDialpadVibrate(it) }
+                        )
+                    },
+                    onClick = { vm.setDialpadVibrate(!dialpadVibrate) }
+                )
+            }
+
+            item {
+                val dialpadBeep by vm.dialpadBeep.collectAsState()
+                SettingsRow(
+                    icon = Icons.Default.VolumeUp,
+                    title = "Dialpad Beeps",
+                    subtitle = "Play a DTMF tone for each key press",
+                    trailing = {
+                        Switch(
+                            checked = dialpadBeep,
+                            onCheckedChange = { vm.setDialpadBeep(it) }
+                        )
+                    },
+                    onClick = { vm.setDialpadBeep(!dialpadBeep) }
+                )
+            }
+
+            item {
+                val hideDialpadDigits by vm.hideDialpadDigits.collectAsState()
+                SettingsRow(
+                    icon = Icons.Default.VisibilityOff,
+                    title = "Hide Dialpad Numbers",
+                    subtitle = "Show only letters on the keypad",
+                    trailing = {
+                        Switch(
+                            checked = hideDialpadDigits,
+                            onCheckedChange = { vm.setHideDialpadDigits(it) }
+                        )
+                    },
+                    onClick = { vm.setHideDialpadDigits(!hideDialpadDigits) }
+                )
+            }
+
+            item {
+                val openDialpadAtLaunch by vm.openDialpadAtLaunch.collectAsState()
+                SettingsRow(
+                    icon = Icons.Default.Dialpad,
+                    title = "Open Dialpad at Launch",
+                    subtitle = "Start on the keypad instead of recents",
+                    trailing = {
+                        Switch(
+                            checked = openDialpadAtLaunch,
+                            onCheckedChange = { vm.setOpenDialpadAtLaunch(it) }
+                        )
+                    },
+                    onClick = { vm.setOpenDialpadAtLaunch(!openDialpadAtLaunch) }
+                )
+            }
+
+            // ── Calls ──
+            stickyHeader { SettingsSection("Calls") }
             item {
                 val ringtoneLabel = when {
                     globalRingtone == null -> "Default"
@@ -436,76 +628,6 @@ fun SettingsScreen(
                 )
             }
 
-            stickyHeader { SettingsSection("Audio Codecs") }
-            item {
-                SettingsRow(
-                    icon = Icons.Default.Audiotrack,
-                    title = "Audio Codecs",
-                    subtitle = activeAccount?.codec?.name ?: "Configure Codecs",
-                    onClick = {
-                        onNavigateToCodecs()
-                    }
-                )
-            }
-
-            stickyHeader { SettingsSection("SIM & Calling (DialDuo)") }
-            item {
-                SettingsRow(
-                    icon = Icons.Default.PhoneAndroid,
-                    title = "Default Phone App",
-                    subtitle = if (isDefaultDialer) {
-                        "Active — IPDial handles SIM & SIP call screens"
-                    } else {
-                        "Tap to set IPDial as default phone app for SIM call UI"
-                    },
-                    trailing = {
-                        if (isDefaultDialer) {
-                            Icon(
-                                imageVector = Icons.Default.CheckCircle,
-                                contentDescription = "Active",
-                                tint = Color(0xFF2E7D32)
-                            )
-                        }
-                    },
-                    onClick = {
-                        val intent = com.ipdial.service.sim.DefaultDialerHelper.createRequestDefaultDialerIntent(context)
-                        if (intent != null) {
-                            try {
-                                defaultDialerLauncher.launch(intent)
-                            } catch (_: Exception) {
-                                android.widget.Toast.makeText(
-                                    context,
-                                    "Could not open Default Phone App settings",
-                                    android.widget.Toast.LENGTH_SHORT
-                                ).show()
-                            }
-                        } else {
-                            android.widget.Toast.makeText(
-                                context,
-                                if (isDefaultDialer) "IPDial is already your Default Phone App" else "Default dialer prompt unavailable",
-                                android.widget.Toast.LENGTH_SHORT
-                            ).show()
-                        }
-                    }
-                )
-            }
-
-            item {
-                SettingsRow(
-                    icon = Icons.Default.SimCard,
-                    title = "Ask SIM / IP Account on Call",
-                    subtitle = "Show SIM & IP account picker whenever dialing",
-                    trailing = {
-                        Switch(
-                            checked = alwaysAskLine,
-                            onCheckedChange = { vm.setAlwaysAskLine(it) }
-                        )
-                    },
-                    onClick = { vm.setAlwaysAskLine(!alwaysAskLine) }
-                )
-            }
-
-            stickyHeader { SettingsSection("General") }
             item {
                 val fullScreenPhoto by vm.fullScreenContactPhoto.collectAsState()
                 SettingsRow(
@@ -523,46 +645,6 @@ fun SettingsScreen(
             }
 
             item {
-                val fontSizeLabel = fontSizeOptions.find { it.second == fontSizeMultiplier }?.first ?: "Normal"
-                SettingsRow(
-                    icon = Icons.Default.TextFields,
-                    title = "Font Size",
-                    subtitle = fontSizeLabel,
-                    onClick = { showFontSizeDialog = true }
-                )
-            }
-
-            item {
-                SettingsRow(
-                    icon = Icons.Default.GridOn,
-                    title = "Keypad Design",
-                    subtitle = if (keypadDesign == KeypadDesign.Rounded) "Fully Rounded" else "Grid",
-                    trailing = {
-                        Switch(
-                            checked = keypadDesign == KeypadDesign.Rounded,
-                            onCheckedChange = {
-                                vm.setKeypadDesign(context, if (it) KeypadDesign.Rounded else KeypadDesign.Grid)
-                            }
-                        )
-                    },
-                    onClick = {
-                        vm.setKeypadDesign(context, if (keypadDesign == KeypadDesign.Rounded) KeypadDesign.Grid else KeypadDesign.Rounded)
-                    }
-                )
-            }
-
-            item {
-                SettingsRow(
-                    icon = Icons.Default.Brush,
-                    title = "Choose App Icon",
-                    subtitle = appIconAlias,
-                    onClick = {
-                        showAppIconDialog = true
-                    }
-                )
-            }
-
-            item {
                 val mode by vm.incomingCallMode.collectAsState()
                 SettingsRow(
                     icon = Icons.Default.Call,
@@ -571,6 +653,114 @@ fun SettingsScreen(
                     onClick = {
                         onNavigateToIncomingCallStyle()
                     }
+                )
+            }
+
+            item {
+                val dndEnabled by vm.dndEnabled.collectAsState()
+                SettingsRow(
+                    icon = Icons.Default.DoNotDisturbOn,
+                    title = "Do Not Disturb",
+                    subtitle = "Silence ringtone & vibration (calls still received)",
+                    trailing = { Switch(checked = dndEnabled, onCheckedChange = { vm.setDnd(it) }) },
+                    onClick = { vm.setDnd(!dndEnabled) }
+                )
+            }
+
+            item {
+                val disableProximity by vm.disableProximitySensor.collectAsState()
+                SettingsRow(
+                    icon = Icons.Default.Sensors,
+                    title = "Disable Proximity Sensor",
+                    subtitle = "Keep the screen on during calls (prevents black-screen issues)",
+                    trailing = {
+                        Switch(
+                            checked = disableProximity,
+                            onCheckedChange = { vm.setDisableProximitySensor(it) }
+                        )
+                    },
+                    onClick = { vm.setDisableProximitySensor(!disableProximity) }
+                )
+            }
+
+            item {
+                val groupCalls by vm.groupSubsequentCalls.collectAsState()
+                SettingsRow(
+                    icon = Icons.Default.CallMerge,
+                    title = "Group Subsequent Calls",
+                    subtitle = "Combine repeated calls with the same contact",
+                    trailing = {
+                        Switch(
+                            checked = groupCalls,
+                            onCheckedChange = { vm.setGroupSubsequentCalls(it) }
+                        )
+                    },
+                    onClick = { vm.setGroupSubsequentCalls(!groupCalls) }
+                )
+            }
+
+            // ── Call History ──
+            stickyHeader { SettingsSection("Call History") }
+            item {
+                SettingsRow(
+                    icon = Icons.Default.FileUpload,
+                    title = "Export Call History",
+                    subtitle = "Save all call history to a JSON file",
+                    onClick = { exportHistoryLauncher.launch("ipdial-call-history.json") }
+                )
+            }
+
+            item {
+                SettingsRow(
+                    icon = Icons.Default.FileDownload,
+                    title = "Import Call History",
+                    subtitle = "Restore call history from a JSON backup",
+                    onClick = { importHistoryLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) }
+                )
+            }
+
+            item {
+                SettingsRow(
+                    icon = Icons.Default.DeleteSweep,
+                    title = "Clear Call History",
+                    subtitle = "Remove all call log entries",
+                    onClick = {
+                        scope.launch {
+                            vm.clearCallHistory()
+                            android.widget.Toast.makeText(context, "Call history cleared", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                )
+            }
+
+            // ── Recording ──
+            stickyHeader { SettingsSection("Recording") }
+            item {
+                val autoRecordEnabled by vm.autoRecordEnabled.collectAsState()
+                SettingsRow(
+                    icon = Icons.Default.RadioButtonChecked,
+                    title = "Auto Record Calls",
+                    subtitle = "Automatically record every call",
+                    trailing = {
+                        Switch(
+                            checked = autoRecordEnabled,
+                            onCheckedChange = { vm.setAutoRecord(context, it) },
+                            enabled = true
+                        )
+                    },
+                    onClick = { vm.setAutoRecord(context, !autoRecordEnabled) }
+                )
+            }
+
+            // ── Appearance ──
+            stickyHeader { SettingsSection("Appearance") }
+            item {
+                val fontSizeLabel = fontSizeOptions.find { it.second == fontSizeMultiplier }?.first ?: "Normal"
+                SettingsRow(
+                    icon = Icons.Default.TextFields,
+                    title = "Font Size",
+                    subtitle = fontSizeLabel,
+                    onClick = { showFontSizeDialog = true }
                 )
             }
 
@@ -593,58 +783,30 @@ fun SettingsScreen(
             }
 
             item {
-                val dndEnabled by vm.dndEnabled.collectAsState()
                 SettingsRow(
-                    icon = Icons.Default.DoNotDisturbOn,
-                    title = "Do Not Disturb",
-                    subtitle = "Silence ringtone & vibration (calls still received)",
-                    trailing = { Switch(checked = dndEnabled, onCheckedChange = { vm.setDnd(it) }) },
-                    onClick = { vm.setDnd(!dndEnabled) }
-                )
-            }
-
-            item { SettingsSection("Recording") }
-            item {
-                val autoRecordEnabled by vm.autoRecordEnabled.collectAsState()
-                SettingsRow(
-                    icon = Icons.Default.RadioButtonChecked,
-                    title = "Auto Record Calls",
-                    subtitle = "Automatically record every call",
-                    trailing = {
-                        Switch(
-                            checked = autoRecordEnabled,
-                            onCheckedChange = { vm.setAutoRecord(context, it) },
-                            enabled = true
-                        )
-                    },
-                    onClick = { vm.setAutoRecord(context, !autoRecordEnabled) }
-                )
-            }
-
-            stickyHeader { SettingsSection("System") }
-            item {
-                SettingsRow(
-                    icon = Icons.AutoMirrored.Filled.List,
-                    title = "Activity Log",
-                    subtitle = "View full system activity logs",
-                    onClick = { onNavigateToLogs() }
-                )
-            }
-
-            item {
-                SettingsRow(
-                    icon = Icons.Default.DeleteSweep,
-                    title = "Clear Call History",
-                    subtitle = "Remove all call log entries",
+                    icon = Icons.Default.Brush,
+                    title = "Choose App Icon",
+                    subtitle = appIconAlias,
                     onClick = {
-                        scope.launch {
-                            vm.clearCallHistory()
-                            android.widget.Toast.makeText(context, "Call history cleared", android.widget.Toast.LENGTH_SHORT).show()
-                        }
+                        showAppIconDialog = true
                     }
                 )
             }
 
+            // ── Audio & Codecs ──
+            stickyHeader { SettingsSection("Audio & Codecs") }
+            item {
+                SettingsRow(
+                    icon = Icons.Default.Audiotrack,
+                    title = "Audio Codecs",
+                    subtitle = activeAccount?.codec?.name ?: "Configure Codecs",
+                    onClick = {
+                        onNavigateToCodecs()
+                    }
+                )
+            }
+
+            // ── Network ──
             stickyHeader { SettingsSection("Network") }
             item {
                 SettingsRow(
@@ -666,6 +828,18 @@ fun SettingsScreen(
                     onClick = { showNatDialog = true }
                 )
             }
+
+            // ── System ──
+            stickyHeader { SettingsSection("System") }
+            item {
+                SettingsRow(
+                    icon = Icons.AutoMirrored.Filled.List,
+                    title = "Activity Log",
+                    subtitle = "View full system activity logs",
+                    onClick = { onNavigateToLogs() }
+                )
+            }
+
             item {
                 SettingsRow(
                     icon = Icons.Default.Restore,
@@ -675,7 +849,32 @@ fun SettingsScreen(
                 )
             }
 
+            // ── About ──
             stickyHeader { SettingsSection("About") }
+            item {
+                SettingsRow(
+                    icon = Icons.Default.SystemUpdate,
+                    title = "Check for Updates",
+                    subtitle = if (checkingUpdate) "Checking…" else "Current version: $currentVersion",
+                    trailing = { if (checkingUpdate) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp) },
+                    onClick = {
+                        if (!checkingUpdate) {
+                            checkingUpdate = true
+                            scope.launch {
+                                val release = UpdateChecker.checkForUpdates(currentVersion)
+                                checkingUpdate = false
+                                if (release != null) {
+                                    updateRelease = release
+                                    showUpdateDialog = true
+                                } else {
+                                    android.widget.Toast.makeText(context, "You're on the latest version!", android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }
+                    }
+                )
+            }
+
             item {
                 SettingsRow(
                     icon = Icons.Default.PrivacyTip,

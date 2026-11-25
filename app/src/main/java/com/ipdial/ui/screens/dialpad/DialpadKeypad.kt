@@ -53,7 +53,9 @@ fun DialpadKeypad(
     onKeyPress: (Char) -> Unit,
     onZeroLongPress: () -> Unit,
     onCallClick: (() -> Unit)? = null,
-    fitWithinWidth: Dp? = null
+    fitWithinWidth: Dp? = null,
+    vibrateOnPress: Boolean = true,
+    showDigits: Boolean = true
 ) {
     val haptic = LocalHapticFeedback.current
     val isGlass = LocalGlassMode.current != GlassMode.None
@@ -91,13 +93,14 @@ fun DialpadKeypad(
                             digit = digit,
                             subLabel = sub,
                             keySize = keySize,
+                            showDigit = showDigits,
                             onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                if (vibrateOnPress) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 onKeyPress(digit[0])
                             },
                             onLongClick = if (digit == "0") {
                                 {
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    if (vibrateOnPress) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                     onZeroLongPress()
                                 }
                             } else null,
@@ -139,13 +142,14 @@ fun DialpadKeypad(
                     digit = digit,
                     subLabel = sub,
                     keySize = keyRadius,
+                    showDigit = showDigits,
                     onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        if (vibrateOnPress) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         onKeyPress(digit[0])
                     },
                     onLongClick = if (digit == "0") {
                         {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            if (vibrateOnPress) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             onZeroLongPress()
                         }
                     } else null,
@@ -194,13 +198,14 @@ fun DialpadKeypad(
                             digit = digit,
                             subLabel = sub,
                             height = gridHeight,
+                            showDigit = showDigits,
                             onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                if (vibrateOnPress) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 onKeyPress(digit[0])
                             },
                             onLongClick = if (digit == "0") {
                                 {
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    if (vibrateOnPress) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                     onZeroLongPress()
                                 }
                             } else null,
@@ -228,6 +233,7 @@ fun DialKeyRounded(
     keySize: androidx.compose.ui.unit.Dp,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
+    showDigit: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val isGlass = LocalGlassMode.current != GlassMode.None
@@ -251,15 +257,17 @@ fun DialKeyRounded(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
                 ) {
-                    Text(
-                        text = digit,
-                        style = MaterialTheme.typography.displaySmall.copy(
-                            fontWeight = FontWeight.Normal,
-                            fontSize = if (keySize > 70.dp) 38.sp else 32.sp
-                        ),
-                        color = MaterialTheme.colorScheme.onSurface,
-                        lineHeight = if (keySize > 70.dp) 38.sp else 32.sp
-                    )
+                    if (showDigit) {
+                        Text(
+                            text = digit,
+                            style = MaterialTheme.typography.displaySmall.copy(
+                                fontWeight = FontWeight.Normal,
+                                fontSize = if (keySize > 70.dp) 38.sp else 32.sp
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            lineHeight = if (keySize > 70.dp) 38.sp else 32.sp
+                        )
+                    }
                     if (subLabel.isNotBlank() && digit.any { it.isDigit() }) {
                         Text(
                             text = subLabel,
@@ -283,6 +291,7 @@ fun RotaryKey(
     keySize: androidx.compose.ui.unit.Dp,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
+    showDigit: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val isGlass = LocalGlassMode.current != GlassMode.None
@@ -311,15 +320,17 @@ fun RotaryKey(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
             ) {
-                Text(
-                    text = digit,
-                    style = MaterialTheme.typography.titleLarge.copy(
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = if (keySize > 45.dp) 24.sp else 20.sp
-                    ),
-                    color = MaterialTheme.colorScheme.onSurface,
-                    lineHeight = if (keySize > 45.dp) 24.sp else 20.sp
-                )
+                if (showDigit) {
+                    Text(
+                        text = digit,
+                        style = MaterialTheme.typography.titleLarge.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = if (keySize > 45.dp) 24.sp else 20.sp
+                        ),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        lineHeight = if (keySize > 45.dp) 24.sp else 20.sp
+                    )
+                }
                 if (subLabel.isNotBlank() && digit.any { it.isDigit() }) {
                     Text(
                         text = subLabel,
@@ -342,6 +353,7 @@ fun DialKey(
     height: androidx.compose.ui.unit.Dp,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
+    showDigit: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val isGlass = LocalGlassMode.current != GlassMode.None
@@ -359,14 +371,16 @@ fun DialKey(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
-            Text(
-                text = digit,
-                style = MaterialTheme.typography.headlineMedium.copy(
-                    fontWeight = FontWeight.Normal,
-                    fontSize = if (height > 60.dp) 28.sp else 24.sp
-                ),
-                color = MaterialTheme.colorScheme.onSurface,
-            )
+            if (showDigit) {
+                Text(
+                    text = digit,
+                    style = MaterialTheme.typography.headlineMedium.copy(
+                        fontWeight = FontWeight.Normal,
+                        fontSize = if (height > 60.dp) 28.sp else 24.sp
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+            }
             if (subLabel.isNotBlank()) {
                 Text(
                     text = subLabel,

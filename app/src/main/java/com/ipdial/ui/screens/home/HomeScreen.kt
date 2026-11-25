@@ -58,6 +58,7 @@ fun HomeScreen(
     val searchQuery by vm.searchQuery.collectAsState()
     val contactsState by vm.contacts.collectAsState()
     val favoriteContacts by vm.favoriteContacts.collectAsState()
+    val groupSubsequentCalls by vm.groupSubsequentCalls.collectAsState()
     
     var activeContactForNumberPicker by remember { mutableStateOf<Contact?>(null) }
     var activeHistoryEntryForDetail by remember { mutableStateOf<CallLogEntry?>(null) }
@@ -95,7 +96,7 @@ fun HomeScreen(
         }
     }
 
-    val grouped = remember(filteredLog, contactLookupMap) {
+    val grouped = remember(filteredLog, contactLookupMap, groupSubsequentCalls) {
         val todayStart = Calendar.getInstance().apply {
             set(Calendar.HOUR_OF_DAY, 0)
             set(Calendar.MINUTE, 0)
@@ -112,6 +113,9 @@ fun HomeScreen(
                 else -> dateFormat.format(Date(entry.timestampMs))
             }
         }.mapValues { (_, dayEntries) ->
+            if (!groupSubsequentCalls) {
+                return@mapValues dayEntries.map { LogGroup(it, 1, listOf(it)) }
+            }
             val groups = mutableListOf<LogGroup>()
             val contactToGroup = mutableMapOf<String, Int>()
             

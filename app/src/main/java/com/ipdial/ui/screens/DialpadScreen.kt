@@ -38,6 +38,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -64,8 +65,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ipdial.data.model.KeypadDesign
 import com.ipdial.ui.SipViewModel
-import com.ipdial.ui.components.AccountSelectionDialog
-import com.ipdial.ui.components.DialLineChip
 import com.ipdial.ui.screens.dialpad.DialpadKeypad
 import com.ipdial.ui.screens.dialpad.SuggestedContactRow
 import com.ipdial.ui.screens.dialpad.T9_MAP
@@ -82,54 +81,57 @@ fun DialpadScreen(
     val dialTextFieldValue by vm.dialString.collectAsState()
     val dialString = dialTextFieldValue.text
     val lastDialedNumber by vm.lastDialedNumber.collectAsState()
-    val accounts by vm.accounts.collectAsState()
-    val simLines by vm.simLines.collectAsState()
-    val selectedAccountId by vm.selectedAccountId.collectAsState()
     val contacts by vm.contacts.collectAsState()
     val mostCalled by vm.mostCalledContacts.collectAsState()
     val keypadDesign by vm.keypadDesign.collectAsState()
+    val dialpadVibrate by vm.dialpadVibrate.collectAsState()
+    val dialpadBeep by vm.dialpadBeep.collectAsState()
+    val hideDialpadDigits by vm.hideDialpadDigits.collectAsState()
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val haptic = LocalHapticFeedback.current
     val isWide = configuration.screenWidthDp > 600
     val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
     var showMenu by remember { mutableStateOf(false) }
-    var showLinePicker by remember { mutableStateOf(false) }
     @Suppress("DEPRECATION")
     val clipboardManager = LocalClipboardManager.current
 
-    val enabledAccounts = remember(accounts) { accounts.filter { it.isEnabled } }
-    val selectedSim = simLines.firstOrNull { it.id == selectedAccountId }
-    val selectedSip = enabledAccounts.firstOrNull { it.id == selectedAccountId }
-    val fallbackSip = enabledAccounts.firstOrNull { it.isDefault } ?: enabledAccounts.firstOrNull()
-    val showLineChip = simLines.isNotEmpty() || enabledAccounts.isNotEmpty()
-    val lineLabel = when {
-        selectedSim != null -> selectedSim.label
-        selectedSip != null -> selectedSip.label.ifBlank { selectedSip.domain }
-        selectedAccountId != null -> "Select line"
-        fallbackSip != null -> fallbackSip.label.ifBlank { fallbackSip.domain }
-        else -> "Select line"
+    // DTMF feedback for key presses when "Dialpad beeps" is enabled.
+    val toneGenerator = remember {
+        runCatching {
+            android.media.ToneGenerator(android.media.AudioManager.STREAM_DTMF, 80)
+        }.getOrNull()
     }
-    val lineSubtitle = selectedSim?.subtitle.orEmpty()
-    val lineIsSim = selectedSim != null || (selectedSip == null && fallbackSip == null)
-
-    if (showLinePicker) {
-        AccountSelectionDialog(
-            simLines = simLines,
-            enabledAccounts = enabledAccounts,
-            selectedLineId = selectedAccountId,
-            showCallIcon = false,
-            title = "Choose Line",
-            onSimSelected = { sim ->
-                vm.chooseDialLine(sim.id)
-                showLinePicker = false
-            },
-            onAccountSelected = { accountId ->
-                vm.chooseDialLine(accountId)
-                showLinePicker = false
-            },
-            onDismiss = { showLinePicker = false }
-        )
+    DisposableEffect(toneGenerator) {
+        onDispose {
+            runCatching { toneGenerator?.release() }
+        }
+    }
+    val playTone: (Char) -> Unit = { char ->
+        if (dialpadBeep && toneGenerator != null) {
+            val tone = when (char) {
+                '0' -> android.media.ToneGenerator.TONE_DTMF_0
+                '1' -> android.media.ToneGenerator.TONE_DTMF_1
+                '2' -> android.media.ToneGenerator.TONE_DTMF_2
+                '3' -> android.media.ToneGenerator.TONE_DTMF_3
+                '4' -> android.media.ToneGenerator.TONE_DTMF_4
+                '5' -> android.media.ToneGenerator.TONE_DTMF_5
+                '6' -> android.media.ToneGenerator.TONE_DTMF_6
+                '7' -> android.media.ToneGenerator.TONE_DTMF_7
+                '8' -> android.media.ToneGenerator.TONE_DTMF_8
+                '9' -> android.media.ToneGenerator.TONE_DTMF_9
+                '*' -> android.media.ToneGenerator.TONE_DTMF_S
+                '#' -> android.media.ToneGenerator.TONE_DTMF_P
+                else -> -1
+            }
+            if (tone != -1) {
+                runCatching { toneGenerator.startTone(tone, 120) }
+            }
+        }
+    }
+    val onDigit: (Char) -> Unit = { char ->
+        playTone(char)
+        vm.dialPad(char)
     }
 
     val suggestedContacts = remember(dialString, contacts) {
@@ -266,15 +268,6 @@ fun DialpadScreen(
                             if (dialString.isEmpty()) Spacer(Modifier.size(48.dp))
                         }
 
-                        if (showLineChip) {
-                            DialLineChip(
-                                label = lineLabel,
-                                subtitle = lineSubtitle,
-                                isSim = lineIsSim,
-                                onClick = { showLinePicker = true }
-                            )
-                        }
-
                         Spacer(Modifier.height(8.dp))
 
                         // Keypad grid
@@ -305,10 +298,12 @@ fun DialpadScreen(
                             DialpadKeypad(
                                 keys = keys,
                                 design = keypadDesign,
-                                onKeyPress = { vm.dialPad(it) },
-                                onZeroLongPress = { vm.dialPad('+') },
+                                onKeyPress = onDigit,
+                                onZeroLongPress = { onDigit('+') },
                                 onCallClick = callAction,
-                                fitWithinWidth = fitW
+                                fitWithinWidth = fitW,
+                                vibrateOnPress = dialpadVibrate,
+                                showDigits = !hideDialpadDigits
                             )
                         } else {
                             Row(
@@ -321,10 +316,12 @@ fun DialpadScreen(
                                 DialpadKeypad(
                                     keys = keys,
                                     design = keypadDesign,
-                                    onKeyPress = { vm.dialPad(it) },
-                                    onZeroLongPress = { vm.dialPad('+') },
+                                    onKeyPress = onDigit,
+                                    onZeroLongPress = { onDigit('+') },
                                     onCallClick = null,
-                                    fitWithinWidth = fitW - 68.dp
+                                    fitWithinWidth = fitW - 68.dp,
+                                    vibrateOnPress = dialpadVibrate,
+                                    showDigits = !hideDialpadDigits
                                 )
                                 Spacer(Modifier.width(8.dp))
                                 Box(
@@ -590,16 +587,6 @@ fun DialpadScreen(
                     if (dialString.isEmpty()) Spacer(Modifier.size(48.dp))
                 }
 
-                if (showLineChip) {
-                    Spacer(Modifier.height(4.dp))
-                    DialLineChip(
-                        label = lineLabel,
-                        subtitle = lineSubtitle,
-                        isSim = lineIsSim,
-                        onClick = { showLinePicker = true }
-                    )
-                }
-
                 Spacer(Modifier.height(8.dp))
 
                 // Keypad grid
@@ -629,9 +616,11 @@ fun DialpadScreen(
                 DialpadKeypad(
                     keys = keys,
                     design = keypadDesign,
-                    onKeyPress = { vm.dialPad(it) },
-                    onZeroLongPress = { vm.dialPad('+') },
-                    onCallClick = if (keypadDesign == KeypadDesign.Ring) callAction else null
+                    onKeyPress = onDigit,
+                    onZeroLongPress = { onDigit('+') },
+                    onCallClick = if (keypadDesign == KeypadDesign.Ring) callAction else null,
+                    vibrateOnPress = dialpadVibrate,
+                    showDigits = !hideDialpadDigits
                 )
 
                 if (keypadDesign != KeypadDesign.Ring) {

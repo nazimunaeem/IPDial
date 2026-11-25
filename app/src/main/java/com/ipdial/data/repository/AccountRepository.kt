@@ -70,6 +70,12 @@ class AccountRepository(private val context: Context) {
     private val sipNsEnabledKey = booleanPreferencesKey("sip_ns_enabled")
     private val fullScreenContactPhotoKey = booleanPreferencesKey("full_screen_contact_photo")
     private val alwaysAskDialLineKey = booleanPreferencesKey("always_ask_dial_line")
+    private val dialpadVibrateKey = booleanPreferencesKey("dialpad_vibrate")
+    private val dialpadBeepKey = booleanPreferencesKey("dialpad_beep")
+    private val hideDialpadDigitsKey = booleanPreferencesKey("hide_dialpad_digits")
+    private val openDialpadAtLaunchKey = booleanPreferencesKey("open_dialpad_at_launch")
+    private val groupSubsequentCallsKey = booleanPreferencesKey("group_subsequent_calls")
+    private val disableProximityKey = booleanPreferencesKey("disable_proximity_sensor")
     private val savedLabelsKey = stringPreferencesKey("saved_labels")
     private val savedHostsKey = stringPreferencesKey("saved_hosts")
 
@@ -193,6 +199,12 @@ class AccountRepository(private val context: Context) {
     val sipNsEnabled: Flow<Boolean> = context.dataStore.data.map { it[sipNsEnabledKey] ?: false }
     val fullScreenContactPhoto: Flow<Boolean> = context.dataStore.data.map { it[fullScreenContactPhotoKey] ?: false }
     val alwaysAskDialLine: Flow<Boolean> = context.dataStore.data.map { it[alwaysAskDialLineKey] ?: true }
+    val dialpadVibrate: Flow<Boolean> = context.dataStore.data.map { it[dialpadVibrateKey] ?: true }
+    val dialpadBeep: Flow<Boolean> = context.dataStore.data.map { it[dialpadBeepKey] ?: false }
+    val hideDialpadDigits: Flow<Boolean> = context.dataStore.data.map { it[hideDialpadDigitsKey] ?: false }
+    val openDialpadAtLaunch: Flow<Boolean> = context.dataStore.data.map { it[openDialpadAtLaunchKey] ?: false }
+    val groupSubsequentCalls: Flow<Boolean> = context.dataStore.data.map { it[groupSubsequentCallsKey] ?: true }
+    val disableProximitySensor: Flow<Boolean> = context.dataStore.data.map { it[disableProximityKey] ?: false }
 
     suspend fun getOrCreateDeviceId(): String {
         val current = context.dataStore.data.map { it[deviceIdKey] }.first()
@@ -234,6 +246,12 @@ class AccountRepository(private val context: Context) {
     suspend fun setSipNsEnabled(enabled: Boolean) = context.dataStore.edit { it[sipNsEnabledKey] = enabled }
     suspend fun setFullScreenContactPhoto(enabled: Boolean) = context.dataStore.edit { it[fullScreenContactPhotoKey] = enabled }
     suspend fun setAlwaysAskDialLine(ask: Boolean) = context.dataStore.edit { it[alwaysAskDialLineKey] = ask }
+    suspend fun setDialpadVibrate(enabled: Boolean) = context.dataStore.edit { it[dialpadVibrateKey] = enabled }
+    suspend fun setDialpadBeep(enabled: Boolean) = context.dataStore.edit { it[dialpadBeepKey] = enabled }
+    suspend fun setHideDialpadDigits(hidden: Boolean) = context.dataStore.edit { it[hideDialpadDigitsKey] = hidden }
+    suspend fun setOpenDialpadAtLaunch(enabled: Boolean) = context.dataStore.edit { it[openDialpadAtLaunchKey] = enabled }
+    suspend fun setGroupSubsequentCalls(enabled: Boolean) = context.dataStore.edit { it[groupSubsequentCallsKey] = enabled }
+    suspend fun setDisableProximitySensor(disabled: Boolean) = context.dataStore.edit { it[disableProximityKey] = disabled }
 
     suspend fun setGlobalRingtone(uri: String?) {
         context.dataStore.edit { prefs ->

@@ -24,6 +24,12 @@ class CallLogRepository private constructor(context: Context) {
         dao.trim(200) // Keep last 200 entries
     }
 
+    suspend fun importAll(entries: List<CallLogEntry>) {
+        // Imported backups are user-initiated, so keep everything they contain instead of
+        // applying the rolling 200-entry cap used for live calls.
+        entries.forEach { dao.insert(CallLogEntity.fromCallLogEntry(it)) }
+    }
+
     suspend fun delete(entry: CallLogEntry) {
         dao.delete(CallLogEntity.fromCallLogEntry(entry))
     }

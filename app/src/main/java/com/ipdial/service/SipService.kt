@@ -816,7 +816,9 @@ class SipService : Service() {
                             }
 
                             wakeLockManager.acquireWakeLock()
-                            wakeLockManager.acquireProximityWakeLock()
+                            if (!com.ipdial.AppState.disableProximitySensor) {
+                                wakeLockManager.acquireProximityWakeLock()
+                            }
                             lastWasConfirmed = true
                             if (callStartTime == 0L) {
                                 callStartTime = System.currentTimeMillis()
@@ -856,7 +858,9 @@ class SipService : Service() {
             audioRouter.routeAudioToDefault()
         }
         wakeLockManager.acquireWakeLock()
-        wakeLockManager.acquireProximityWakeLock()
+        if (!com.ipdial.AppState.disableProximitySensor) {
+            wakeLockManager.acquireProximityWakeLock()
+        }
         updateForegroundType(ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)
 
         if (!com.ipdial.AppState.isForeground) {
