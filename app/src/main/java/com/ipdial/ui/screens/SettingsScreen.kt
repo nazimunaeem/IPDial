@@ -76,6 +76,27 @@ fun SettingsScreen(
     val fontSizeMultiplier by vm.fontSizeMultiplier.collectAsState()
     val appIconAlias by vm.appIconAlias.collectAsState()
     val keypadDesign by vm.keypadDesign.collectAsState()
+    val alwaysAskLine by vm.alwaysAskLine.collectAsState()
+
+    var isDefaultDialer by remember {
+        mutableStateOf(com.ipdial.service.sim.DefaultDialerHelper.isDefaultDialer(context))
+    }
+    val defaultDialerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) {
+        isDefaultDialer = com.ipdial.service.sim.DefaultDialerHelper.isDefaultDialer(context)
+        vm.refreshSimAccounts()
+    }
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                isDefaultDialer = com.ipdial.service.sim.DefaultDialerHelper.isDefaultDialer(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     var showRestartDialog by remember { mutableStateOf(false) }
     var showResetDialog by remember { mutableStateOf(false) }
@@ -424,6 +445,63 @@ fun SettingsScreen(
                     onClick = {
                         onNavigateToCodecs()
                     }
+                )
+            }
+
+            stickyHeader { SettingsSection("SIM & Calling (DialDuo)") }
+            item {
+                SettingsRow(
+                    icon = Icons.Default.PhoneAndroid,
+                    title = "Default Phone App",
+                    subtitle = if (isDefaultDialer) {
+                        "Active — IPDial handles SIM & SIP call screens"
+                    } else {
+                        "Tap to set IPDial as default phone app for SIM call UI"
+                    },
+                    trailing = {
+                        if (isDefaultDialer) {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = "Active",
+                                tint = Color(0xFF2E7D32)
+                            )
+                        }
+                    },
+                    onClick = {
+                        val intent = com.ipdial.service.sim.DefaultDialerHelper.createRequestDefaultDialerIntent(context)
+                        if (intent != null) {
+                            try {
+                                defaultDialerLauncher.launch(intent)
+                            } catch (_: Exception) {
+                                android.widget.Toast.makeText(
+                                    context,
+                                    "Could not open Default Phone App settings",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        } else {
+                            android.widget.Toast.makeText(
+                                context,
+                                if (isDefaultDialer) "IPDial is already your Default Phone App" else "Default dialer prompt unavailable",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
+                )
+            }
+
+            item {
+                SettingsRow(
+                    icon = Icons.Default.SimCard,
+                    title = "Ask SIM / IP Account on Call",
+                    subtitle = "Show SIM & IP account picker whenever dialing",
+                    trailing = {
+                        Switch(
+                            checked = alwaysAskLine,
+                            onCheckedChange = { vm.setAlwaysAskLine(it) }
+                        )
+                    },
+                    onClick = { vm.setAlwaysAskLine(!alwaysAskLine) }
                 )
             }
 

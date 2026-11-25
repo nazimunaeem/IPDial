@@ -149,6 +149,9 @@ class MainActivity : ComponentActivity() {
         if (results[Manifest.permission.READ_CONTACTS] == true) {
             vm.syncContacts()
         }
+        if (results[Manifest.permission.READ_PHONE_STATE] == true) {
+            vm.refreshSimAccounts()
+        }
         if (results[Manifest.permission.RECORD_AUDIO] == true) {
             startSipServiceIfPermitted()
         }
@@ -159,6 +162,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         AppState.isForeground = true
+        vm.refreshSimAccounts()
         val session = vm.callSession.value
         if (session != null && session.state != CallState.DISCONNECTED) {
             applyLockScreenFlags()
@@ -193,6 +197,7 @@ class MainActivity : ComponentActivity() {
             if (isIncomingRinging) {
                 // Silencing the ringtone on volume button press is standard for incoming calls
                 com.ipdial.service.SipService.silenceRinger(this)
+                com.ipdial.service.sim.SimCallManager.silenceRinger()
             }
         }
         return super.onKeyDown(keyCode, event)
@@ -488,16 +493,21 @@ fun IPDialApp() {
     UpdateCheckDialog()
 
     val showAccountSelection by vm.showAccountSelectionDialog.collectAsState()
+    val pendingCallNumber by vm.pendingCallNumber.collectAsState()
+    val simLines by vm.simLines.collectAsState()
     val accounts by vm.accounts.collectAsState()
     val balances by vm.balances.collectAsState()
     val enabledAccounts = remember(accounts) {
         accounts.filter { it.isEnabled }
     }
 
-    if (showAccountSelection && enabledAccounts.isNotEmpty()) {
+    if (showAccountSelection && (enabledAccounts.isNotEmpty() || simLines.isNotEmpty())) {
         com.ipdial.ui.components.AccountSelectionDialog(
+            pendingNumber = pendingCallNumber,
+            simLines = simLines,
             enabledAccounts = enabledAccounts,
             balances = balances,
+            onSimSelected = { vm.proceedWithSimCall(it) },
             onAccountSelected = { vm.proceedWithCallAfterAccountSelection(it) },
             onDismiss = { vm.dismissAccountSelection() }
         )

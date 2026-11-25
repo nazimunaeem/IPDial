@@ -116,21 +116,27 @@ fun showMissedCallNotification(context: Context, callerName: String, remoteUri: 
 fun showCallNotificationStatic(context: Context, callerName: String = "", callId: Int = -1) {
     Log.d("SipService", "showCallNotificationStatic: caller=$callerName, isForeground=${com.ipdial.AppState.isForeground}")
 
-    val session = SipEngine.callSession.value
+    val session = SipEngine.callSession.value ?: com.ipdial.service.sim.SimCallManager.callSession.value
     if (session == null || session.state == CallState.DISCONNECTED || session.state == CallState.IDLE) {
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.cancel(NOTIF_ID_INCOMING)
         return
     }
 
+    val isSimCall = session.transport == com.ipdial.data.model.CallTransport.SIM
     val targetCallId = if (callId >= 0) callId else session.callId
     val isIncomingRinging = session.direction == CallDirection.INCOMING &&
             (session.state == CallState.INCOMING || session.state == CallState.EARLY)
 
     val priority = if (isIncomingRinging) NotificationCompat.PRIORITY_MAX else NotificationCompat.PRIORITY_HIGH
 
-    val displayName = callerName.ifBlank { session.remoteDisplayName }.ifBlank {
+    val baseDisplayName = callerName.ifBlank { session.remoteDisplayName }.ifBlank {
         session.remoteUri.removePrefix("sip:").substringBefore("@")
+    }
+    val displayName = if (isSimCall && session.lineLabel.isNotBlank()) {
+        "$baseDisplayName (${session.lineLabel})"
+    } else {
+        baseDisplayName
     }
 
     val callerPerson = androidx.core.app.Person.Builder()
@@ -148,14 +154,24 @@ fun showCallNotificationStatic(context: Context, callerName: String = "", callId
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )
 
-    val hangupPi = PendingIntent.getService(
-        context, 2,
-        Intent(context, SipService::class.java).apply {
-            action = ACTION_HANGUP
-            putExtra("callId", targetCallId)
-        },
-        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-    )
+    val hangupPi = if (isSimCall) {
+        PendingIntent.getBroadcast(
+            context, 12,
+            Intent(context, com.ipdial.service.sim.SimCallActionReceiver::class.java).apply {
+                action = com.ipdial.service.sim.SimCallActionReceiver.ACTION_SIM_HANGUP
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    } else {
+        PendingIntent.getService(
+            context, 2,
+            Intent(context, SipService::class.java).apply {
+                action = ACTION_HANGUP
+                putExtra("callId", targetCallId)
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
 
     val notifBuilder = NotificationCompat.Builder(context, NOTIF_CHANNEL_CALL)
         .setSmallIcon(R.drawable.ic_notif_call)
@@ -168,23 +184,43 @@ fun showCallNotificationStatic(context: Context, callerName: String = "", callId
         .setOngoing(true)
 
     if (isIncomingRinging) {
-        val answerPi = PendingIntent.getService(
-            context, 1,
-            Intent(context, SipService::class.java).apply {
-                action = ACTION_ANSWER
-                putExtra("callId", targetCallId)
-            },
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+        val answerPi = if (isSimCall) {
+            PendingIntent.getBroadcast(
+                context, 11,
+                Intent(context, com.ipdial.service.sim.SimCallActionReceiver::class.java).apply {
+                    action = com.ipdial.service.sim.SimCallActionReceiver.ACTION_SIM_ANSWER
+                },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+        } else {
+            PendingIntent.getService(
+                context, 1,
+                Intent(context, SipService::class.java).apply {
+                    action = ACTION_ANSWER
+                    putExtra("callId", targetCallId)
+                },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+        }
 
-        val declinePi = PendingIntent.getService(
-            context, 2,
-            Intent(context, SipService::class.java).apply {
-                action = ACTION_DECLINE
-                putExtra("callId", targetCallId)
-            },
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+        val declinePi = if (isSimCall) {
+            PendingIntent.getBroadcast(
+                context, 12,
+                Intent(context, com.ipdial.service.sim.SimCallActionReceiver::class.java).apply {
+                    action = com.ipdial.service.sim.SimCallActionReceiver.ACTION_SIM_DECLINE
+                },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+        } else {
+            PendingIntent.getService(
+                context, 2,
+                Intent(context, SipService::class.java).apply {
+                    action = ACTION_DECLINE
+                    putExtra("callId", targetCallId)
+                },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+        }
 
         notifBuilder
             .setContentTitle("Incoming Call")

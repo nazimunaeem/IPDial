@@ -57,6 +57,7 @@ class AccountRepository(private val context: Context) {
     private val incomingCallModeKey = stringPreferencesKey("incoming_call_mode")
     private val defaultDomainKey = stringPreferencesKey("default_domain")
     private val lastDialedKey = stringPreferencesKey("last_dialed")
+    private val lastDialLineKey = stringPreferencesKey("last_dial_line")
     private val deviceIdKey = stringPreferencesKey("device_id")
     private val recordingCounterKey = androidx.datastore.preferences.core.intPreferencesKey("recording_counter")
     private val batteryNoticeShownKey = booleanPreferencesKey("battery_notice_shown")
@@ -68,6 +69,7 @@ class AccountRepository(private val context: Context) {
     private val sipEcEnabledKey = booleanPreferencesKey("sip_ec_enabled")
     private val sipNsEnabledKey = booleanPreferencesKey("sip_ns_enabled")
     private val fullScreenContactPhotoKey = booleanPreferencesKey("full_screen_contact_photo")
+    private val alwaysAskDialLineKey = booleanPreferencesKey("always_ask_dial_line")
     private val savedLabelsKey = stringPreferencesKey("saved_labels")
     private val savedHostsKey = stringPreferencesKey("saved_hosts")
 
@@ -168,6 +170,7 @@ class AccountRepository(private val context: Context) {
     }
 
     val lastDialedNumber: Flow<String?> = context.dataStore.data.map { it[lastDialedKey] }
+    val lastDialLineId: Flow<String?> = context.dataStore.data.map { it[lastDialLineKey] }
 
     val deviceId: Flow<String?> = context.dataStore.data.map { it[deviceIdKey] }
     val autoRecordEnabled: Flow<Boolean> = context.dataStore.data.map { it[autoRecordKey] ?: false }
@@ -189,6 +192,7 @@ class AccountRepository(private val context: Context) {
     val sipEcEnabled: Flow<Boolean> = context.dataStore.data.map { it[sipEcEnabledKey] ?: false }
     val sipNsEnabled: Flow<Boolean> = context.dataStore.data.map { it[sipNsEnabledKey] ?: false }
     val fullScreenContactPhoto: Flow<Boolean> = context.dataStore.data.map { it[fullScreenContactPhotoKey] ?: false }
+    val alwaysAskDialLine: Flow<Boolean> = context.dataStore.data.map { it[alwaysAskDialLineKey] ?: true }
 
     suspend fun getOrCreateDeviceId(): String {
         val current = context.dataStore.data.map { it[deviceIdKey] }.first()
@@ -207,6 +211,9 @@ class AccountRepository(private val context: Context) {
     suspend fun setIncomingCallMode(mode: IncomingCallMode) = context.dataStore.edit { it[incomingCallModeKey] = mode.name }
     suspend fun setDefaultDomain(domain: String) = context.dataStore.edit { it[defaultDomainKey] = domain }
     suspend fun setLastDialedNumber(number: String) = context.dataStore.edit { it[lastDialedKey] = number }
+    suspend fun setLastDialLineId(id: String?) = context.dataStore.edit { prefs ->
+        if (id.isNullOrBlank()) prefs.remove(lastDialLineKey) else prefs[lastDialLineKey] = id
+    }
     suspend fun setDeviceId(id: String) = context.dataStore.edit { it[deviceIdKey] = id }
     suspend fun setRecordingCounter(counter: Int) = context.dataStore.edit { it[recordingCounterKey] = counter }
     suspend fun setBatteryNoticeShown(shown: Boolean) = context.dataStore.edit { it[batteryNoticeShownKey] = shown }
@@ -226,6 +233,7 @@ class AccountRepository(private val context: Context) {
     suspend fun setSipEcEnabled(enabled: Boolean) = context.dataStore.edit { it[sipEcEnabledKey] = enabled }
     suspend fun setSipNsEnabled(enabled: Boolean) = context.dataStore.edit { it[sipNsEnabledKey] = enabled }
     suspend fun setFullScreenContactPhoto(enabled: Boolean) = context.dataStore.edit { it[fullScreenContactPhotoKey] = enabled }
+    suspend fun setAlwaysAskDialLine(ask: Boolean) = context.dataStore.edit { it[alwaysAskDialLineKey] = ask }
 
     suspend fun setGlobalRingtone(uri: String?) {
         context.dataStore.edit { prefs ->

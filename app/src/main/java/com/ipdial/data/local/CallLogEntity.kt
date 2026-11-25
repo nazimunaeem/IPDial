@@ -4,6 +4,7 @@ import androidx.room.Entity
 import androidx.room.PrimaryKey
 import com.ipdial.data.model.CallDirection
 import com.ipdial.data.model.CallLogEntry
+import com.ipdial.data.model.CallTransport
 
 @Entity(tableName = "call_logs")
 data class CallLogEntity(
@@ -16,7 +17,9 @@ data class CallLogEntity(
     val timestampMs: Long,
     val durationSeconds: Long,
     val disconnectCode: Int?,
-    val disconnectReason: String?
+    val disconnectReason: String?,
+    val transport: CallTransport = CallTransport.SIP,
+    val lineLabel: String = ""
 ) {
     fun toCallLogEntry(): CallLogEntry = CallLogEntry(
         id = id,
@@ -28,7 +31,9 @@ data class CallLogEntity(
         timestampMs = timestampMs,
         durationSeconds = durationSeconds,
         disconnectCode = disconnectCode,
-        disconnectReason = disconnectReason
+        disconnectReason = disconnectReason,
+        transport = transport,
+        lineLabel = lineLabel
     )
 
     companion object {
@@ -42,7 +47,9 @@ data class CallLogEntity(
             timestampMs = entry.timestampMs,
             durationSeconds = entry.durationSeconds,
             disconnectCode = entry.disconnectCode,
-            disconnectReason = entry.disconnectReason
+            disconnectReason = entry.disconnectReason,
+            transport = entry.transport,
+            lineLabel = entry.lineLabel
         )
     }
 }

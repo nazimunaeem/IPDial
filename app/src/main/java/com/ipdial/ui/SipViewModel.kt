@@ -13,6 +13,7 @@ import android.net.NetworkRequest
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.telephony.SubscriptionManager
 import android.widget.Toast
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
@@ -20,9 +21,11 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.gson.Gson
 import com.ipdial.data.model.AudioDeviceMode
+import com.ipdial.data.model.CallDirection
 import com.ipdial.data.model.CallLogEntry
 import com.ipdial.data.model.CallSession
 import com.ipdial.data.model.CallState
+import com.ipdial.data.model.CallTransport
 import com.ipdial.data.model.Contact
 import com.ipdial.data.model.IncomingCallMode
 import com.ipdial.data.model.InspectStatus
@@ -37,6 +40,10 @@ import com.ipdial.data.repository.CallLogRepository
 import com.ipdial.data.repository.ContactsRepository
 import com.ipdial.service.SipAudioController
 import com.ipdial.service.SipEngine
+import com.ipdial.service.sim.DefaultDialerHelper
+import com.ipdial.service.sim.SimCallManager
+import com.ipdial.service.sim.SimLine
+import com.ipdial.service.sim.SimPhoneAccountHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -66,12 +73,15 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     private val _balances = MutableStateFlow<Map<String, String>>(emptyMap())
     val balances: StateFlow<Map<String, String>> = _balances.asStateFlow()
 
-    // Audio device state
-    private val _audioDeviceMode = MutableStateFlow(AudioDeviceMode.EARPIECE)
-    val audioDeviceMode: StateFlow<AudioDeviceMode> = _audioDeviceMode.asStateFlow()
+    // Audio device state (SIP side; combined with SimCallManager below)
+    private val _sipAudioDeviceMode = MutableStateFlow(AudioDeviceMode.EARPIECE)
+    private val _sipHasBluetoothDevice = MutableStateFlow(false)
 
-    private val _hasBluetoothDevice = MutableStateFlow(false)
-    val hasBluetoothDevice: StateFlow<Boolean> = _hasBluetoothDevice.asStateFlow()
+    private val _simLines = MutableStateFlow<List<SimLine>>(emptyList())
+    val simLines: StateFlow<List<SimLine>> = _simLines.asStateFlow()
+
+    val alwaysAskLine: StateFlow<Boolean> = repo.alwaysAskDialLine
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
     private val _showFullIncomingScreen = MutableStateFlow(false)
     val showFullIncomingScreen: StateFlow<Boolean> = _showFullIncomingScreen.asStateFlow()
@@ -304,18 +314,83 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
             accepted = true
         )
     }
-    fun answerCall() { val session = callSession.value; if (session != null) SipEngine.answerCall(session.callId) }
+    fun answerCall() {
+        val session = callSession.value ?: return
+        if (session.transport == CallTransport.SIM) {
+            SimCallManager.answerCall()
+        } else {
+            SipEngine.answerCall(session.callId)
+        }
+    }
+
     fun proceedWithCallAfterAccountSelection(accountId: String) {
         _showAccountSelectionDialog.value = false
         val num = _pendingCallNumber.value
         _pendingCallNumber.value = null
-        selectAccount(accountId)
-        makeCall(num)
+        if (!alwaysAskLine.value) {
+            selectAccount(accountId)
+        } else {
+            rememberDialLine(accountId)
+        }
+        val account = accounts.value.firstOrNull { it.id == accountId && it.isEnabled } ?: return
+        if (!num.isNullOrBlank()) {
+            placeSipCallInternal(num, account)
+        }
     }
+
+    fun proceedWithSimCall(simLine: SimLine) {
+        _showAccountSelectionDialog.value = false
+        val num = _pendingCallNumber.value
+        _pendingCallNumber.value = null
+        if (!alwaysAskLine.value) {
+            selectAccount(simLine.id)
+        } else {
+            rememberDialLine(simLine.id)
+        }
+        if (!num.isNullOrBlank()) {
+            placeSimCallInternal(num, simLine)
+        }
+    }
+
     fun dismissAccountSelection() {
         _pendingCallNumber.value = null
         _showAccountSelectionDialog.value = false
     }
+
+    fun refreshSimAccounts() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val lines = SimPhoneAccountHelper.getAvailableSimLines(getApplication())
+            _simLines.value = lines
+            // Drop a remembered SIM line that is no longer present (SIM removed / slot changed).
+            val selected = _selectedAccountId.value
+            if (selected != null && selected.startsWith("sim_") && lines.none { it.id == selected }) {
+                _selectedAccountId.value = null
+            }
+        }
+    }
+
+    private fun rememberDialLine(id: String) {
+        if (id.isBlank()) return
+        viewModelScope.launch(Dispatchers.IO) { repo.setLastDialLineId(id) }
+    }
+
+    override fun onCleared() {
+        try {
+            val sm = subscriptionManager
+            val listener = subscriptionsChangedListener
+            if (sm != null && listener != null) {
+                sm.removeOnSubscriptionsChangedListener(listener)
+            }
+        } catch (_: Throwable) {}
+        subscriptionManager = null
+        subscriptionsChangedListener = null
+        super.onCleared()
+    }
+
+    fun setAlwaysAskLine(ask: Boolean) = viewModelScope.launch {
+        repo.setAlwaysAskDialLine(ask)
+    }
+
     fun backspace() { dialBackspace() }
 
     fun updateBluetoothAvailability() {
@@ -328,11 +403,12 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
             @Suppress("DEPRECATION")
             am.isBluetoothScoAvailableOffCall
         }
-        _hasBluetoothDevice.value = hasBt
+        _sipHasBluetoothDevice.value = hasBt
     }
 
     fun toggleRecording() {
         val session = callSession.value ?: return
+        if (session.transport == CallTransport.SIM) return
         if (session.isRecording || session.isRecordingPending) {
             com.ipdial.service.RecordingManager.stopRecording()
         } else if (session.state == CallState.CONFIRMED) {
@@ -344,7 +420,11 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun sendDtmf(digit: Char) {
-        SipAudioController.sendDtmf(digit)
+        if (callSession.value?.transport == CallTransport.SIM) {
+            SimCallManager.sendDtmf(digit)
+        } else {
+            SipAudioController.sendDtmf(digit)
+        }
     }
 
     fun cleanUri(uri: String): String = com.ipdial.ui.screens.cleanUri(uri)
@@ -428,12 +508,35 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         logRepo.deleteAll()
     }
 
-    // Call Engine state
-    val callSession: StateFlow<CallSession?> = SipEngine.callSession
+    // Unified Call Engine state (SIP calls + cellular SIM InCallService calls)
+    val callSession: StateFlow<CallSession?> = combine(
+        SipEngine.callSession,
+        SimCallManager.callSession
+    ) { sip, sim -> sip ?: sim }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    val audioDeviceMode: StateFlow<AudioDeviceMode> = combine(
+        callSession,
+        _sipAudioDeviceMode,
+        SimCallManager.audioDeviceMode
+    ) { session, sipMode, simMode ->
+        if (session?.transport == CallTransport.SIM) simMode else sipMode
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, AudioDeviceMode.EARPIECE)
+
+    val hasBluetoothDevice: StateFlow<Boolean> = combine(
+        callSession,
+        _sipHasBluetoothDevice,
+        SimCallManager.hasBluetoothDevice
+    ) { session, sipBt, simBt ->
+        if (session?.transport == CallTransport.SIM) simBt else sipBt
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     // Selected account for outgoing calls when multiple accounts are enabled
     private val _selectedAccountId = MutableStateFlow<String?>(null)
     val selectedAccountId: StateFlow<String?> = _selectedAccountId.asStateFlow()
+
+    // One-shot line chosen from the dialpad chip; overrides "ask every time" for the next call.
+    private val _dialLineOverride = MutableStateFlow<String?>(null)
 
     private val _pendingCallNumber = MutableStateFlow<String?>(null)
     val pendingCallNumber: StateFlow<String?> = _pendingCallNumber.asStateFlow()
@@ -468,14 +571,41 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     private val _isEndingCall = MutableStateFlow(false)
     val isEndingCall: StateFlow<Boolean> = _isEndingCall.asStateFlow()
 
+    // Keeps the SIM line list fresh when SIMs are inserted/removed or the default data SIM changes.
+    private var subscriptionManager: SubscriptionManager? = null
+    private var subscriptionsChangedListener: SubscriptionManager.OnSubscriptionsChangedListener? = null
+
     init {
+        refreshSimAccounts()
+        try {
+            val sm = getApplication<Application>().getSystemService(SubscriptionManager::class.java)
+            if (sm != null) {
+                val listener = object : SubscriptionManager.OnSubscriptionsChangedListener() {
+                    override fun onSubscriptionsChanged() {
+                        refreshSimAccounts()
+                    }
+                }
+                sm.addOnSubscriptionsChangedListener(listener)
+                subscriptionsChangedListener = listener
+                subscriptionManager = sm
+            }
+        } catch (_: Throwable) {
+            // READ_PHONE_STATE missing or telephony unavailable — manual refresh still works.
+        }
+        viewModelScope.launch {
+            val savedLine = repo.lastDialLineId.first()
+            if (!savedLine.isNullOrBlank() && _selectedAccountId.value == null) {
+                _selectedAccountId.value = savedLine
+                refreshSimAccounts()
+            }
+        }
         viewModelScope.launch {
             contactsRepo.allContacts.collect { _contacts.value = it }
         }
         viewModelScope.launch {
             SipEngine.confirmedAudioRoute.collect { route ->
                 if (route != null) {
-                    _audioDeviceMode.value = route
+                    _sipAudioDeviceMode.value = route
                 }
             }
         }
@@ -484,7 +614,7 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                 if (isNull) {
                     _isEndingCall.value = false
                     _dialString.value = TextFieldValue("")
-                    _audioDeviceMode.value = AudioDeviceMode.EARPIECE
+                    _sipAudioDeviceMode.value = AudioDeviceMode.EARPIECE
                 } else {
                     updateBluetoothAvailability()
                 }
@@ -533,7 +663,25 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     fun clearDial() { _dialString.value = TextFieldValue("") }
     fun prefillDialer(number: String) { _dialString.value = TextFieldValue(number, TextRange(number.length)) }
 
-    fun selectAccount(id: String) { _selectedAccountId.value = id }
+    fun selectAccount(id: String) {
+        _selectedAccountId.value = id
+        rememberDialLine(id)
+    }
+
+    /**
+     * Line picked explicitly from the dialpad chip. Applies to the next outgoing call even when
+     * "Ask SIM / IP Account on Call" is enabled, so the choice the user just made is respected.
+     */
+    fun chooseDialLine(id: String) {
+        _selectedAccountId.value = id
+        _dialLineOverride.value = id
+        rememberDialLine(id)
+    }
+
+    private fun hasActiveSipSession(): Boolean {
+        val session = SipEngine.callSession.value ?: return false
+        return session.state != CallState.DISCONNECTED
+    }
 
     private fun isNetworkConnected(): Boolean {
         val cm = getApplication<Application>().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -546,24 +694,112 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         val rawInput = (overrideNumber ?: _dialString.value.text).trim()
         if (rawInput.isBlank()) return
 
-        if (!isNetworkConnected()) {
-            Toast.makeText(getApplication(), "No internet connection", Toast.LENGTH_SHORT).show()
-            return
-        }
-
+        val currentSims = SimPhoneAccountHelper.getAvailableSimLines(getApplication())
+        _simLines.value = currentSims
         val enabledAccounts = accounts.value.filter { it.isEnabled }
-        if (enabledAccounts.isEmpty()) {
-            Toast.makeText(getApplication(), "No enabled account configured", Toast.LENGTH_SHORT).show()
+        val totalLines = currentSims.size + enabledAccounts.size
+
+        if (totalLines == 0) {
+            if (!isNetworkConnected()) {
+                Toast.makeText(getApplication(), "No internet connection", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(getApplication(), "No SIM or SIP account available", Toast.LENGTH_SHORT).show()
+            }
             return
         }
 
-        if (enabledAccounts.size > 1 && _selectedAccountId.value == null) {
+        val overrideId = _dialLineOverride.value
+        _dialLineOverride.value = null
+        val selectedId = overrideId ?: _selectedAccountId.value
+        val selectedSim = currentSims.firstOrNull { it.id == selectedId }
+        val selectedSip = enabledAccounts.firstOrNull { it.id == selectedId }
+        val lineChosen = overrideId != null && (selectedSim != null || selectedSip != null)
+        val hasValidPreselection = lineChosen ||
+            (!alwaysAskLine.value && (selectedSim != null || selectedSip != null))
+        val staleSelection = selectedId != null && selectedSim == null && selectedSip == null
+
+        if (totalLines > 1 && (!hasValidPreselection || staleSelection)) {
             _pendingCallNumber.value = rawInput
             _showAccountSelectionDialog.value = true
             return
         }
 
-        val account = activeAccount.value ?: enabledAccounts.first()
+        when {
+            selectedSim != null && (lineChosen || !alwaysAskLine.value) ->
+                placeSimCallInternal(rawInput, selectedSim)
+            selectedSip != null && (lineChosen || !alwaysAskLine.value) ->
+                placeSipCallInternal(rawInput, selectedSip)
+            currentSims.size == 1 && enabledAccounts.isEmpty() -> placeSimCallInternal(rawInput, currentSims.first())
+            else -> {
+                val account = activeAccount.value ?: enabledAccounts.firstOrNull()
+                if (account != null) {
+                    placeSipCallInternal(rawInput, account)
+                } else if (currentSims.isNotEmpty()) {
+                    placeSimCallInternal(rawInput, currentSims.first())
+                }
+            }
+        }
+    }
+
+    private fun placeSimCallInternal(rawInput: String, simLine: SimLine) {
+        val cleanNum = SimPhoneAccountHelper.cleanTelNumber(rawInput)
+        if (cleanNum.isBlank()) {
+            Toast.makeText(getApplication(), "Invalid phone number", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val app = getApplication<Application>()
+        if (hasActiveSipSession()) {
+            Toast.makeText(app, "IP call in progress — end it before dialing a SIM call", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                app,
+                android.Manifest.permission.CALL_PHONE
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            Toast.makeText(app, "Phone permission required for SIM calls", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val placed = SimPhoneAccountHelper.placeSimCall(app, rawInput, simLine)
+        if (!placed) {
+            Toast.makeText(app, "Unable to start SIM call on ${simLine.label}", Toast.LENGTH_SHORT).show()
+            return
+        }
+        _dialString.value = TextFieldValue("")
+        rememberDialLine(simLine.id)
+
+        viewModelScope.launch(Dispatchers.IO) {
+            repo.setLastDialedNumber(cleanNum)
+            if (!DefaultDialerHelper.isDefaultDialer(app)) {
+                val matchedContact = findContactByNumber(cleanNum)
+                    ?: contactsRepo.lookupDeviceContactByNumber(cleanNum)
+                logRepo.insert(
+                    CallLogEntry(
+                        accountId = simLine.id,
+                        remoteUri = cleanNum,
+                        remoteDisplayName = matchedContact?.name ?: "",
+                        direction = CallDirection.OUTGOING,
+                        timestampMs = System.currentTimeMillis(),
+                        transport = CallTransport.SIM,
+                        lineLabel = simLine.label
+                    )
+                )
+            }
+        }
+    }
+
+    private fun placeSipCallInternal(rawInput: String, account: SipAccount) {
+        if (SimCallManager.hasActiveCall()) {
+            Toast.makeText(getApplication(), "SIM call in progress — end it before dialing an IP call", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (!isNetworkConnected()) {
+            Toast.makeText(getApplication(), "No internet connection", Toast.LENGTH_SHORT).show()
+            return
+        }
+
         if (account.regStatus == RegStatus.ERROR &&
             (account.regStatusText.contains("403") || account.regStatusText.contains("401") || account.regStatusText.contains("Ip not allowed", ignoreCase = true))
         ) {
@@ -593,6 +829,16 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
 
     fun hangup() {
         val session = callSession.value
+        if (session?.transport == CallTransport.SIM) {
+            _isEndingCall.value = true
+            SimCallManager.hangup()
+            viewModelScope.launch {
+                delay(600)
+                _isEndingCall.value = false
+            }
+            return
+        }
+
         val id = session?.callId ?: -1
         _isEndingCall.value = true
         android.util.Log.d("SipViewModel", "hangup() called: callId=$id")
@@ -618,22 +864,53 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     fun forceEndCall() {
         android.util.Log.w("SipViewModel", "forceEndCall() invoked by user tap")
         _isEndingCall.value = false
-        SipEngine.forceClearCallSession()
+        if (callSession.value?.transport == CallTransport.SIM) {
+            SimCallManager.forceClear()
+        } else {
+            SipEngine.forceClearCallSession()
+        }
     }
 
-    fun toggleMute() { SipAudioController.setMute(!(callSession.value?.isMuted ?: false)) }
-    fun toggleSpeaker() { SipAudioController.setSpeaker(!(callSession.value?.isSpeaker ?: false)) }
-    fun toggleHold() { SipAudioController.holdCall(!(callSession.value?.isOnHold ?: false)) }
+    fun toggleMute() {
+        val session = callSession.value
+        if (session?.transport == CallTransport.SIM) {
+            SimCallManager.toggleMute()
+        } else {
+            SipAudioController.setMute(!(session?.isMuted ?: false))
+        }
+    }
+
+    fun toggleSpeaker() {
+        val session = callSession.value
+        if (session?.transport == CallTransport.SIM) {
+            SimCallManager.toggleSpeaker()
+        } else {
+            SipAudioController.setSpeaker(!(session?.isSpeaker ?: false))
+        }
+    }
+
+    fun toggleHold() {
+        val session = callSession.value
+        if (session?.transport == CallTransport.SIM) {
+            SimCallManager.toggleHold()
+        } else {
+            SipAudioController.holdCall(!(session?.isOnHold ?: false))
+        }
+    }
 
     fun cycleAudioDevice() {
+        if (callSession.value?.transport == CallTransport.SIM) {
+            SimCallManager.cycleAudioDevice()
+            return
+        }
         updateBluetoothAvailability()
-        val current = _audioDeviceMode.value
+        val current = _sipAudioDeviceMode.value
         val next = when (current) {
             AudioDeviceMode.EARPIECE -> AudioDeviceMode.SPEAKER
-            AudioDeviceMode.SPEAKER -> if (_hasBluetoothDevice.value) AudioDeviceMode.BLUETOOTH else AudioDeviceMode.EARPIECE
+            AudioDeviceMode.SPEAKER -> if (_sipHasBluetoothDevice.value) AudioDeviceMode.BLUETOOTH else AudioDeviceMode.EARPIECE
             AudioDeviceMode.BLUETOOTH -> AudioDeviceMode.EARPIECE
         }
-        _audioDeviceMode.value = next
+        _sipAudioDeviceMode.value = next
         SipAudioController.setSpeaker(next == AudioDeviceMode.SPEAKER)
         val router = SipEngine.audioRouter
         when (next) {
@@ -679,7 +956,24 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun callBack(entry: CallLogEntry) {
-        makeCall(cleanUri(entry.remoteUri))
+        val number = cleanUri(entry.remoteUri)
+        if (number.isBlank()) return
+        if (entry.transport == CallTransport.SIM) {
+            val simLines = SimPhoneAccountHelper.getAvailableSimLines(getApplication())
+            val sim = simLines.firstOrNull { it.id == entry.accountId }
+                ?: simLines.firstOrNull { it.label.equals(entry.lineLabel, ignoreCase = true) }
+            if (sim != null) {
+                placeSimCallInternal(number, sim)
+                return
+            }
+        } else {
+            val account = accounts.value.firstOrNull { it.id == entry.accountId && it.isEnabled }
+            if (account != null) {
+                placeSipCallInternal(number, account)
+                return
+            }
+        }
+        makeCall(number)
     }
 
     fun logCall(entry: CallLogEntry) = viewModelScope.launch {

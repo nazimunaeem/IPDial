@@ -350,8 +350,12 @@ class SipService : Service() {
         when (intent?.action) {
             ACTION_ANSWER -> {
                 val callId = intent.getIntExtra("callId", -1)
-                SipEngine.answerCall(callId)
-                audioRouter.routeAudioToEarpiece()
+                if (SipEngine.callSession.value == null && com.ipdial.service.sim.SimCallManager.hasActiveCall()) {
+                    com.ipdial.service.sim.SimCallManager.answerCall()
+                } else {
+                    SipEngine.answerCall(callId)
+                    audioRouter.routeAudioToEarpiece()
+                }
                 cancelIncomingNotification(this)
                 val fullIntent = Intent(this, MainActivity::class.java).apply {
                     this.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -364,10 +368,14 @@ class SipService : Service() {
             }
             ACTION_DECLINE -> {
                 val callId = intent.getIntExtra("callId", -1)
-                val session = SipEngine.callSession.value
-                val cause = CallHangupResolver.resolveDisconnectCause(session)
-                SipEngine.hangupCall(callId)
-                SipConnectionService.disconnectCall(callId, cause)
+                if (SipEngine.callSession.value == null && com.ipdial.service.sim.SimCallManager.hasActiveCall()) {
+                    com.ipdial.service.sim.SimCallManager.hangup()
+                } else {
+                    val session = SipEngine.callSession.value
+                    val cause = CallHangupResolver.resolveDisconnectCause(session)
+                    SipEngine.hangupCall(callId)
+                    SipConnectionService.disconnectCall(callId, cause)
+                }
                 cancelIncomingNotification(this)
             }
             "ACTION_STOP_BANNER" -> {
@@ -378,6 +386,7 @@ class SipService : Service() {
                 if (::ringtonePlayer.isInitialized) {
                     ringtonePlayer.stopRingtone()
                 }
+                com.ipdial.service.sim.SimCallManager.silenceRinger()
             }
             ACTION_SET_AUDIO_DEVICE -> {
                 val mode = intent.getStringExtra("mode") ?: AudioDeviceMode.EARPIECE.name
@@ -390,12 +399,16 @@ class SipService : Service() {
             }
             ACTION_HANGUP -> {
                 val callId = intent.getIntExtra("callId", -1)
-                val session = SipEngine.callSession.value
-                val id = if (callId >= 0) callId else session?.callId ?: -1
-                val cause = CallHangupResolver.resolveDisconnectCause(session)
-                SipEngine.hangupCall(id)
-                if (id != -1) {
-                    SipConnectionService.disconnectCall(id, cause)
+                if (SipEngine.callSession.value == null && com.ipdial.service.sim.SimCallManager.hasActiveCall()) {
+                    com.ipdial.service.sim.SimCallManager.hangup()
+                } else {
+                    val session = SipEngine.callSession.value
+                    val id = if (callId >= 0) callId else session?.callId ?: -1
+                    val cause = CallHangupResolver.resolveDisconnectCause(session)
+                    SipEngine.hangupCall(id)
+                    if (id != -1) {
+                        SipConnectionService.disconnectCall(id, cause)
+                    }
                 }
             }
             ACTION_STOP -> stopSelf()
