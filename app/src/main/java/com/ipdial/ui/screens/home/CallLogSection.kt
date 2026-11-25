@@ -83,7 +83,10 @@ fun CallLogItem(
 ) {
     val context = LocalContext.current
     var expanded by remember { mutableStateOf(false) }
-    val viaLabel  = account?.label?.ifBlank { account.domain } ?: "SIP"
+    val viaLabel = entry.lineLabel.ifBlank {
+        account?.label?.ifBlank { account.domain }
+            ?: if (entry.transport == com.ipdial.data.model.CallTransport.SIM) "SIM" else "SIP"
+    }
     val callerName = contact?.name ?: cleanDisplayName(entry.remoteDisplayName, entry.remoteUri)
     val displayNameWithCount = if (count > 1) "$callerName ($count)" else callerName
     val timeStr   = formatTime(entry.timestampMs)
@@ -229,7 +232,7 @@ fun EmptyLogPrompt() {
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
-                "Add a SIP account in Settings to get started",
+                "Dial any number or add a SIP account in Settings",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.outline
             )

@@ -21,7 +21,9 @@ import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Dialpad
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PhoneInTalk
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RadioButtonChecked
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -37,6 +39,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.ipdial.data.model.AudioDeviceMode
 import com.ipdial.data.model.CallSession
+import com.ipdial.data.model.CallTransport
 import com.ipdial.ui.screens.clickableNoRipple
 
 @Composable
@@ -47,6 +50,7 @@ fun CallControls(
     onMute: () -> Unit,
     onSpeaker: () -> Unit,
     onRecord: () -> Unit,
+    onHold: () -> Unit = {},
     audioDeviceMode: AudioDeviceMode = AudioDeviceMode.EARPIECE,
     photoMode: Boolean = false
 ) {
@@ -91,20 +95,33 @@ fun CallControls(
                 photoMode = photoMode,
                 onClick = onSpeaker
             )
-            CallControlButton(
-                icon = Icons.Default.RadioButtonChecked,
-                label = when {
-                    session.isRecording -> "Recording"
-                    session.isRecordingPending -> "Will Record"
-                    else -> "Record"
-                },
-                active = session.isRecording || session.isRecordingPending,
-                activeColor = Color(0xFFE05252),
-                enabled = true,
-                modifier = Modifier.weight(1f),
-                photoMode = photoMode,
-                onClick = onRecord
-            )
+            if (session.transport == CallTransport.SIM) {
+                CallControlButton(
+                    icon = if (session.isOnHold) Icons.Default.PlayArrow else Icons.Default.Pause,
+                    label = if (session.isOnHold) "Resume" else "Hold",
+                    active = session.isOnHold,
+                    activeColor = Color(0xFFF59E0B),
+                    enabled = isActive,
+                    modifier = Modifier.weight(1f),
+                    photoMode = photoMode,
+                    onClick = onHold
+                )
+            } else {
+                CallControlButton(
+                    icon = Icons.Default.RadioButtonChecked,
+                    label = when {
+                        session.isRecording -> "Recording"
+                        session.isRecordingPending -> "Will Record"
+                        else -> "Record"
+                    },
+                    active = session.isRecording || session.isRecordingPending,
+                    activeColor = Color(0xFFE05252),
+                    enabled = true,
+                    modifier = Modifier.weight(1f),
+                    photoMode = photoMode,
+                    onClick = onRecord
+                )
+            }
         }
     }
 }

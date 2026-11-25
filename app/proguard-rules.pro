@@ -15,6 +15,7 @@
 -keep class com.ipdial.service.SipService { *; }
 -keep class com.ipdial.service.SipConnectionService { *; }
 -keep class com.ipdial.service.BootReceiver { *; }
+-keep class com.ipdial.service.sim.** { *; }
 
 # Keep data models & Room entities for Gson / Room
 -keep class com.ipdial.data.model.** { *; }

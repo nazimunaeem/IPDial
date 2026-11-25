@@ -59,7 +59,10 @@ fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
     val contacts by vm.contacts.collectAsState()
     
     val account = accounts.firstOrNull { it.id == session.accountId }
-    val viaLine  = account?.label?.ifBlank { account.domain } ?: "SIP"
+    val viaLine = session.lineLabel.ifBlank {
+        account?.label?.ifBlank { account.domain }
+            ?: if (session.transport == com.ipdial.data.model.CallTransport.SIM) "SIM" else "SIP"
+    }
     
     val contact = remember(session.remoteUri, contacts) {
         val cleanNumber = vm.cleanUri(session.remoteUri)

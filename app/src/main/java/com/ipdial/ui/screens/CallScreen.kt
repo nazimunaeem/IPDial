@@ -92,7 +92,7 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
     val fullScreenPhotoEnabled by vm.fullScreenContactPhoto.collectAsState()
 
     val account = accounts.firstOrNull { it.id == activeSession.accountId }
-    val simLabel = account?.displayName ?: ""
+    val simLabel = activeSession.lineLabel.ifBlank { account?.displayName ?: "" }
 
     // Contact matching logic using pre-computed index with contacts fallback
     val contact = remember(activeSession.remoteUri, contacts) {
@@ -228,6 +228,7 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
                         number = vm.cleanUri(activeSession.remoteUri),
                         simLabel = simLabel,
                         isActive = isActive,
+                        isOnHold = activeSession.isOnHold,
                         state = activeSession.state,
                         elapsedSeconds = elapsedSeconds,
                         audioDeviceMode = audioDeviceMode,
@@ -261,6 +262,7 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
                                 onMute = { vm.toggleMute() },
                                 onSpeaker = { vm.cycleAudioDevice() },
                                 onRecord = { vm.toggleRecording() },
+                                onHold = { vm.toggleHold() },
                                 audioDeviceMode = audioDeviceMode,
                                 photoMode = showFullScreenPhoto
                             )
@@ -302,6 +304,7 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
                 number = vm.cleanUri(activeSession.remoteUri),
                 simLabel = simLabel,
                 isActive = isActive,
+                isOnHold = activeSession.isOnHold,
                 state = activeSession.state,
                 elapsedSeconds = elapsedSeconds,
                 audioDeviceMode = audioDeviceMode,
@@ -328,6 +331,7 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
                         onMute = { vm.toggleMute() },
                         onSpeaker = { vm.cycleAudioDevice() },
                         onRecord = { vm.toggleRecording() },
+                        onHold = { vm.toggleHold() },
                         audioDeviceMode = audioDeviceMode,
                         photoMode = showFullScreenPhoto
                     )
@@ -370,6 +374,7 @@ private fun CallHeader(
     number: String,
     simLabel: String,
     isActive: Boolean,
+    isOnHold: Boolean = false,
     state: CallState,
     elapsedSeconds: Long,
     audioDeviceMode: AudioDeviceMode,
@@ -486,7 +491,7 @@ private fun CallHeader(
                     color = textColor
                 )
                 Text(
-                    "Connected  •  $routeLabel",
+                    if (isOnHold) "On Hold  •  $routeLabel" else "Connected  •  $routeLabel",
                     style = MaterialTheme.typography.labelMedium.copy(shadow = textShadow),
                     color = subtitleColor
                 )

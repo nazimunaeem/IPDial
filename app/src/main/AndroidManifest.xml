@@ -66,6 +66,10 @@
             </intent-filter>
 
             <!-- Handle tel: links and dialer actions -->
+            <intent-filter>
+                <action android:name="android.intent.action.DIAL" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
             <intent-filter android:priority="10">
                 <action android:name="android.intent.action.DIAL" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -180,6 +184,27 @@
                 <action android:name="android.telecom.ConnectionService" />
             </intent-filter>
         </service>
+
+        <!-- InCallService for SIM cellular calls when set as Default Phone App -->
+        <service
+            android:name=".service.sim.SimInCallService"
+            android:exported="true"
+            android:permission="android.permission.BIND_INCALL_SERVICE">
+            <meta-data
+                android:name="android.telecom.IN_CALL_SERVICE_UI"
+                android:value="true" />
+            <meta-data
+                android:name="android.telecom.IN_CALL_SERVICE_RINGING"
+                android:value="true" />
+            <intent-filter>
+                <action android:name="android.telecom.InCallService" />
+            </intent-filter>
+        </service>
+
+        <!-- Notification action receiver for SIM cellular calls -->
+        <receiver
+            android:name=".service.sim.SimCallActionReceiver"
+            android:exported="false" />
 
         <!-- Boot receiver to restart SIP registration -->
         <receiver

@@ -69,6 +69,8 @@ data class RegistrationEvent(
     val reason: String = ""
 )
 
+enum class CallTransport { SIP, SIM }
+
 data class CallSession(
     val callId: Int = -1,
     val accountId: String = "",
@@ -88,6 +90,8 @@ data class CallSession(
     val disconnectReason: String? = null,
     val callLogId: String = UUID.randomUUID().toString(),
     val startedAtMs: Long = System.currentTimeMillis(),
+    val transport: CallTransport = CallTransport.SIP,
+    val lineLabel: String = "",
 )
 
 enum class CallDirection { INCOMING, OUTGOING }
@@ -106,6 +110,8 @@ data class CallLogEntry(
     val durationSeconds: Long = 0L,
     val disconnectCode: Int? = null,
     val disconnectReason: String? = null,
+    val transport: CallTransport = CallTransport.SIP,
+    val lineLabel: String = "",
 )
 
 enum class CallState {
