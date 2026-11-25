@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">IPDial</string>
+    <string name="app_name">DialDuo</string>
     <string name="incoming_call">Incoming Call</string>
     <string name="outgoing_call">Calling</string>
     <string name="answer">Answer</string>

@@ -70,7 +70,7 @@ fun buildServiceNotification(context: Context): Notification {
         PendingIntent.FLAG_IMMUTABLE
     )
     val notif = NotificationCompat.Builder(context, NOTIF_CHANNEL_SIP)
-        .setContentTitle("IPDial")
+        .setContentTitle(context.getString(R.string.app_name))
         .setContentText("Ready to receive calls")
         .setSmallIcon(R.drawable.ic_notif_call)
         .setContentIntent(intent)
