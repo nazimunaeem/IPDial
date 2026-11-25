@@ -357,7 +357,7 @@ fun AppMenuBottomSheet(
     if (showExitDialog) {
         AlertDialog(
             onDismissRequest = { showExitDialog = false },
-            title = { Text("Exit IPDial?") },
+            title = { Text("Exit DialDuo?") },
             text = { Text("This will close the app and stop all background processes. You will not receive incoming calls.") },
             confirmButton = {
                 Button(

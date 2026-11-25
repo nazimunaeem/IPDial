@@ -302,9 +302,9 @@ class MainActivity : ComponentActivity() {
                         title = { Text("Battery Optimization") },
                         text = {
                             Text(
-                                "IPDial needs to run in the background to receive incoming calls. " +
+                                "DialDuo needs to run in the background to receive incoming calls. " +
                                 "Battery optimization may prevent calls from reaching you.\n\n" +
-                                "Please disable battery optimization for IPDial to ensure reliable call reception."
+                                "Please disable battery optimization for DialDuo to ensure reliable call reception."
                             )
                         },
                         confirmButton = {
@@ -503,10 +503,12 @@ fun IPDialApp() {
 
     val showAccountSelection by vm.showAccountSelectionDialog.collectAsState()
     val pendingCallNumber by vm.pendingCallNumber.collectAsState()
+    val pendingCallName by vm.pendingCallName.collectAsState()
     val simLines by vm.simLines.collectAsState()
     val accounts by vm.accounts.collectAsState()
     val balances by vm.balances.collectAsState()
     val selectedLineId by vm.selectedAccountId.collectAsState()
+    val ussdSession by vm.ussdDialog.collectAsState()
     val enabledAccounts = remember(accounts) {
         accounts.filter { it.isEnabled }
     }
@@ -514,6 +516,7 @@ fun IPDialApp() {
     if (showAccountSelection && (enabledAccounts.isNotEmpty() || simLines.isNotEmpty())) {
         com.ipdial.ui.components.AccountSelectionDialog(
             pendingNumber = pendingCallNumber,
+            pendingDisplayName = pendingCallName,
             simLines = simLines,
             enabledAccounts = enabledAccounts,
             balances = balances,
@@ -521,6 +524,24 @@ fun IPDialApp() {
             onSimSelected = { vm.proceedWithSimCall(it) },
             onAccountSelected = { vm.proceedWithCallAfterAccountSelection(it) },
             onDismiss = { vm.dismissAccountSelection() }
+        )
+    }
+
+    if (ussdSession != null) {
+        val session = ussdSession!!
+        AlertDialog(
+            onDismissRequest = { vm.dismissUssdDialog() },
+            title = { Text("USSD · ${session.request}") },
+            text = {
+                Text(
+                    session.error
+                        ?: session.response?.takeIf { it.isNotBlank() }
+                        ?: "Request sent. No response from the network."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { vm.dismissUssdDialog() }) { Text("OK") }
+            }
         )
     }
 
@@ -795,6 +816,7 @@ fun AppNavHost(
                 onNavigateToLogs = { navController.navigate(NavDest.Logs.route) },
                 onNavigateToCodecs = { navController.navigate(NavDest.AudioCodecs.route) },
                 onNavigateToTheme = { navController.navigate(NavDest.ThemeSettings.route) },
+                onNavigateToDialpadStyle = { navController.navigate(NavDest.DialpadStyle.route) },
                 onNavigateToIncomingCallStyle = { navController.navigate(NavDest.IncomingCallStyle.route) },
                 onNavigateToPrivacy = { navController.navigate(NavDest.Privacy.route) },
                 onNavigateToAbout = { navController.navigate(NavDest.About.route) },

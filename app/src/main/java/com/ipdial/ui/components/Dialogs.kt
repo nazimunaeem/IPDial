@@ -81,6 +81,7 @@ fun NumberPickerDialog(
 @Composable
 fun AccountSelectionDialog(
     pendingNumber: String? = null,
+    pendingDisplayName: String? = null,
     simLines: List<SimLine> = emptyList(),
     enabledAccounts: List<SipAccount>,
     balances: Map<String, String> = emptyMap(),
@@ -110,7 +111,7 @@ fun AccountSelectionDialog(
                 if (!pendingNumber.isNullOrBlank()) {
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        text = "Calling $pendingNumber",
+                        text = "Calling ${pendingDisplayName?.takeIf { it.isNotBlank() } ?: pendingNumber}",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

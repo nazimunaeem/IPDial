@@ -51,7 +51,7 @@ fun PrivacyPolicyScreen(
             
             PrivacySection(
                 title = "Information Collection",
-                content = "IPDial runs locally on your device without requiring an account or cloud sign-in. SIP account settings, call logs, and recordings stay on your device."
+                content = "DialDuo runs locally on your device without requiring an account or cloud sign-in. SIP account settings, call logs, and recordings stay on your device."
             )
             
             PrivacySection(
@@ -66,7 +66,7 @@ fun PrivacyPolicyScreen(
 
             PrivacySection(
                 title = "Network & Update Checks",
-                content = "IPDial connects directly to your configured SIP provider (and optional STUN/TURN servers). Checking for app updates fetches public release metadata from GitHub."
+                content = "DialDuo connects directly to your configured SIP provider (and optional STUN/TURN servers). Checking for app updates fetches public release metadata from GitHub."
             )
             
             Spacer(Modifier.height(32.dp))

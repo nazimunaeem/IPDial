@@ -89,7 +89,7 @@ fun IPDialTopBar(
                     }
                     Spacer(Modifier.width(2.dp))
                     Text(
-                        text = title ?: "IPDial",
+                        text = title ?: "DialDuo",
                         style = MaterialTheme.typography.titleMedium.copy(
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface,
@@ -107,7 +107,7 @@ fun IPDialTopBar(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "IPDial",
+                        text = "DialDuo",
                         style = MaterialTheme.typography.titleLarge.copy(
                             fontWeight = FontWeight.ExtraBold,
                             fontSize = 19.sp,
@@ -134,31 +134,7 @@ fun IPDialTopBar(
                     .fillMaxHeight(),
                 contentAlignment = Alignment.CenterEnd
             ) {
-                if (accounts.isEmpty() && onAddAccount != null) {
-                    Surface(
-                        onClick = onAddAccount,
-                        color = MaterialTheme.colorScheme.primary,
-                        shape = RoundedCornerShape(20.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Add,
-                                contentDescription = null,
-                                modifier = Modifier.size(14.dp),
-                                tint = MaterialTheme.colorScheme.onPrimary
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text(
-                                "Setup",
-                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                color = MaterialTheme.colorScheme.onPrimary
-                            )
-                        }
-                    }
-                } else if (onBack == null) {
+                if (accounts.isNotEmpty() && onBack == null) {
                     TopBarAccountIndicator(
                         accounts = accounts,
                         vm = vm,

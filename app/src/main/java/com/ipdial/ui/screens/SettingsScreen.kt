@@ -64,6 +64,7 @@ fun SettingsScreen(
     onNavigateToLogs: () -> Unit,
     onNavigateToCodecs: () -> Unit,
     onNavigateToTheme: () -> Unit = {},
+    onNavigateToDialpadStyle: () -> Unit = {},
     onNavigateToIncomingCallStyle: () -> Unit = {},
     onNavigateToPrivacy: () -> Unit = {},
     onNavigateToAbout: () -> Unit = {},
@@ -451,11 +452,11 @@ fun SettingsScreen(
             item {
                 SettingsRow(
                     icon = Icons.Default.PhoneAndroid,
-                    title = "Default Phone App",
+                    title = "Set Default Dialer",
                     subtitle = if (isDefaultDialer) {
-                        "Active — IPDial handles SIM & SIP call screens"
+                        "Default dialer active — handles SIM & SIP call screens"
                     } else {
-                        "Tap to set IPDial as default phone app for SIM call UI"
+                        "Tap to set DialDuo as your default phone app"
                     },
                     trailing = {
                         if (isDefaultDialer) {
@@ -481,7 +482,7 @@ fun SettingsScreen(
                         } else {
                             android.widget.Toast.makeText(
                                 context,
-                                if (isDefaultDialer) "IPDial is already your Default Phone App" else "Default dialer prompt unavailable",
+                                if (isDefaultDialer) "DialDuo is already your Default Phone App" else "Default dialer prompt unavailable",
                                 android.widget.Toast.LENGTH_SHORT
                             ).show()
                         }
@@ -497,16 +498,13 @@ fun SettingsScreen(
                     title = "Keypad Design",
                     subtitle = if (keypadDesign == KeypadDesign.Rounded) "Fully Rounded" else "Grid",
                     trailing = {
-                        Switch(
-                            checked = keypadDesign == KeypadDesign.Rounded,
-                            onCheckedChange = {
-                                vm.setKeypadDesign(context, if (it) KeypadDesign.Rounded else KeypadDesign.Grid)
-                            }
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     },
-                    onClick = {
-                        vm.setKeypadDesign(context, if (keypadDesign == KeypadDesign.Rounded) KeypadDesign.Grid else KeypadDesign.Rounded)
-                    }
+                    onClick = { onNavigateToDialpadStyle() }
                 )
             }
 
@@ -543,22 +541,6 @@ fun SettingsScreen(
             }
 
             item {
-                val hideDialpadDigits by vm.hideDialpadDigits.collectAsState()
-                SettingsRow(
-                    icon = Icons.Default.VisibilityOff,
-                    title = "Hide Dialpad Numbers",
-                    subtitle = "Show only letters on the keypad",
-                    trailing = {
-                        Switch(
-                            checked = hideDialpadDigits,
-                            onCheckedChange = { vm.setHideDialpadDigits(it) }
-                        )
-                    },
-                    onClick = { vm.setHideDialpadDigits(!hideDialpadDigits) }
-                )
-            }
-
-            item {
                 val openDialpadAtLaunch by vm.openDialpadAtLaunch.collectAsState()
                 SettingsRow(
                     icon = Icons.Default.Dialpad,
@@ -576,6 +558,32 @@ fun SettingsScreen(
 
             // ── Calls ──
             stickyHeader { SettingsSection("Calls") }
+            item {
+                if (isDefaultDialer) {
+                    SettingsRow(
+                        icon = Icons.Default.PhoneInTalk,
+                        title = "Phone Call Settings",
+                        subtitle = "SIM, VoLTE, call forwarding & carrier options",
+                        onClick = {
+                            try {
+                                context.startActivity(
+                                    Intent(android.telecom.TelecomManager.ACTION_CHANGE_PHONE_ACCOUNTS)
+                                )
+                            } catch (_: Exception) {
+                                try {
+                                    context.startActivity(Intent(android.provider.Settings.ACTION_SETTINGS))
+                                } catch (_: Exception) {
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        "Call settings unavailable on this device",
+                                        android.widget.Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            }
+                        }
+                    )
+                }
+            }
             item {
                 val ringtoneLabel = when {
                     globalRingtone == null -> "Default"
@@ -683,6 +691,8 @@ fun SettingsScreen(
                 )
             }
 
+            // ── Call History ──
+            stickyHeader { SettingsSection("Call History") }
             item {
                 val groupCalls by vm.groupSubsequentCalls.collectAsState()
                 SettingsRow(
@@ -698,9 +708,6 @@ fun SettingsScreen(
                     onClick = { vm.setGroupSubsequentCalls(!groupCalls) }
                 )
             }
-
-            // ── Call History ──
-            stickyHeader { SettingsSection("Call History") }
             item {
                 SettingsRow(
                     icon = Icons.Default.FileUpload,
@@ -887,7 +894,7 @@ fun SettingsScreen(
             item {
                 SettingsRow(
                     icon = Icons.Default.Info,
-                    title = "About IPDial",
+                    title = "About DialDuo",
                     subtitle = "Version, developer & updates",
                     onClick = { onNavigateToAbout() }
                 )

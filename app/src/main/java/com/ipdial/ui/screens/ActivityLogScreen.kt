@@ -78,7 +78,7 @@ fun ActivityLogScreen(
                     IconButton(onClick = {
                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         val text = logs.joinToString("\n")
-                        val clip = ClipData.newPlainText("IPDial Logs", text)
+                        val clip = ClipData.newPlainText("DialDuo Logs", text)
                         clipboard.setPrimaryClip(clip)
                         Toast.makeText(context, "Logs copied to clipboard", Toast.LENGTH_SHORT).show()
                     }) {

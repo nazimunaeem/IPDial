@@ -98,14 +98,20 @@ object SimPhoneAccountHelper {
             }
             val matchedSub = matchSubscription(handle, activeSubs, idx, simHandles.size)
             val slotIdx = matchedSub?.simSlotIndex?.takeIf { it >= 0 }
+            // Use the name the user gave the SIM in device settings when available.
+            val renamed = matchedSub?.displayName?.toString()?.trim()?.takeIf { it.isNotBlank() }
             val label = when {
+                renamed != null -> renamed
                 slotIdx != null -> "SIM ${slotIdx + 1}"
                 simHandles.size > 1 -> "SIM ${idx + 1}"
                 else -> "SIM 1"
             }
-            val carrierName = matchedSub?.carrierName?.toString()?.trim()?.takeIf { it.isNotBlank() }
-                ?: matchedSub?.displayName?.toString()?.trim()?.takeIf { it.isNotBlank() }
-                ?: phoneAccount?.label?.toString()?.trim()?.takeIf { it.isNotBlank() && !it.equals(label, ignoreCase = true) }
+            val carrierName = matchedSub?.carrierName?.toString()?.trim()
+                ?.takeIf { it.isNotBlank() && !it.equals(label, ignoreCase = true) }
+                ?: matchedSub?.displayName?.toString()?.trim()
+                    ?.takeIf { it.isNotBlank() && !it.equals(label, ignoreCase = true) }
+                ?: phoneAccount?.label?.toString()?.trim()
+                    ?.takeIf { it.isNotBlank() && !it.equals(label, ignoreCase = true) }
                 ?: ""
 
             val simNumber = readSubscriptionNumber(sm, matchedSub)
@@ -119,7 +125,9 @@ object SimPhoneAccountHelper {
                 label = label,
                 subtitle = subtitle,
                 slotIndex = slotIdx,
-                handle = handle
+                handle = handle,
+                subscriptionId = matchedSub?.subscriptionId
+                    ?.takeIf { it != SubscriptionManager.INVALID_SUBSCRIPTION_ID }
             )
         }.sortedWith(compareBy({ it.slotIndex ?: Int.MAX_VALUE }, { it.label }))
     }

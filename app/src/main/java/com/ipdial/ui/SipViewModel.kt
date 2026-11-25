@@ -47,6 +47,8 @@ import com.ipdial.service.sim.DefaultDialerHelper
 import com.ipdial.service.sim.SimCallManager
 import com.ipdial.service.sim.SimLine
 import com.ipdial.service.sim.SimPhoneAccountHelper
+import com.ipdial.service.sim.UssdHelper
+import com.ipdial.service.sim.UssdSession
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -340,6 +342,7 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         _showAccountSelectionDialog.value = false
         val num = _pendingCallNumber.value
         _pendingCallNumber.value = null
+        _pendingCallName.value = null
         selectAccount(accountId)
         val account = accounts.value.firstOrNull { it.id == accountId && it.isEnabled } ?: return
         if (!num.isNullOrBlank()) {
@@ -351,6 +354,7 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         _showAccountSelectionDialog.value = false
         val num = _pendingCallNumber.value
         _pendingCallNumber.value = null
+        _pendingCallName.value = null
         selectAccount(simLine.id)
         if (!num.isNullOrBlank()) {
             placeSimCallInternal(num, simLine)
@@ -359,6 +363,7 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
 
     fun dismissAccountSelection() {
         _pendingCallNumber.value = null
+        _pendingCallName.value = null
         _showAccountSelectionDialog.value = false
     }
 
@@ -552,6 +557,14 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     private val _pendingCallNumber = MutableStateFlow<String?>(null)
     val pendingCallNumber: StateFlow<String?> = _pendingCallNumber.asStateFlow()
 
+    private val _pendingCallName = MutableStateFlow<String?>(null)
+    val pendingCallName: StateFlow<String?> = _pendingCallName.asStateFlow()
+
+    private val _ussdDialog = MutableStateFlow<UssdSession?>(null)
+    val ussdDialog: StateFlow<UssdSession?> = _ussdDialog.asStateFlow()
+
+    fun dismissUssdDialog() { _ussdDialog.value = null }
+
     private val _showAccountSelectionDialog = MutableStateFlow(false)
     val showAccountSelectionDialog: StateFlow<Boolean> = _showAccountSelectionDialog.asStateFlow()
 
@@ -724,7 +737,8 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     fun promptLineSelection(
         rawInput: String,
         preferredLineId: String? = null,
-        preferredLabel: String? = null
+        preferredLabel: String? = null,
+        preferredName: String? = null
     ) {
         val currentSims = SimPhoneAccountHelper.getAvailableSimLines(getApplication())
         _simLines.value = currentSims
@@ -752,6 +766,8 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         }
 
         _pendingCallNumber.value = rawInput
+        _pendingCallName.value = preferredName?.takeIf { it.isNotBlank() }
+            ?: findContactByNumber(rawInput)?.name?.takeIf { it.isNotBlank() }
         _showAccountSelectionDialog.value = true
     }
 
@@ -763,16 +779,33 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         }
 
         val app = getApplication<Application>()
-        if (hasActiveSipSession()) {
-            Toast.makeText(app, "IP call in progress — end it before dialing a SIM call", Toast.LENGTH_SHORT).show()
-            return
-        }
         if (androidx.core.content.ContextCompat.checkSelfPermission(
                 app,
                 android.Manifest.permission.CALL_PHONE
             ) != android.content.pm.PackageManager.PERMISSION_GRANTED
         ) {
             Toast.makeText(app, "Phone permission required for SIM calls", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        // USSD / MMI codes (*121#, *#06#, *123*1#) must go through TelephonyManager.
+        // Placing them as regular calls makes the network reply "connection problem or
+        // invalid MMI code".
+        if (UssdHelper.isUssdCode(cleanNum)) {
+            _dialString.value = TextFieldValue("")
+            rememberDialLine(simLine.id)
+            UssdHelper.send(app, cleanNum, simLine) { success, message ->
+                _ussdDialog.value = UssdSession(
+                    request = cleanNum,
+                    response = message.takeIf { success && it.isNotBlank() },
+                    error = message.takeIf { !success }
+                )
+            }
+            return
+        }
+
+        if (hasActiveSipSession()) {
+            Toast.makeText(app, "IP call in progress — end it before dialing a SIM call", Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -805,6 +838,14 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun placeSipCallInternal(rawInput: String, account: SipAccount) {
+        if (UssdHelper.isUssdCode(rawInput)) {
+            Toast.makeText(
+                getApplication(),
+                "USSD codes only work on a SIM line",
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
         if (SimCallManager.hasActiveCall()) {
             Toast.makeText(getApplication(), "SIM call in progress — end it before dialing an IP call", Toast.LENGTH_SHORT).show()
             return
@@ -982,7 +1023,8 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         promptLineSelection(
             rawInput = number,
             preferredLineId = entry.accountId.takeIf { it.isNotBlank() },
-            preferredLabel = entry.lineLabel.takeIf { it.isNotBlank() }
+            preferredLabel = entry.lineLabel.takeIf { it.isNotBlank() },
+            preferredName = entry.remoteDisplayName.takeIf { it.isNotBlank() }
         )
     }
 

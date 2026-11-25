@@ -86,7 +86,6 @@ fun DialpadScreen(
     val keypadDesign by vm.keypadDesign.collectAsState()
     val dialpadVibrate by vm.dialpadVibrate.collectAsState()
     val dialpadBeep by vm.dialpadBeep.collectAsState()
-    val hideDialpadDigits by vm.hideDialpadDigits.collectAsState()
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val haptic = LocalHapticFeedback.current
@@ -303,7 +302,6 @@ fun DialpadScreen(
                                 onCallClick = callAction,
                                 fitWithinWidth = fitW,
                                 vibrateOnPress = dialpadVibrate,
-                                showDigits = !hideDialpadDigits
                             )
                         } else {
                             Row(
@@ -321,7 +319,6 @@ fun DialpadScreen(
                                     onCallClick = null,
                                     fitWithinWidth = fitW - 68.dp,
                                     vibrateOnPress = dialpadVibrate,
-                                    showDigits = !hideDialpadDigits
                                 )
                                 Spacer(Modifier.width(8.dp))
                                 Box(
@@ -620,7 +617,6 @@ fun DialpadScreen(
                     onZeroLongPress = { onDigit('+') },
                     onCallClick = if (keypadDesign == KeypadDesign.Ring) callAction else null,
                     vibrateOnPress = dialpadVibrate,
-                    showDigits = !hideDialpadDigits
                 )
 
                 if (keypadDesign != KeypadDesign.Ring) {

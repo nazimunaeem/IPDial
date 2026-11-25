@@ -10,5 +10,15 @@ data class SimLine(
     val label: String,
     val subtitle: String,
     val slotIndex: Int?,
-    val handle: PhoneAccountHandle
+    val handle: PhoneAccountHandle,
+    val subscriptionId: Int? = null
+)
+
+/**
+ * Result of a USSD/MMI request so the UI can show the network response.
+ */
+data class UssdSession(
+    val request: String,
+    val response: String? = null,
+    val error: String? = null
 )
