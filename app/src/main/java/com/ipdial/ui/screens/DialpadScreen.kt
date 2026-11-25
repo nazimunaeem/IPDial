@@ -65,6 +65,7 @@ import androidx.compose.ui.unit.sp
 import com.ipdial.data.model.KeypadDesign
 import com.ipdial.ui.SipViewModel
 import com.ipdial.ui.components.AccountSelectionDialog
+import com.ipdial.ui.components.DialLineChip
 import com.ipdial.ui.screens.dialpad.DialpadKeypad
 import com.ipdial.ui.screens.dialpad.SuggestedContactRow
 import com.ipdial.ui.screens.dialpad.T9_MAP
@@ -82,6 +83,8 @@ fun DialpadScreen(
     val dialString = dialTextFieldValue.text
     val lastDialedNumber by vm.lastDialedNumber.collectAsState()
     val accounts by vm.accounts.collectAsState()
+    val simLines by vm.simLines.collectAsState()
+    val selectedAccountId by vm.selectedAccountId.collectAsState()
     val contacts by vm.contacts.collectAsState()
     val mostCalled by vm.mostCalledContacts.collectAsState()
     val keypadDesign by vm.keypadDesign.collectAsState()
@@ -91,8 +94,43 @@ fun DialpadScreen(
     val isWide = configuration.screenWidthDp > 600
     val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
     var showMenu by remember { mutableStateOf(false) }
+    var showLinePicker by remember { mutableStateOf(false) }
     @Suppress("DEPRECATION")
     val clipboardManager = LocalClipboardManager.current
+
+    val enabledAccounts = remember(accounts) { accounts.filter { it.isEnabled } }
+    val selectedSim = simLines.firstOrNull { it.id == selectedAccountId }
+    val selectedSip = enabledAccounts.firstOrNull { it.id == selectedAccountId }
+    val fallbackSip = enabledAccounts.firstOrNull { it.isDefault } ?: enabledAccounts.firstOrNull()
+    val showLineChip = simLines.isNotEmpty() || enabledAccounts.isNotEmpty()
+    val lineLabel = when {
+        selectedSim != null -> selectedSim.label
+        selectedSip != null -> selectedSip.label.ifBlank { selectedSip.domain }
+        selectedAccountId != null -> "Select line"
+        fallbackSip != null -> fallbackSip.label.ifBlank { fallbackSip.domain }
+        else -> "Select line"
+    }
+    val lineSubtitle = selectedSim?.subtitle.orEmpty()
+    val lineIsSim = selectedSim != null || (selectedSip == null && fallbackSip == null)
+
+    if (showLinePicker) {
+        AccountSelectionDialog(
+            simLines = simLines,
+            enabledAccounts = enabledAccounts,
+            selectedLineId = selectedAccountId,
+            showCallIcon = false,
+            title = "Choose Line",
+            onSimSelected = { sim ->
+                vm.chooseDialLine(sim.id)
+                showLinePicker = false
+            },
+            onAccountSelected = { accountId ->
+                vm.chooseDialLine(accountId)
+                showLinePicker = false
+            },
+            onDismiss = { showLinePicker = false }
+        )
+    }
 
     val suggestedContacts = remember(dialString, contacts) {
         if (dialString.isBlank()) emptyList()
@@ -226,6 +264,15 @@ fun DialpadScreen(
                                 }
                             }
                             if (dialString.isEmpty()) Spacer(Modifier.size(48.dp))
+                        }
+
+                        if (showLineChip) {
+                            DialLineChip(
+                                label = lineLabel,
+                                subtitle = lineSubtitle,
+                                isSim = lineIsSim,
+                                onClick = { showLinePicker = true }
+                            )
                         }
 
                         Spacer(Modifier.height(8.dp))
@@ -541,6 +588,16 @@ fun DialpadScreen(
                         }
                     }
                     if (dialString.isEmpty()) Spacer(Modifier.size(48.dp))
+                }
+
+                if (showLineChip) {
+                    Spacer(Modifier.height(4.dp))
+                    DialLineChip(
+                        label = lineLabel,
+                        subtitle = lineSubtitle,
+                        isSim = lineIsSim,
+                        onClick = { showLinePicker = true }
+                    )
                 }
 
                 Spacer(Modifier.height(8.dp))

@@ -98,6 +98,7 @@ object SimCallManager {
 
     fun onCallAdded(service: InCallService, call: Call) {
         onServiceBound(service)
+        if (activeCall === call) return
         val ctx = service.applicationContext
 
         activeCallback?.let { prevCb ->

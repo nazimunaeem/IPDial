@@ -57,6 +57,7 @@ class AccountRepository(private val context: Context) {
     private val incomingCallModeKey = stringPreferencesKey("incoming_call_mode")
     private val defaultDomainKey = stringPreferencesKey("default_domain")
     private val lastDialedKey = stringPreferencesKey("last_dialed")
+    private val lastDialLineKey = stringPreferencesKey("last_dial_line")
     private val deviceIdKey = stringPreferencesKey("device_id")
     private val recordingCounterKey = androidx.datastore.preferences.core.intPreferencesKey("recording_counter")
     private val batteryNoticeShownKey = booleanPreferencesKey("battery_notice_shown")
@@ -169,6 +170,7 @@ class AccountRepository(private val context: Context) {
     }
 
     val lastDialedNumber: Flow<String?> = context.dataStore.data.map { it[lastDialedKey] }
+    val lastDialLineId: Flow<String?> = context.dataStore.data.map { it[lastDialLineKey] }
 
     val deviceId: Flow<String?> = context.dataStore.data.map { it[deviceIdKey] }
     val autoRecordEnabled: Flow<Boolean> = context.dataStore.data.map { it[autoRecordKey] ?: false }
@@ -209,6 +211,9 @@ class AccountRepository(private val context: Context) {
     suspend fun setIncomingCallMode(mode: IncomingCallMode) = context.dataStore.edit { it[incomingCallModeKey] = mode.name }
     suspend fun setDefaultDomain(domain: String) = context.dataStore.edit { it[defaultDomainKey] = domain }
     suspend fun setLastDialedNumber(number: String) = context.dataStore.edit { it[lastDialedKey] = number }
+    suspend fun setLastDialLineId(id: String?) = context.dataStore.edit { prefs ->
+        if (id.isNullOrBlank()) prefs.remove(lastDialLineKey) else prefs[lastDialLineKey] = id
+    }
     suspend fun setDeviceId(id: String) = context.dataStore.edit { it[deviceIdKey] = id }
     suspend fun setRecordingCounter(counter: Int) = context.dataStore.edit { it[recordingCounterKey] = counter }
     suspend fun setBatteryNoticeShown(shown: Boolean) = context.dataStore.edit { it[batteryNoticeShownKey] = shown }

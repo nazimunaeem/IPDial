@@ -13,6 +13,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.SimCard
 import androidx.compose.material.icons.filled.WifiCalling3
 import androidx.compose.material3.AlertDialog
@@ -83,6 +84,9 @@ fun AccountSelectionDialog(
     simLines: List<SimLine> = emptyList(),
     enabledAccounts: List<SipAccount>,
     balances: Map<String, String> = emptyMap(),
+    selectedLineId: String? = null,
+    showCallIcon: Boolean = true,
+    title: String = "Select Line",
     onSimSelected: (SimLine) -> Unit = {},
     onAccountSelected: (String) -> Unit,
     onDismiss: () -> Unit
@@ -99,7 +103,7 @@ fun AccountSelectionDialog(
                     .padding(24.dp)
             ) {
                 Text(
-                    text = "Select Line",
+                    text = title,
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -131,7 +135,11 @@ fun AccountSelectionDialog(
                         simLines.forEachIndexed { index, sim ->
                             Surface(
                                 shape = RoundedCornerShape(14.dp),
-                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                color = if (sim.id == selectedLineId) {
+                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                                },
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .testTag("select_sim_${sim.slotIndex ?: index}")
@@ -163,11 +171,19 @@ fun AccountSelectionDialog(
                                             )
                                         }
                                     }
-                                    Icon(
-                                        imageVector = Icons.Default.Call,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary
-                                    )
+                                    if (showCallIcon) {
+                                        Icon(
+                                            imageVector = Icons.Default.Call,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    } else if (sim.id == selectedLineId) {
+                                        Icon(
+                                            imageVector = Icons.Default.CheckCircle,
+                                            contentDescription = "Selected",
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -194,7 +210,11 @@ fun AccountSelectionDialog(
                             }
                             Surface(
                                 shape = RoundedCornerShape(14.dp),
-                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                color = if (account.id == selectedLineId) {
+                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                                },
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .testTag("select_sip_account_${account.id}")
@@ -233,10 +253,16 @@ fun AccountSelectionDialog(
                                             fontWeight = FontWeight.SemiBold,
                                             color = MaterialTheme.colorScheme.primary
                                         )
-                                    } else {
+                                    } else if (showCallIcon) {
                                         Icon(
                                             imageVector = Icons.Default.Call,
                                             contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    } else if (account.id == selectedLineId) {
+                                        Icon(
+                                            imageVector = Icons.Default.CheckCircle,
+                                            contentDescription = "Selected",
                                             tint = MaterialTheme.colorScheme.primary
                                         )
                                     }
