@@ -37,6 +37,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
@@ -45,6 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.ipdial.R
+import com.ipdial.ui.components.DialDuoWordmark
 import com.ipdial.ui.components.IPDialTopBar
 import com.ipdial.ui.SipViewModel
 import kotlinx.coroutines.launch
@@ -104,7 +106,9 @@ fun AboutScreen(
                 Image(
                     bitmap = appIconBitmap,
                     contentDescription = "App Icon",
-                    modifier = Modifier.size(100.dp)
+                    modifier = Modifier
+                        .size(100.dp)
+                        .clip(RoundedCornerShape(24.dp))
                 )
             } else {
                 Icon(
@@ -114,7 +118,11 @@ fun AboutScreen(
                     tint = MaterialTheme.colorScheme.primary
                 )
             }
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(14.dp))
+            DialDuoWordmark(
+                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold)
+            )
+            Spacer(Modifier.height(4.dp))
             Text(
                 text = "Version $currentVersion",
                 style = MaterialTheme.typography.bodyMedium,

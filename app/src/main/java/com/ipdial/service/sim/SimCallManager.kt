@@ -23,6 +23,7 @@ import com.ipdial.data.repository.AccountRepository
 import com.ipdial.data.repository.CallLogRepository
 import com.ipdial.data.repository.ContactsRepository
 import com.ipdial.service.SipRingtonePlayer
+import com.ipdial.service.SipWakeLockManager
 import com.ipdial.service.activeCallStartTime
 import com.ipdial.service.cancelIncomingNotification
 import com.ipdial.service.createNotificationChannels
@@ -54,6 +55,7 @@ object SimCallManager {
     @Volatile private var activeCall: Call? = null
     @Volatile private var activeCallback: Call.Callback? = null
     @Volatile private var ringtonePlayer: SipRingtonePlayer? = null
+    @Volatile private var wakeLockManager: SipWakeLockManager? = null
     @Volatile private var appContext: Context? = null
 
     @Volatile private var wasConfirmed: Boolean = false
@@ -192,6 +194,7 @@ object SimCallManager {
         activeCallback = null
         activeCall = null
         ringtonePlayer?.stopRingtone()
+        wakeLockManager?.releaseWakeLock()
         cancelIncomingNotification(ctx)
 
         _callSession.value?.let { session ->
@@ -215,10 +218,12 @@ object SimCallManager {
         _audioDeviceMode.value = mode
 
         _callSession.value?.let { cur ->
-            _callSession.value = cur.copy(
+            val updated = cur.copy(
                 isMuted = audioState.isMuted,
                 isSpeaker = mode == AudioDeviceMode.SPEAKER
             )
+            _callSession.value = updated
+            appContext?.let { ctx -> updateWakeLocks(ctx, updated, mode) }
         }
     }
 
@@ -265,8 +270,10 @@ object SimCallManager {
             Call.STATE_HOLDING -> {
                 ringtonePlayer?.stopRingtone()
             }
-            Call.STATE_DISCONNECTED -> {
+            Call.STATE_DISCONNECTED,
+            Call.STATE_DISCONNECTING -> {
                 ringtonePlayer?.stopRingtone()
+                wakeLockManager?.releaseWakeLock()
                 cancelIncomingNotification(ctx)
                 persistCallLogIfNeeded(ctx, updated, call)
                 activeCallStartTime = 0L
@@ -280,6 +287,56 @@ object SimCallManager {
                 }
             }
         }
+        updateWakeLocks(ctx, updated, _audioDeviceMode.value)
+    }
+
+    private fun getOrCreateWakeLockManager(ctx: Context): SipWakeLockManager {
+        return wakeLockManager ?: synchronized(this) {
+            wakeLockManager ?: SipWakeLockManager(ctx.applicationContext).also { wakeLockManager = it }
+        }
+    }
+
+    private fun updateWakeLocks(
+        ctx: Context,
+        session: CallSession?,
+        audioMode: AudioDeviceMode = _audioDeviceMode.value
+    ) {
+        val wl = getOrCreateWakeLockManager(ctx)
+        if (session == null || session.state == CallState.DISCONNECTED) {
+            wl.releaseWakeLock()
+            return
+        }
+        when (session.state) {
+            CallState.INCOMING, CallState.EARLY -> {
+                wl.acquireWakeLock()
+                wl.releaseProximityWakeLock()
+            }
+            CallState.CALLING, CallState.CONNECTING, CallState.CONFIRMED -> {
+                wl.acquireWakeLock()
+                if (shouldAcquireProximityWakeLock(session, audioMode, AppState.disableProximitySensor)) {
+                    wl.acquireProximityWakeLock()
+                } else {
+                    wl.releaseProximityWakeLock()
+                }
+            }
+            CallState.DISCONNECTED,
+            CallState.IDLE -> {
+                wl.releaseWakeLock()
+            }
+        }
+    }
+
+    internal fun shouldAcquireProximityWakeLock(
+        session: CallSession?,
+        audioMode: AudioDeviceMode,
+        disableProximitySensor: Boolean
+    ): Boolean {
+        if (session == null || disableProximitySensor || session.isOnHold) return false
+        return audioMode == AudioDeviceMode.EARPIECE && (
+            session.state == CallState.CALLING ||
+                session.state == CallState.CONNECTING ||
+                session.state == CallState.CONFIRMED
+            )
     }
 
     private fun persistCallLogIfNeeded(ctx: Context, session: CallSession, call: Call) {
@@ -346,6 +403,7 @@ object SimCallManager {
 
     fun forceClear() {
         ringtonePlayer?.stopRingtone()
+        wakeLockManager?.releaseWakeLock()
         appContext?.let { cancelIncomingNotification(it) }
         activeCallStartTime = 0L
         _callSession.value = null
@@ -404,7 +462,9 @@ object SimCallManager {
             @Suppress("DEPRECATION")
             inCallService?.setAudioRoute(route)
             _audioDeviceMode.value = mode
-            _callSession.value = _callSession.value?.copy(isSpeaker = mode == AudioDeviceMode.SPEAKER)
+            val updated = _callSession.value?.copy(isSpeaker = mode == AudioDeviceMode.SPEAKER)
+            _callSession.value = updated
+            appContext?.let { ctx -> updateWakeLocks(ctx, updated, mode) }
         } catch (e: Exception) {
             Log.e(TAG, "setTelecomAudioRoute($route) failed: ${e.message}")
         }

@@ -1,6 +1,8 @@
 package com.ipdial.ui.screens.home
 
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +31,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -43,6 +46,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.ipdial.data.model.CallLogEntry
 import com.ipdial.data.model.Contact
 import com.ipdial.data.model.SipAccount
@@ -167,9 +173,44 @@ fun HomeScreen(
             onQueryChange = { vm.onSearchQueryChanged(it) }
         )
 
+        val context = LocalContext.current
+        var isDefaultDialer by remember {
+            mutableStateOf(com.ipdial.service.sim.DefaultDialerHelper.isDefaultDialer(context))
+        }
+        val defaultDialerLauncher = rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.StartActivityForResult()
+        ) {
+            isDefaultDialer = com.ipdial.service.sim.DefaultDialerHelper.isDefaultDialer(context)
+            vm.refreshSimAccounts()
+            vm.refreshCallHistory()
+        }
+        val lifecycleOwner = LocalLifecycleOwner.current
+        DisposableEffect(lifecycleOwner) {
+            val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_RESUME) {
+                    isDefaultDialer = com.ipdial.service.sim.DefaultDialerHelper.isDefaultDialer(context)
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        }
+
         val hasSipAccount = remember(accounts) { accounts.any { it.isEnabled } }
         if (!hasSipAccount) {
             SipSetupBanner(onSetup = onNavigateToAccounts)
+        } else if (!isDefaultDialer) {
+            DefaultDialerBanner(
+                onSetDefault = {
+                    val intent = com.ipdial.service.sim.DefaultDialerHelper.createRequestDefaultDialerIntent(context)
+                    if (intent != null) {
+                        try {
+                            defaultDialerLauncher.launch(intent)
+                        } catch (_: Exception) {
+                            Toast.makeText(context, "Could not open Default Phone App picker", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            )
         }
 
         val historyListState = rememberLazyListState()
@@ -513,6 +554,58 @@ private fun SipSetupBanner(onSetup: () -> Unit) {
                 onSetup()
             }) {
                 Text("Setup")
+            }
+            IconButton(
+                onClick = { dismissed = true },
+                modifier = Modifier.size(32.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Dismiss",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DefaultDialerBanner(onSetDefault: () -> Unit) {
+    var dismissed by remember { mutableStateOf(false) }
+    if (dismissed) return
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f)
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 14.dp, top = 8.dp, bottom = 8.dp, end = 2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Set DialDuo as Default Phone App",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "Enables native SIM call screen and full device call history.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            TextButton(onClick = {
+                dismissed = true
+                onSetDefault()
+            }) {
+                Text("Set Default")
             }
             IconButton(
                 onClick = { dismissed = true },

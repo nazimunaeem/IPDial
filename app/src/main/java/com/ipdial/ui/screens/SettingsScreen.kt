@@ -337,7 +337,7 @@ fun SettingsScreen(
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     val icons = listOf(
-                        "Default" to R.drawable.ic_launcher_foreground,
+                        "Default" to R.drawable.dialduo_icon_fg,
                         "Green" to R.drawable.ic_phone_green,
                         "Blue" to R.drawable.ic_phone_blue,
                         "Red" to R.drawable.ic_phone_red
@@ -369,7 +369,9 @@ fun SettingsScreen(
                                     androidx.compose.foundation.Image(
                                         painter = androidx.compose.ui.res.painterResource(resId),
                                         contentDescription = alias,
-                                        modifier = Modifier.size(64.dp)
+                                        modifier = Modifier
+                                            .size(64.dp)
+                                            .clip(RoundedCornerShape(16.dp))
                                     )
                                     Spacer(Modifier.height(8.dp))
                                     Text(

@@ -31,9 +31,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ipdial.data.model.SipAccount
@@ -88,16 +94,25 @@ fun IPDialTopBar(
                         )
                     }
                     Spacer(Modifier.width(2.dp))
-                    Text(
-                        text = title ?: "DialDuo",
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            fontSize = 17.sp
-                        ),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    if (title == null) {
+                        DialDuoWordmark(
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 17.sp
+                            )
+                        )
+                    } else {
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontSize = 17.sp
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             } else {
                 Row(
@@ -106,12 +121,10 @@ fun IPDialTopBar(
                         .padding(start = 16.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "DialDuo",
+                    DialDuoWordmark(
                         style = MaterialTheme.typography.titleLarge.copy(
                             fontWeight = FontWeight.ExtraBold,
-                            fontSize = 19.sp,
-                            color = MaterialTheme.colorScheme.primary
+                            fontSize = 19.sp
                         )
                     )
                 }
@@ -144,4 +157,31 @@ fun IPDialTopBar(
             }
         }
     }
+}
+
+@Composable
+fun DialDuoWordmark(
+    style: TextStyle = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.ExtraBold),
+    modifier: Modifier = Modifier
+) {
+    val primary = MaterialTheme.colorScheme.primary
+    val isLightSurface = MaterialTheme.colorScheme.surface.luminance() > 0.5f
+    val duoTint = if (isLightSurface) {
+        lerp(primary, Color(0xFF0284C7), 0.44f)
+    } else {
+        lerp(primary, Color(0xFF38BDF8), 0.44f)
+    }
+    Text(
+        text = buildAnnotatedString {
+            withStyle(SpanStyle(color = primary)) {
+                append("Dial")
+            }
+            withStyle(SpanStyle(color = duoTint)) {
+                append("Duo")
+            }
+        },
+        style = style,
+        maxLines = 1,
+        modifier = modifier
+    )
 }
