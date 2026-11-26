@@ -810,13 +810,22 @@ fun ContactDetailsContent(
                                         fontWeight = FontWeight.Medium,
                                         color = if (entry.missed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
                                     )
-                                    Text(
-                                        text = "$callTypeText$durationStr • $viaLabel$numberSuffix",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Text(
+                                            text = "$callTypeText$durationStr • $viaLabel$numberSuffix",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f, fill = false)
+                                        )
+                                        if (entry.isHdAudio) {
+                                            com.ipdial.ui.screens.call.CompactHdBadge()
+                                        }
+                                    }
                                 }
                                 Icon(
                                     imageVector = Icons.Default.Call,

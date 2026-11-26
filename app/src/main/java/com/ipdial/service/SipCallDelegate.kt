@@ -595,8 +595,12 @@ class SipCallDelegate(
                             val clean = codecName.trim().uppercase()
                             if (clean != detectedCodec) {
                                 detectedCodec = clean
-                                log("onCallMediaState: negotiated codec for callId=$currentCallId = $clean", false)
-                                _callSession.value = _callSession.value?.copy(negotiatedCodec = clean)
+                                val isHd = CallAudioQualityHelper.isSipCodecHd(clean)
+                                log("onCallMediaState: negotiated codec for callId=$currentCallId = $clean (hd=$isHd)", false)
+                                _callSession.value = _callSession.value?.copy(
+                                    negotiatedCodec = clean,
+                                    isHdAudio = isHd
+                                )
                             }
                         }
                     }

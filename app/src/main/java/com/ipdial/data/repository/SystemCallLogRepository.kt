@@ -37,7 +37,8 @@ object SystemCallLogRepository {
             CallLog.Calls.DATE,
             CallLog.Calls.DURATION,
             CallLog.Calls.TYPE,
-            CallLog.Calls.PHONE_ACCOUNT_ID
+            CallLog.Calls.PHONE_ACCOUNT_ID,
+            CallLog.Calls.FEATURES
         )
 
         val simLabelsByHandleId = try {
@@ -63,6 +64,7 @@ object SystemCallLogRepository {
                 val durationIdx = cursor.getColumnIndexOrThrow(CallLog.Calls.DURATION)
                 val typeIdx = cursor.getColumnIndexOrThrow(CallLog.Calls.TYPE)
                 val accountIdx = cursor.getColumnIndexOrThrow(CallLog.Calls.PHONE_ACCOUNT_ID)
+                val featuresIdx = cursor.getColumnIndex(CallLog.Calls.FEATURES)
 
                 while (cursor.moveToNext() && result.size < limit) {
                     val rowId = cursor.getLong(idIdx)
@@ -76,6 +78,7 @@ object SystemCallLogRepository {
                     val durationSec = cursor.getLong(durationIdx)
                     val type = cursor.getInt(typeIdx)
                     val accountId = cursor.getString(accountIdx).orEmpty()
+                    val features = if (featuresIdx >= 0) cursor.getInt(featuresIdx) else 0
 
                     val isSip = accountId == SIP_PHONE_ACCOUNT_ID
                     val transport = if (isSip) CallTransport.SIP else CallTransport.SIM
@@ -95,7 +98,8 @@ object SystemCallLogRepository {
                             timestampMs = date,
                             durationSeconds = durationSec.coerceAtLeast(0L),
                             transport = transport,
-                            lineLabel = lineLabel
+                            lineLabel = lineLabel,
+                            isHdAudio = hasHdFeature(features)
                         )
                     )
                 }
@@ -137,6 +141,9 @@ object SystemCallLogRepository {
             false
         }
     }
+
+    internal fun hasHdFeature(features: Int): Boolean =
+        (features and CallLog.Calls.FEATURES_HD_CALL) != 0
 
     private fun directionForType(type: Int): CallDirection =
         if (type == CallLog.Calls.OUTGOING_TYPE) CallDirection.OUTGOING else CallDirection.INCOMING

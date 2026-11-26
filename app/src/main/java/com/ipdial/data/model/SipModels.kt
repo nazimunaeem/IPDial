@@ -44,7 +44,10 @@ enum class PreferredCodec {
     G711A,
     G722,
     G729,
+    GSM,
     Opus,
+    Speex,
+    ILBC,
 }
 
 val DEFAULT_ENABLED_CODECS: Set<PreferredCodec> = setOf(
@@ -52,6 +55,7 @@ val DEFAULT_ENABLED_CODECS: Set<PreferredCodec> = setOf(
     PreferredCodec.G711U,
     PreferredCodec.G722,
     PreferredCodec.G729,
+    PreferredCodec.GSM,
     PreferredCodec.Opus,
 )
 
@@ -92,6 +96,7 @@ data class CallSession(
     val startedAtMs: Long = System.currentTimeMillis(),
     val transport: CallTransport = CallTransport.SIP,
     val lineLabel: String = "",
+    val isHdAudio: Boolean = false,
 )
 
 enum class CallDirection { INCOMING, OUTGOING }
@@ -112,6 +117,7 @@ data class CallLogEntry(
     val disconnectReason: String? = null,
     val transport: CallTransport = CallTransport.SIP,
     val lineLabel: String = "",
+    val isHdAudio: Boolean = false,
 )
 
 enum class CallState {

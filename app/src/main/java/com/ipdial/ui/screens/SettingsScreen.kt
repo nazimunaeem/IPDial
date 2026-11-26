@@ -224,6 +224,7 @@ fun SettingsScreen(
                             put("durationSeconds", entry.durationSeconds)
                             put("transport", entry.transport.name)
                             put("lineLabel", entry.lineLabel)
+                            put("isHdAudio", entry.isHdAudio)
                         })
                     }
                     context.contentResolver.openOutputStream(uri)?.use { out ->
@@ -273,6 +274,7 @@ fun SettingsScreen(
                                     CallTransport.valueOf(obj.optString("transport"))
                                 }.getOrDefault(CallTransport.SIP),
                                 lineLabel = obj.optString("lineLabel"),
+                                isHdAudio = obj.optBoolean("isHdAudio", false),
                             )
                         )
                     }

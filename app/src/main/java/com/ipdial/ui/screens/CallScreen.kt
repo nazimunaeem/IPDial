@@ -60,6 +60,7 @@ import com.ipdial.data.model.CallState
 import com.ipdial.ui.SipViewModel
 import com.ipdial.ui.components.ContactAvatar
 import com.ipdial.ui.screens.call.CallControls
+import com.ipdial.ui.screens.call.HdAudioBadge
 import com.ipdial.ui.screens.call.InCallDialpad
 import com.ipdial.ui.screens.call.PulsingStateLabel
 import com.ipdial.ui.screens.call.formatDuration
@@ -136,6 +137,7 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
     var elapsedSeconds by remember(activeSession.callId) { mutableLongStateOf(0L) }
 
     val isActive = activeSession.state == CallState.CONFIRMED
+    val hdBadgeLabel = com.ipdial.service.CallAudioQualityHelper.hdBadgeText(activeSession)
 
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
@@ -227,6 +229,7 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
                         displayName = displayName,
                         number = vm.cleanUri(activeSession.remoteUri),
                         simLabel = simLabel,
+                        hdBadgeLabel = hdBadgeLabel,
                         isActive = isActive,
                         isOnHold = activeSession.isOnHold,
                         state = activeSession.state,
@@ -303,6 +306,7 @@ fun CallScreen(vm: SipViewModel, session: CallSession) {
                 displayName = displayName,
                 number = vm.cleanUri(activeSession.remoteUri),
                 simLabel = simLabel,
+                hdBadgeLabel = hdBadgeLabel,
                 isActive = isActive,
                 isOnHold = activeSession.isOnHold,
                 state = activeSession.state,
@@ -373,6 +377,7 @@ private fun CallHeader(
     displayName: String,
     number: String,
     simLabel: String,
+    hdBadgeLabel: String? = null,
     isActive: Boolean,
     isOnHold: Boolean = false,
     state: CallState,
@@ -490,17 +495,30 @@ private fun CallHeader(
                     ),
                     color = textColor
                 )
-                Text(
-                    if (isOnHold) "On Hold  •  $routeLabel" else "Connected  •  $routeLabel",
-                    style = MaterialTheme.typography.labelMedium.copy(shadow = textShadow),
-                    color = subtitleColor
-                )
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        if (isOnHold) "On Hold  •  $routeLabel" else "Connected  •  $routeLabel",
+                        style = MaterialTheme.typography.labelMedium.copy(shadow = textShadow),
+                        color = subtitleColor
+                    )
+                    if (!hdBadgeLabel.isNullOrBlank()) {
+                        HdAudioBadge(label = hdBadgeLabel, photoMode = photoMode)
+                    }
+                }
             } else {
                 PulsingStateLabel(
                     state = state,
                     showShadow = photoMode,
                     textColor = if (photoMode) Color.White else null
                 )
+                if (!hdBadgeLabel.isNullOrBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    HdAudioBadge(label = hdBadgeLabel, photoMode = photoMode)
+                }
             }
         }
     }

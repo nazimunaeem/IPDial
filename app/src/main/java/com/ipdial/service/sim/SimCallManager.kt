@@ -59,6 +59,7 @@ object SimCallManager {
     @Volatile private var appContext: Context? = null
 
     @Volatile private var wasConfirmed: Boolean = false
+    @Volatile private var wasHdAudio: Boolean = false
     @Volatile private var confirmedAtMs: Long = 0L
     @Volatile private var loggedCallLogId: String? = null
     @Volatile private var vibratedForCallId: Int = -1
@@ -111,6 +112,7 @@ object SimCallManager {
 
         activeCall = call
         wasConfirmed = false
+        wasHdAudio = false
         confirmedAtMs = 0L
         loggedCallLogId = null
         vibratedForCallId = -1
@@ -124,6 +126,9 @@ object SimCallManager {
         val callLogId = UUID.randomUUID().toString()
         val mappedState = mapTelecomState(rawState, direction)
 
+        val isHd = com.ipdial.service.CallAudioQualityHelper.isTelecomHdAudio(call.details)
+        if (isHd) wasHdAudio = true
+
         val initialSession = CallSession(
             callId = callId,
             accountId = call.details?.accountHandle?.id ?: "sim",
@@ -135,7 +140,8 @@ object SimCallManager {
             callLogId = callLogId,
             startedAtMs = System.currentTimeMillis(),
             transport = CallTransport.SIM,
-            lineLabel = lineLabel
+            lineLabel = lineLabel,
+            isHdAudio = isHd
         )
         _callSession.value = initialSession
 
@@ -172,10 +178,13 @@ object SimCallManager {
                 val newNum = details.handle?.schemeSpecificPart?.takeIf { it.isNotBlank() } ?: cur.remoteUri
                 val newName = details.callerDisplayName?.takeIf { it.isNotBlank() } ?: cur.remoteDisplayName
                 val newLine = SimPhoneAccountHelper.resolveLabelForHandle(ctx, details.accountHandle)
+                val isHd = com.ipdial.service.CallAudioQualityHelper.isTelecomHdAudio(details)
+                if (isHd) wasHdAudio = true
                 _callSession.value = cur.copy(
                     remoteUri = newNum,
                     remoteDisplayName = newName,
-                    lineLabel = newLine
+                    lineLabel = newLine,
+                    isHdAudio = isHd
                 )
             }
         }
@@ -233,10 +242,13 @@ object SimCallManager {
         val current = _callSession.value ?: return
         val mappedState = mapTelecomState(telecomState, current.direction)
         val isHold = telecomState == Call.STATE_HOLDING
+        val isHd = com.ipdial.service.CallAudioQualityHelper.isTelecomHdAudio(call.details)
+        if (isHd) wasHdAudio = true
 
         val updated = current.copy(
             state = mappedState,
-            isOnHold = isHold
+            isOnHold = isHold,
+            isHdAudio = isHd
         )
         _callSession.value = updated
 
@@ -369,7 +381,8 @@ object SimCallManager {
             disconnectCode = cause?.code,
             disconnectReason = cause?.reason?.toString(),
             transport = CallTransport.SIM,
-            lineLabel = session.lineLabel.ifBlank { "SIM" }
+            lineLabel = session.lineLabel.ifBlank { "SIM" },
+            isHdAudio = wasHdAudio || session.isHdAudio
         )
 
         scope.launch {

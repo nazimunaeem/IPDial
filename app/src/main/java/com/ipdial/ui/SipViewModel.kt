@@ -1105,27 +1105,7 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     private fun mergeCallLogs(
         appEntries: List<CallLogEntry>,
         deviceEntries: List<CallLogEntry>
-    ): List<CallLogEntry> {
-        if (deviceEntries.isEmpty()) return appEntries
-        val merged = ArrayList<CallLogEntry>(appEntries.size + deviceEntries.size)
-        merged.addAll(appEntries)
-        for (deviceEntry in deviceEntries) {
-            val deviceKey = digitsKey(deviceEntry.remoteUri)
-            val isDuplicate = deviceKey.isNotEmpty() && appEntries.any { appEntry ->
-                digitsKey(appEntry.remoteUri) == deviceKey &&
-                    kotlin.math.abs(appEntry.timestampMs - deviceEntry.timestampMs) <= 30_000L
-            }
-            if (!isDuplicate) {
-                merged.add(deviceEntry)
-            }
-        }
-        return merged.sortedByDescending { it.timestampMs }
-    }
-
-    private fun digitsKey(uri: String): String {
-        val digits = uri.filter { it.isDigit() }
-        return if (digits.length > 9) digits.takeLast(9) else digits
-    }
+    ): List<CallLogEntry> = mergeCallLogEntries(appEntries, deviceEntries)
 
     fun logCall(entry: CallLogEntry) = viewModelScope.launch {
         logRepo.insert(entry)
@@ -1218,4 +1198,36 @@ fun cleanUri(uri: String): String {
 fun cleanDisplayName(name: String, uri: String): String {
     val clean = name.trim().removeSurrounding("\"", "\"")
     return if (clean.isNotBlank() && clean != uri && clean != "sip:$uri") clean else cleanUri(uri)
+}
+
+internal fun mergeCallLogEntries(
+    appEntries: List<CallLogEntry>,
+    deviceEntries: List<CallLogEntry>
+): List<CallLogEntry> {
+    if (deviceEntries.isEmpty()) return appEntries
+    val merged = appEntries.toMutableList()
+    for (deviceEntry in deviceEntries) {
+        val deviceKey = digitsKey(deviceEntry.remoteUri)
+        val matchIdx = if (deviceKey.isNotEmpty()) {
+            appEntries.indexOfFirst { appEntry ->
+                digitsKey(appEntry.remoteUri) == deviceKey &&
+                    kotlin.math.abs(appEntry.timestampMs - deviceEntry.timestampMs) <= 30_000L
+            }
+        } else {
+            -1
+        }
+        if (matchIdx >= 0) {
+            if (deviceEntry.isHdAudio && !merged[matchIdx].isHdAudio) {
+                merged[matchIdx] = merged[matchIdx].copy(isHdAudio = true)
+            }
+        } else {
+            merged.add(deviceEntry)
+        }
+    }
+    return merged.sortedByDescending { it.timestampMs }
+}
+
+private fun digitsKey(uri: String): String {
+    val digits = uri.filter { it.isDigit() }
+    return if (digits.length > 9) digits.takeLast(9) else digits
 }

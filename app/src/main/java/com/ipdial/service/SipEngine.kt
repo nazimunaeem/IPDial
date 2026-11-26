@@ -595,6 +595,7 @@ object SipEngine {
                         existingConfig.port != account.port ||
                         existingConfig.transport != account.transport ||
                         existingConfig.codec != account.codec ||
+                        existingConfig.enabledCodecs != account.enabledCodecs ||
                         existingConfig.ecEnabled != account.ecEnabled ||
                         existingConfig.nsEnabled != account.nsEnabled ||
                         existingConfig.agcEnabled != account.agcEnabled
@@ -1232,17 +1233,16 @@ object SipEngine {
         PreferredCodec.G722  -> "g722"
         PreferredCodec.G711U -> "pcmu"
         PreferredCodec.G711A -> "pcma"
+        PreferredCodec.GSM   -> "gsm"
         PreferredCodec.Opus  -> "opus"
+        PreferredCodec.Speex -> "speex"
+        PreferredCodec.ILBC  -> "ilbc"
     }
 
     private fun configureCodecs(account: SipAccount) {
         val ep = endpoint ?: return
-        val preferred = account.codec ?: PreferredCodec.G711U
-        // Keep the user's codec choice when the peer requires G.729. The RTP
-        // payload must match the negotiated SDP; rejecting payload 18 while the
-        // peer sends G.729 causes every incoming audio packet to be discarded.
-        val effectivePreferred = preferred
-        val targetCodecId = effectivePreferred.toCodecId()
+        val explicitPreferred = account.codec
+        val targetCodecId = explicitPreferred?.toCodecId()
         // Codecs the user can toggle in settings. Anything not in this set (e.g. gsm,
         // ilbc, speex) stays auto-enabled as a universal fallback so connectivity is
         // never worse than the old always-on behaviour.
@@ -1251,7 +1251,7 @@ object SipEngine {
 
         try {
             val codecs = ep.codecEnum()
-            log("Configuring codecs. Preferred: $targetCodecId, enabled: ${enabled.joinToString { it.toCodecId() }}")
+            log("Configuring codecs. Preferred: ${targetCodecId ?: "auto(HD-first)"}, enabled: ${enabled.joinToString { it.toCodecId() }}")
 
             // Linphone-style multi-codec offering: we ENABLE several codecs and order
             // them by priority. pjsip lists codecs highest-first in the SDP offer and
@@ -1261,7 +1261,7 @@ object SipEngine {
             // Priority scheme (higher = preferred first in SDP):
             //  Opus  -> 260 (best quality/adaptivity; Linphone & modern PBXs support it)
             //  User's preferred codec -> 250 (explicit user choice wins local ordering)
-            //  G.722 -> 220 (wideband, good quality)
+            //  G.722 -> 220 (wideband HD, 16 kHz)
             //  G.711A -> 180 (narrowband, universally supported)
             //  G.711U -> 170 (narrowband, universally supported)
             //  G.729 ->  160 (narrowband low-bitrate, software BCG729)
@@ -1280,20 +1280,35 @@ object SipEngine {
                     // audio codec, mirroring PJSIP's default ordering.
                     nameLower.contains("telephone-event") || nameLower.contains("telephone_event") -> 100
                     nameLower.startsWith("opus") -> 260
-                    nameLower.startsWith("g722") -> 220
+                    nameLower.startsWith("g722/") || nameLower == "g722" -> 220
                     nameLower.startsWith("pcma") -> 180
                     nameLower.startsWith("pcmu") -> 170
                     nameLower.startsWith("g729") -> 160
                     nameLower.startsWith("gsm") -> 140
+                    nameLower.startsWith("speex") -> 130
+                    nameLower.startsWith("ilbc") -> 120
                     else -> 0
                 }
 
-                val isControllable = controllableIds.any { nameLower.startsWith(it) }
-                val userEnabled = enabled.any { nameLower.startsWith(it.toCodecId()) }
+                val isControllable = controllableIds.any { id ->
+                    if (id == "g722") nameLower.startsWith("g722/") || nameLower == "g722"
+                    else nameLower.startsWith(id)
+                }
+                val userEnabled = enabled.any { pref ->
+                    val id = pref.toCodecId()
+                    if (id == "g722") nameLower.startsWith("g722/") || nameLower == "g722"
+                    else nameLower.startsWith(id)
+                }
                 val isEnabled = if (isControllable) userEnabled else base > 0
 
                 var priority = if (isEnabled) base else 0
-                if (isEnabled && nameLower.contains(targetCodecId)) priority = maxOf(priority, 250)
+                if (isEnabled && targetCodecId != null && (
+                        if (targetCodecId == "g722") nameLower.startsWith("g722/") || nameLower == "g722"
+                        else nameLower.startsWith(targetCodecId)
+                    )
+                ) {
+                    priority = maxOf(priority, 250)
+                }
                 ep.codecSetPriority(codecId, priority.toShort())
                 if (priority > 0) log("Codec ENABLED: $codecId (priority $priority)")
                 else log("Codec DISABLED: $codecId")
@@ -1310,7 +1325,7 @@ object SipEngine {
                 log("Note on EC settings: ${e.message}")
             }
 
-            log("Codec & Audio configuration complete. Preferred=$targetCodecId (configured=${preferred.toCodecId()})")
+            log("Codec & Audio configuration complete. Preferred=${targetCodecId ?: "auto(HD-first)"}")
         } catch (e: Throwable) {
             log("Error configuring codecs: ${e.message}", true)
         }
@@ -1435,8 +1450,12 @@ object SipEngine {
                             val codec = try { call.getStreamInfo(mi.index.toLong())?.codecName } catch (_: Throwable) { "" }
                             if (!codec.isNullOrBlank()) {
                                 val clean = codec.trim().uppercase()
-                                _callSession.value = _callSession.value?.copy(negotiatedCodec = clean)
-                                log("reconnectAudioPathForCall: re-negotiated codec = $clean", false)
+                                val isHd = CallAudioQualityHelper.isSipCodecHd(clean)
+                                _callSession.value = _callSession.value?.copy(
+                                    negotiatedCodec = clean,
+                                    isHdAudio = isHd
+                                )
+                                log("reconnectAudioPathForCall: re-negotiated codec = $clean (hd=$isHd)", false)
                             }
                             break
                         }
@@ -1473,30 +1492,37 @@ object SipEngine {
                     val isAvailable = priority > 0.toShort()
 
                     val quality = when {
-                        nameLower.contains("g722") -> com.ipdial.data.model.CodecQuality.Excellent
-                        nameLower.contains("pcma") || nameLower.contains("pcmu") -> com.ipdial.data.model.CodecQuality.Fair
+                        nameLower.contains("opus") || nameLower.startsWith("g722/") || nameLower == "g722" ->
+                            com.ipdial.data.model.CodecQuality.Excellent
+                        nameLower.contains("speex") || nameLower.contains("ilbc") ->
+                            com.ipdial.data.model.CodecQuality.Good
+                        nameLower.contains("pcma") || nameLower.contains("pcmu") || nameLower.contains("g729") ->
+                            com.ipdial.data.model.CodecQuality.Fair
                         nameLower.contains("gsm") -> com.ipdial.data.model.CodecQuality.Low
                         else -> com.ipdial.data.model.CodecQuality.Minimal
                     }
 
                     val (bandwidth, mos) = when {
                         nameLower.contains("opus") -> 6 to 4.3f
-                        nameLower.contains("g722") -> 48 to 4.0f
+                        nameLower.startsWith("g722/") || nameLower == "g722" -> 48 to 4.0f
                         nameLower.contains("pcma") -> 64 to 4.1f
                         nameLower.contains("pcmu") -> 64 to 4.1f
+                        nameLower.contains("g729") -> 8 to 3.9f
+                        nameLower.contains("speex") -> 15 to 3.8f
+                        nameLower.contains("ilbc") -> 15 to 3.8f
                         nameLower.contains("gsm") -> 13 to 3.5f
                         else -> 0 to 0f
                     }
 
                     // pjsip 2.5.0 exposes no CodecParam via pjsua2; derive display metadata from id.
-                    var clockRate = 0L
-                    var channelCount = 1L
+                    var clockRate = codecId.split("/").getOrNull(1)?.toLongOrNull() ?: 0L
+                    var channelCount = codecId.split("/").getOrNull(2)?.toLongOrNull() ?: 1L
                     var frameLength = 20L
                     when {
-                        nameLower.contains("pcma") || nameLower.contains("pcmu") -> clockRate = 8000
-                        nameLower.contains("g722") -> clockRate = 16000
-                        nameLower.contains("g729") || nameLower.contains("gsm") -> clockRate = 8000
-                        nameLower.contains("opus") -> clockRate = 48000
+                        nameLower.contains("pcma") || nameLower.contains("pcmu") -> if (clockRate == 0L) clockRate = 8000
+                        nameLower.startsWith("g722/") || nameLower == "g722" -> if (clockRate == 0L) clockRate = 16000
+                        nameLower.contains("g729") || nameLower.contains("gsm") -> if (clockRate == 0L) clockRate = 8000
+                        nameLower.contains("opus") -> if (clockRate == 0L) clockRate = 48000
                     }
 
                     result.add(

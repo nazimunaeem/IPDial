@@ -19,7 +19,8 @@ data class CallLogEntity(
     val disconnectCode: Int?,
     val disconnectReason: String?,
     val transport: CallTransport = CallTransport.SIP,
-    val lineLabel: String = ""
+    val lineLabel: String = "",
+    val isHdAudio: Boolean = false
 ) {
     fun toCallLogEntry(): CallLogEntry = CallLogEntry(
         id = id,
@@ -33,7 +34,8 @@ data class CallLogEntity(
         disconnectCode = disconnectCode,
         disconnectReason = disconnectReason,
         transport = transport,
-        lineLabel = lineLabel
+        lineLabel = lineLabel,
+        isHdAudio = isHdAudio
     )
 
     companion object {
@@ -49,7 +51,8 @@ data class CallLogEntity(
             disconnectCode = entry.disconnectCode,
             disconnectReason = entry.disconnectReason,
             transport = entry.transport,
-            lineLabel = entry.lineLabel
+            lineLabel = entry.lineLabel,
+            isHdAudio = entry.isHdAudio
         )
     }
 }

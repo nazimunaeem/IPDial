@@ -67,6 +67,7 @@ import com.ipdial.ui.components.ContactAvatar
 import com.ipdial.ui.components.filterHistoryForTarget
 import com.ipdial.ui.screens.cleanDisplayName
 import com.ipdial.ui.screens.cleanUri
+import com.ipdial.ui.screens.call.CompactHdBadge
 import com.ipdial.ui.screens.call.formatDuration
 import com.ipdial.ui.theme.GlassMode
 import com.ipdial.ui.theme.LocalGlassMode
@@ -168,8 +169,14 @@ fun CallLogItem(
                     Text(
                         text = "$viaLabel • $timeStr$durationSuffix",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
+                    if (entry.isHdAudio) {
+                        CompactHdBadge()
+                    }
                 }
             }
 
@@ -498,13 +505,22 @@ fun CallHistoryDetailDialog(
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = if (entry.missed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
                                         )
-                                        Text(
-                                            text = "$callTypeText$durationStr • $viaLabel$numberSuffix",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Text(
+                                                text = "$callTypeText$durationStr • $viaLabel$numberSuffix",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f, fill = false)
+                                            )
+                                            if (entry.isHdAudio) {
+                                                CompactHdBadge()
+                                            }
+                                        }
                                     }
                                 }
                             }

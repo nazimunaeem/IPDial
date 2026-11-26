@@ -89,6 +89,7 @@ class SipService : Service() {
     private lateinit var incomingCallHandler: SipIncomingCallHandler
 
     private var lastWasConfirmed = false
+    private var lastWasHdAudio = false
     private var callStartTime = 0L
     @Volatile private var lastSession: com.ipdial.data.model.CallSession? = null
     private var autoRecordedCallId = -1
@@ -183,6 +184,7 @@ class SipService : Service() {
             // Keep the final-state observer's fallback populated even if a very
             // fast failure conflates CALLING before its collector runs.
             lastSession = session
+            lastWasHdAudio = CallAudioQualityHelper.isSessionHdAudio(session)
             val entry = com.ipdial.data.model.CallLogEntry(
                 id = session.callLogId,
                 accountId = session.accountId,
@@ -693,7 +695,8 @@ class SipService : Service() {
                             durationSeconds = duration,
                             missed = !lastWasConfirmed && sessionToLog.direction == CallDirection.INCOMING,
                             disconnectCode = disconnectCode,
-                            disconnectReason = disconnectReason
+                            disconnectReason = disconnectReason,
+                            isHdAudio = lastWasHdAudio || CallAudioQualityHelper.isSessionHdAudio(sessionToLog)
                         )
                         // D5: surface busy/no-answer/rejected as a toast so the user knows why.
                         if (disconnectCode != null && disconnectCode >= 300) {
@@ -744,6 +747,7 @@ class SipService : Service() {
                     cancelIncomingNotification(this@SipService)
                     sessionToLog?.callId?.let { SipConnectionService.disconnectCall(it) }
                     lastWasConfirmed = false
+                    lastWasHdAudio = false
                     callStartTime = 0
                     activeCallStartTime = 0L
                     lastSession = null
@@ -761,6 +765,9 @@ class SipService : Service() {
                     val speakerChanged = session.isSpeaker != lastSession?.isSpeaker
 
                     lastSession = session
+                    if (CallAudioQualityHelper.isSessionHdAudio(session)) {
+                        lastWasHdAudio = true
+                    }
 
                     audioManager.isMicrophoneMute = session.isMuted
 

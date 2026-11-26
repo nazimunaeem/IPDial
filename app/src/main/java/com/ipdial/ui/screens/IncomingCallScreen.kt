@@ -39,6 +39,7 @@ import com.ipdial.data.model.CallState
 import com.ipdial.data.model.IncomingCallMode
 import com.ipdial.data.model.ThemeMode
 import com.ipdial.ui.SipViewModel
+import com.ipdial.ui.screens.call.HdAudioBadge
 import com.ipdial.ui.screens.call.PulsingStateLabel
 import com.ipdial.ui.theme.EndRed
 import com.ipdial.ui.theme.ForestGreen
@@ -59,10 +60,12 @@ fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
     val accounts by vm.accounts.collectAsState()
     val contacts by vm.contacts.collectAsState()
     
-    val account = accounts.firstOrNull { it.id == session.accountId }
-    val viaLine = session.lineLabel.ifBlank {
+    val effectiveSession = liveSession ?: session
+    val hdBadgeLabel = com.ipdial.service.CallAudioQualityHelper.hdBadgeText(effectiveSession)
+    val account = accounts.firstOrNull { it.id == effectiveSession.accountId }
+    val viaLine = effectiveSession.lineLabel.ifBlank {
         account?.label?.ifBlank { account.domain }
-            ?: if (session.transport == com.ipdial.data.model.CallTransport.SIM) "SIM" else "SIP"
+            ?: if (effectiveSession.transport == com.ipdial.data.model.CallTransport.SIM) "SIM" else "SIP"
     }
     
     val contact = remember(session.remoteUri, contacts) {
@@ -164,12 +167,18 @@ fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
         ) {
             Spacer(Modifier.height(48.dp))
 
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 Text(
                     text = "Incoming Call via $viaLine",
                     style = MaterialTheme.typography.titleMedium.copy(shadow = textShadow),
                     color = subtitleColor,
                 )
+                if (!hdBadgeLabel.isNullOrBlank()) {
+                    HdAudioBadge(label = hdBadgeLabel, photoMode = showFullScreenPhoto)
+                }
             }
 
             Spacer(Modifier.height(40.dp))
