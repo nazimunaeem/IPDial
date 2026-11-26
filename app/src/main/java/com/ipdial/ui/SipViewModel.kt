@@ -14,8 +14,10 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.provider.CallLog
+import android.provider.ContactsContract
 import android.telephony.SubscriptionManager
 import android.widget.Toast
+import androidx.core.content.ContextCompat
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.lifecycle.AndroidViewModel
@@ -395,6 +397,10 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         try {
             getApplication<Application>().contentResolver.unregisterContentObserver(callLogObserver)
         } catch (_: Throwable) {}
+        try {
+            getApplication<Application>().contentResolver.unregisterContentObserver(contactsObserver)
+        } catch (_: Throwable) {}
+        contactsSyncJob?.cancel()
         subscriptionManager = null
         subscriptionsChangedListener = null
         super.onCleared()
@@ -438,7 +444,10 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
 
     fun cleanUri(uri: String): String = com.ipdial.ui.screens.cleanUri(uri)
     fun cleanDisplayName(name: String, uri: String): String = com.ipdial.ui.screens.cleanDisplayName(name, uri)
-    fun syncContacts() = viewModelScope.launch { contactsRepo.syncContacts() }
+    fun syncContacts() {
+        ensureContactsObserverRegistered()
+        viewModelScope.launch { contactsRepo.syncContacts() }
+    }
     fun findContactByNumber(number: String, fallbackContacts: List<Contact>? = null): Contact? =
         contactsRepo.findContactByNumber(number, fallbackContacts ?: _contacts.value)
     suspend fun lookupDeviceContact(number: String): Contact? =
@@ -608,6 +617,45 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private var contactsObserverRegistered = false
+    private var contactsSyncJob: Job? = null
+    private val contactsObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) {
+            scheduleDebouncedContactSync()
+        }
+    }
+
+    private fun scheduleDebouncedContactSync() {
+        contactsSyncJob?.cancel()
+        contactsSyncJob = viewModelScope.launch {
+            delay(150)
+            contactsRepo.syncContacts()
+        }
+    }
+
+    fun ensureContactsObserverRegistered() {
+        if (contactsObserverRegistered) return
+        val app = getApplication<Application>()
+        if (ContextCompat.checkSelfPermission(app, android.Manifest.permission.READ_CONTACTS)
+            != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        try {
+            app.contentResolver.registerContentObserver(
+                ContactsContract.Contacts.CONTENT_URI,
+                true,
+                contactsObserver
+            )
+            app.contentResolver.registerContentObserver(
+                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                true,
+                contactsObserver
+            )
+            contactsObserverRegistered = true
+        } catch (_: Throwable) {}
+    }
+
     init {
         refreshSimAccounts()
         try {
@@ -632,6 +680,7 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                 callLogObserver
             )
         } catch (_: Throwable) {}
+        ensureContactsObserverRegistered()
         refreshCallHistory()
         viewModelScope.launch {
             repo.disableProximitySensor.collect { AppState.disableProximitySensor = it }
@@ -1004,6 +1053,17 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
             if (it.id == contact.id) it.copy(isFavorite = newFavoriteStatus) else it
         }
         contactsRepo.toggleFavorite(contact.id, newFavoriteStatus)
+    }
+
+    suspend fun loadContactDetails(contact: Contact): com.ipdial.data.repository.ContactDetailInfo =
+        contactsRepo.loadContactDetails(contact)
+
+    suspend fun deleteContact(contactId: String): Boolean {
+        val deleted = contactsRepo.deleteContact(contactId)
+        if (deleted) {
+            _contacts.value = _contacts.value.filterNot { it.id == contactId }
+        }
+        return deleted
     }
 
     fun deleteCallLog(entry: CallLogEntry) = viewModelScope.launch {

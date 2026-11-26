@@ -11,8 +11,8 @@ android {
         applicationId "com.ipdial"
         minSdk 26
         targetSdk 35
-        versionCode 33
-        versionName "1.2.2"
+        versionCode 34
+        versionName "2.0.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary true
@@ -62,7 +62,7 @@ android {
         include 'app-release.apk'
         into System.getProperty("user.home") + "/Downloads/"
         rename { String filename ->
-            "IPDial-v${android.defaultConfig.versionName}-${new Date().format('yyyyMMdd-HHmm')}-signed.apk"
+            "DialDuo-v${android.defaultConfig.versionName}-${new Date().format('yyyyMMdd-HHmm')}-signed.apk"
         }
     }
 

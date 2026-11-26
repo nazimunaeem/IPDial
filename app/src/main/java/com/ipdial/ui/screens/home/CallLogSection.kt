@@ -7,6 +7,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,6 +24,7 @@ import androidx.compose.material.icons.automirrored.filled.CallMade
 import androidx.compose.material.icons.automirrored.filled.CallMissed
 import androidx.compose.material.icons.automirrored.filled.CallReceived
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -42,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -172,6 +175,20 @@ fun CallLogItem(
             expanded = expanded,
             onDismissRequest = { expanded = false }
         ) {
+            DropdownMenuItem(
+                text = { Text("Send message") },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Default.Sms,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                },
+                onClick = {
+                    expanded = false
+                    launchSmsIntent(context, entry.remoteUri)
+                }
+            )
             DropdownMenuItem(
                 text = { Text("Copy number") },
                 onClick = { expanded = false; onCopy() }
@@ -370,19 +387,21 @@ fun CallHistoryDetailDialog(
             }
         },
         confirmButton = {
-            TextButton(
-                onClick = {
-                    onCall()
-                    onDismiss()
-                }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Default.Call, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Call")
-            }
-        },
-        dismissButton = {
-            Row {
+                TextButton(
+                    onClick = onDismiss,
+                    contentPadding = PaddingValues(horizontal = 8.dp),
+                    modifier = Modifier.testTag("history_dialog_close_button")
+                ) {
+                    Text(
+                        text = "Close",
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
                 if (contact == null) {
                     TextButton(
                         onClick = {
@@ -397,15 +416,65 @@ fun CallHistoryDetailDialog(
                                 android.widget.Toast.makeText(context, "Could not open contacts app", android.widget.Toast.LENGTH_SHORT).show()
                             }
                             onDismiss()
-                        }
+                        },
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                        modifier = Modifier.testTag("history_dialog_add_contact_button")
                     ) {
-                        Text("Add to contact")
+                        Text(
+                            text = "Add to contact",
+                            maxLines = 1,
+                            softWrap = false
+                        )
                     }
                 }
-                TextButton(onClick = onDismiss) {
-                    Text("Close")
+                Spacer(Modifier.weight(1f))
+                IconButton(
+                    onClick = {
+                        launchSmsIntent(context, cleanNumber)
+                        onDismiss()
+                    },
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("history_dialog_sms_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Sms,
+                        contentDescription = "Send message",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+                IconButton(
+                    onClick = {
+                        onCall()
+                        onDismiss()
+                    },
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("history_dialog_call_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Call,
+                        contentDescription = "Call",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(22.dp)
+                    )
                 }
             }
         }
     )
+}
+
+private fun launchSmsIntent(context: android.content.Context, rawNumber: String) {
+    val target = cleanUri(rawNumber).trim()
+    if (target.isBlank()) {
+        android.widget.Toast.makeText(context, "No valid number for messaging", android.widget.Toast.LENGTH_SHORT).show()
+        return
+    }
+    try {
+        val intent = Intent(Intent.ACTION_SENDTO, android.net.Uri.parse("smsto:${android.net.Uri.encode(target)}"))
+        context.startActivity(intent)
+    } catch (_: Exception) {
+        android.widget.Toast.makeText(context, "No messaging app found", android.widget.Toast.LENGTH_SHORT).show()
+    }
 }

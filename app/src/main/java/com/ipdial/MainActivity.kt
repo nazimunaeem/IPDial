@@ -52,6 +52,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.NetworkCheck
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PrivacyTip
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
@@ -106,10 +107,12 @@ import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.ipdial.R
 import com.ipdial.data.model.CallDirection
 import com.ipdial.data.model.CallSession
@@ -122,6 +125,7 @@ import com.ipdial.ui.screens.AccountsScreen
 import com.ipdial.ui.screens.ActivityLogScreen
 import com.ipdial.ui.screens.AudioCodecScreen
 import com.ipdial.ui.screens.CallScreen
+import com.ipdial.ui.screens.ContactDetailsScreen
 import com.ipdial.ui.screens.ContactsScreen
 import com.ipdial.ui.screens.DialpadScreen
 import com.ipdial.ui.screens.DialpadStyleScreen
@@ -170,6 +174,9 @@ class MainActivity : ComponentActivity() {
         AppState.isForeground = true
         vm.refreshSimAccounts()
         vm.refreshCallHistory()
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) {
+            vm.syncContacts()
+        }
         val session = vm.callSession.value
         if (session != null && session.state != CallState.DISCONNECTED) {
             applyLockScreenFlags()
@@ -461,6 +468,9 @@ sealed class NavDest(val route: String, val label: String, val icon: ImageVector
     object IncomingCallStyle : NavDest("incoming_call_style", "Incoming Call Style", Icons.Default.Call)
     object DialpadStyle : NavDest("dialpad_style", "Dialpad Style", Icons.Default.Dialpad)
     object ServerInspector : NavDest("server_inspector", "Server Inspector", Icons.Default.NetworkCheck)
+    object ContactDetails : NavDest("contact_details/{contactId}", "Contact Details", Icons.Default.Person) {
+        fun route(contactId: String): String = "contact_details/${android.net.Uri.encode(contactId)}"
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -598,38 +608,18 @@ fun UpdateCheckDialog() {
     LaunchedEffect(Unit) {
         try {
             val currentVersion = context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "1.0"
-            updateRelease = com.ipdial.util.UpdateChecker.checkForUpdates(currentVersion)
+            val release = com.ipdial.util.UpdateChecker.checkForUpdates(currentVersion)
+            if (release == null) {
+                com.ipdial.util.UpdateChecker.cleanupCachedUpdates(context)
+            }
+            updateRelease = release
         } catch (_: Exception) {}
     }
 
-    val isGlass = com.ipdial.ui.theme.LocalGlassMode.current != com.ipdial.ui.theme.GlassMode.None
-
-    if (updateRelease != null) {
-        AlertDialog(
-            onDismissRequest = { updateRelease = null },
-            containerColor = if (isGlass) Color.Transparent else MaterialTheme.colorScheme.surface,
-            modifier = if (isGlass) Modifier.glass(MaterialTheme.shapes.extraLarge, alpha = 0.95f) else Modifier,
-            title = { Text("Update Available") },
-            text = {
-                val description = updateRelease?.body?.takeIf { it.isNotBlank() }
-                Text("A new version (${updateRelease?.tagName}) is available on GitHub. Would you like to download it?" + (description?.let { "\n\n$it" } ?: ""))
-            },
-            confirmButton = {
-                Button(onClick = {
-                    val url = updateRelease?.htmlUrl
-                    if (!url.isNullOrBlank()) {
-                        try {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
-                        } catch (_: Exception) {
-                            android.widget.Toast.makeText(context, "No browser app found", android.widget.Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                    updateRelease = null
-                }) { Text("Download") }
-            },
-            dismissButton = {
-                TextButton(onClick = { updateRelease = null }) { Text("Later") }
-            }
+    updateRelease?.let { release ->
+        com.ipdial.ui.components.AppUpdateDialog(
+            release = release,
+            onDismiss = { updateRelease = null }
         )
     }
 }
@@ -774,7 +764,19 @@ fun MainPagerScreen(
                 2 -> ContactsScreen(
                     vm = vm, 
                     onOpenDrawer = onOpenMenu,
-                    onNavigateToAccounts = { navController.navigate(NavDest.Accounts.route) }
+                    onNavigateToAccounts = { navController.navigate(NavDest.Accounts.route) },
+                    onOpenContactDetails = { contact ->
+                        navController.navigate(NavDest.ContactDetails.route(contact.id))
+                    },
+                    onOpenInDialpad = { number ->
+                        vm.prefillDialer(number)
+                        navController.graph.let { graph ->
+                            navController.navigate(NavDest.Keypad.route) {
+                                popUpTo(graph.findStartDestination().id)
+                                launchSingleTop = true
+                            }
+                        }
+                    }
                 )
             }
         }
@@ -886,6 +888,28 @@ fun AppNavHost(
             ServerInspectorScreen(
                 vm = vm,
                 onBack = { navController.popBackStack() }
+            )
+        }
+        composable(
+            route = NavDest.ContactDetails.route,
+            arguments = listOf(navArgument("contactId") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val contactId = android.net.Uri.decode(
+                backStackEntry.arguments?.getString("contactId").orEmpty()
+            )
+            ContactDetailsScreen(
+                contactId = contactId,
+                vm = vm,
+                onBack = { navController.popBackStack() },
+                onOpenInDialpad = { number ->
+                    vm.prefillDialer(number)
+                    navController.graph.let { graph ->
+                        navController.navigate(NavDest.Keypad.route) {
+                            popUpTo(graph.findStartDestination().id)
+                            launchSingleTop = true
+                        }
+                    }
+                }
             )
         }
     }

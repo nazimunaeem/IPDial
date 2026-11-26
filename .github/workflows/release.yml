@@ -1,22 +1,28 @@
-name: Release
+name: Release Signed APK
 
-# Builds, signs and publishes IPDial.
-#   • Manual run:  Actions → Release → Run workflow
-#   • Tag run:     git push origin v1.2.2   (tag must equal app version)
+# Builds, signs and publishes DialDuo using GitHub Actions Secrets with release notes.
+#   • Manual run:  Actions → Release Signed APK → Run workflow
+#   • Tag run:     git push origin v2.0.0   (tag must equal v<versionName>)
 #
 # Required repository secrets (Settings → Secrets and variables → Actions):
-#   KEYSTORE_BASE64   base64 of the release keystore (.jks / .keystore)
+#   KEYSTORE_BASE64   base64-encoded release keystore (.jks / .keystore)
 #   STORE_PASSWORD    keystore password
 #   KEY_ALIAS         signing key alias
 #   KEY_PASSWORD      signing key password
 #
-# To release a new version:
-#   1. Bump versionCode and versionName in app/build.gradle and commit/push.
-#   2. Trigger via Actions -> Release -> Run workflow, or push tag v<versionName>.
+# Release notes priority:
+#   1. Manual `release_notes` input (when triggered via Run workflow)
+#   2. Matching `## v<versionName>` section in RELEASE_NOTES.md
+#   3. Auto-generated commit summary since the previous v* tag
 
 on:
   workflow_dispatch:
     inputs:
+      release_notes:
+        description: "Release notes (leave blank to use RELEASE_NOTES.md or commit history)"
+        required: false
+        default: ""
+        type: string
       draft:
         description: "Publish as a draft release"
         required: false
@@ -40,7 +46,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build & sign
+    name: Build & sign APK
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -48,6 +54,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
@@ -72,7 +80,7 @@ jobs:
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "code=$CODE" >> "$GITHUB_OUTPUT"
-          echo "Building IPDial $VERSION (build $CODE)"
+          echo "Building DialDuo $VERSION (build $CODE)"
 
       - name: Verify tag matches app version
         if: startsWith(github.ref, 'refs/tags/')
@@ -82,7 +90,7 @@ jobs:
             exit 1
           fi
 
-      # gradle.properties is gitignored, so CI must recreate the flags the build needs.
+      # gradle.properties is gitignored, so CI recreates the flags the build needs.
       - name: Configure Gradle for CI
         run: |
           {
@@ -97,23 +105,32 @@ jobs:
           } > gradle.properties
           chmod +x gradlew
 
-      - name: Decode signing keystore
+      - name: Validate & decode signing secrets
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           if [ -z "$KEYSTORE_BASE64" ]; then
             echo "::error::KEYSTORE_BASE64 secret is missing. Add it in Settings → Secrets and variables → Actions."
             exit 1
           fi
-          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/ipdial-release.jks"
-          test -s "$RUNNER_TEMP/ipdial-release.jks" || { echo "::error::Decoded keystore is empty — is KEYSTORE_BASE64 a valid base64 .jks?"; exit 1; }
+          for var in STORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!var}" ]; then
+              echo "::error::$var secret is missing. Add it in Settings → Secrets and variables → Actions."
+              exit 1
+            fi
+          done
+          printf '%s' "$KEYSTORE_BASE64" | tr -d '[:space:]' | base64 --decode > "$RUNNER_TEMP/dialduo-release.jks"
+          test -s "$RUNNER_TEMP/dialduo-release.jks" || { echo "::error::Decoded keystore is empty — verify KEYSTORE_BASE64 is valid base64."; exit 1; }
 
       - name: Run unit tests
         run: ./gradlew :app:testDebugUnitTest --stacktrace
 
       - name: Build signed APK and App Bundle
         env:
-          STORE_FILE: ${{ runner.temp }}/ipdial-release.jks
+          STORE_FILE: ${{ runner.temp }}/dialduo-release.jks
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
@@ -130,21 +147,71 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           mkdir -p dist
-          cp app/build/outputs/apk/release/app-release.apk "dist/IPDial-v${VERSION}.apk"
+          cp app/build/outputs/apk/release/app-release.apk "dist/DialDuo-v${VERSION}.apk"
           if [ -f app/build/outputs/bundle/release/app-release.aab ]; then
-            cp app/build/outputs/bundle/release/app-release.aab "dist/IPDial-v${VERSION}.aab"
+            cp app/build/outputs/bundle/release/app-release.aab "dist/DialDuo-v${VERSION}.aab"
           fi
           (cd dist && sha256sum ./* > SHA256SUMS.txt)
           ls -lh dist
 
+      - name: Generate release notes
+        env:
+          INPUT_NOTES: ${{ github.event.inputs.release_notes }}
+          VERSION: ${{ steps.version.outputs.version }}
+          CODE: ${{ steps.version.outputs.code }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          NOTES_CONTENT=""
+
+          # 1. Prefer explicit workflow_dispatch release_notes input
+          if [ -n "$(printf '%s' "$INPUT_NOTES" | tr -d '[:space:]')" ]; then
+            NOTES_CONTENT="$INPUT_NOTES"
+          # 2. Otherwise extract matching ## v<version> section from RELEASE_NOTES.md
+          elif [ -f RELEASE_NOTES.md ]; then
+            NOTES_CONTENT=$(awk -v ver="## v${VERSION}" '
+              $0 == ver { found=1; next }
+              found && /^## / { exit }
+              found { print }
+            ' RELEASE_NOTES.md | sed -e '/./,$!d')
+          fi
+
+          # 3. Fallback to git commit log since previous v* tag
+          if [ -z "$(printf '%s' "$NOTES_CONTENT" | tr -d '[:space:]')" ]; then
+            PREV_TAG=$(git tag --list 'v*' --sort=-v:refname | grep -Fxv "v${VERSION}" | head -1 || true)
+            if [ -n "$PREV_TAG" ]; then
+              NOTES_CONTENT=$(git log "${PREV_TAG}..HEAD" --no-merges --pretty=format:"- %s (%h)" | head -n 30)
+            else
+              NOTES_CONTENT=$(git log -n 20 --no-merges --pretty=format:"- %s (%h)")
+            fi
+          fi
+
+          {
+            echo "## DialDuo v${VERSION} (build ${CODE})"
+            echo ""
+            if [ -n "$(printf '%s' "$NOTES_CONTENT" | tr -d '[:space:]')" ]; then
+              printf '%s\n' "$NOTES_CONTENT"
+              echo ""
+            fi
+            echo "### Downloads"
+            echo "- Signed release APK: \`DialDuo-v${VERSION}.apk\`"
+            if [ -f "dist/DialDuo-v${VERSION}.aab" ]; then
+              echo "- Play Store bundle: \`DialDuo-v${VERSION}.aab\`"
+            fi
+            echo "- SHA-256 checksums: \`SHA256SUMS.txt\`"
+            echo ""
+            echo "_Built from commit \`${COMMIT_SHA}\`._"
+          } > dist/release-notes.md
+
+          cat dist/release-notes.md
+
       - name: Remove signing keystore
         if: always()
-        run: rm -f "$RUNNER_TEMP/ipdial-release.jks"
+        run: rm -f "$RUNNER_TEMP/dialduo-release.jks"
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ipdial-release
+          name: dialduo-release
           path: dist/*
           if-no-files-found: error
           retention-days: 30
@@ -157,27 +224,20 @@ jobs:
       - name: Download release artifacts
         uses: actions/download-artifact@v4
         with:
-          name: ipdial-release
+          name: dialduo-release
           path: dist
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.build.outputs.version }}
-          name: IPDial v${{ needs.build.outputs.version }} (build ${{ needs.build.outputs.code }})
+          name: DialDuo v${{ needs.build.outputs.version }} (build ${{ needs.build.outputs.code }})
+          body_path: dist/release-notes.md
           generate_release_notes: true
-          body: |
-            **IPDial v${{ needs.build.outputs.version }}** (build ${{ needs.build.outputs.code }})
-
-            - Signed release APK: `IPDial-v${{ needs.build.outputs.version }}.apk`
-            - Play Store bundle: `IPDial-v${{ needs.build.outputs.version }}.aab`
-            - SHA-256 checksums: `SHA256SUMS.txt`
-
-            Built from commit `${{ github.sha }}`.
           draft: ${{ inputs.draft || false }}
           prerelease: ${{ inputs.prerelease || false }}
           fail_on_unmatched_files: true
           files: |
-            dist/IPDial-v${{ needs.build.outputs.version }}.apk
-            dist/IPDial-v${{ needs.build.outputs.version }}.aab
+            dist/DialDuo-v${{ needs.build.outputs.version }}.apk
+            dist/DialDuo-v${{ needs.build.outputs.version }}.aab
             dist/SHA256SUMS.txt

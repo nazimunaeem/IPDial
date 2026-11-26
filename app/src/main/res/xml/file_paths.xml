@@ -4,4 +4,6 @@
     <files-path name="recordings" path="recordings/" />
     <!-- External app-specific call recordings -->
     <external-files-path name="external_recordings" path="Music/IPDialRecordings/" />
+    <!-- Downloaded in-app update APKs -->
+    <cache-path name="apk_updates" path="updates/" />
 </paths>

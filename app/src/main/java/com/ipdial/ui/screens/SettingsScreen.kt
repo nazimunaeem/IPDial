@@ -394,34 +394,9 @@ fun SettingsScreen(
 
     if (showUpdateDialog) {
         val release = updateRelease ?: return
-        AlertDialog(
-            onDismissRequest = { showUpdateDialog = false },
-            icon = { Icon(Icons.Default.SystemUpdate, null) },
-            title = { Text("Update Available") },
-            text = {
-                Column {
-                    Text("Version ${release.tagName.trimStart('v')} is available.")
-                    if (!release.body.isNullOrBlank()) {
-                        Spacer(Modifier.height(8.dp))
-                        Text(release.body.take(300), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    showUpdateDialog = false
-                    if (release.htmlUrl.isNotBlank()) {
-                        try {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(release.htmlUrl)))
-                        } catch (_: Exception) {
-                            android.widget.Toast.makeText(context, "No browser app found", android.widget.Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                }) { Text("Download") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showUpdateDialog = false }) { Text("Later") }
-            }
+        com.ipdial.ui.components.AppUpdateDialog(
+            release = release,
+            onDismiss = { showUpdateDialog = false }
         )
     }
 
@@ -498,7 +473,11 @@ fun SettingsScreen(
                 SettingsRow(
                     icon = Icons.Default.GridOn,
                     title = "Keypad Design",
-                    subtitle = if (keypadDesign == KeypadDesign.Rounded) "Fully Rounded" else "Grid",
+                    subtitle = when (keypadDesign) {
+                        KeypadDesign.Rounded -> "Fully Rounded"
+                        KeypadDesign.Ring -> "Ring (Rotary)"
+                        KeypadDesign.Grid -> "Grid"
+                    },
                     trailing = {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,

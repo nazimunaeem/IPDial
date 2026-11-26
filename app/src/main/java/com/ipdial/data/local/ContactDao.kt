@@ -34,4 +34,7 @@ interface ContactDao {
 
     @Query("UPDATE contacts SET isFavorite = :isFavorite WHERE id = :id")
     suspend fun updateFavorite(id: String, isFavorite: Boolean)
+
+    @Query("DELETE FROM contacts WHERE id = :id")
+    suspend fun deleteById(id: String)
 }

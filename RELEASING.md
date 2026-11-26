@@ -1,4 +1,4 @@
-# Releasing IPDial
+# Releasing DialDuo
 
 The release pipeline lives in [`.github/workflows/release.yml`](.github/workflows/release.yml).
 It runs unit tests, builds a **signed release APK** and an **AAB**, verifies the
@@ -111,14 +111,16 @@ For a different repo: `gh secret set NAME --repo owner/repo`.
 
 ---
 
-## 5. Bump the version
+## 5. Bump the version & update release notes
 
 In `app/build.gradle`:
 
 ```groovy
 versionCode 34        // always increment by 1 for every release
-versionName "1.2.3"   // user-visible version
+versionName "2.0.0"   // user-visible version
 ```
+
+Add a matching `## v2.0.0` section in [`RELEASE_NOTES.md`](RELEASE_NOTES.md) (or pass notes directly when running the workflow manually; if neither is provided, CI falls back to git commit messages since the previous tag).
 
 Commit and push that change before releasing.
 
@@ -128,33 +130,35 @@ Commit and push that change before releasing.
 
 ### Option A — from the Actions tab (recommended)
 
-1. **Actions** → **Release** (left sidebar).
+1. **Actions** → **Release Signed APK** (left sidebar).
 2. **Run workflow** (right side).
 3. Pick the branch (`main`).
-4. Optionally tick **Publish as a draft release** / **Mark as pre-release**.
+4. Optionally enter **Release notes**, or tick **Publish as a draft release** / **Mark as pre-release**.
 5. **Run workflow**.
 
 ### Option B — with the CLI
 
 ```bash
-gh workflow run release.yml --ref main -f draft=false -f prerelease=false
+gh workflow run release.yml --ref main \
+  -f release_notes="- Redesigned Contacts tab" \
+  -f draft=false -f prerelease=false
 gh run watch
 ```
 
 ### Option C — by pushing a tag
 
 ```bash
-git tag v1.2.3          # must equal versionName exactly, prefixed with "v"
-git push origin v1.2.3
+git tag v2.0.0          # must equal versionName exactly, prefixed with "v"
+git push origin v2.0.0
 ```
 
 The workflow fails fast if the tag does not match `versionName`.
 
 The run creates (or updates) the GitHub Release
-`v<versionName>` containing:
+`v<versionName>` with the release notes and attaches:
 
-- `IPDial-v<versionName>.apk` — signed, installable APK
-- `IPDial-v<versionName>.aab` — signed bundle for Google Play
+- `DialDuo-v<versionName>.apk` — signed, installable APK
+- `DialDuo-v<versionName>.aab` — signed bundle for Google Play
 - `SHA256SUMS.txt` — checksums
 
 ---
@@ -183,6 +187,6 @@ Without those variables the build falls back to `keystore.properties`.
 | `Decoded keystore is empty` | The secret contains line breaks/quotes; re-encode with `tr -d '\n'` and paste only the single line. |
 | `Keystore was tampered with, or password was incorrect` | `STORE_PASSWORD` is wrong (keystore password, not key password). |
 | `Cannot recover key` | `KEY_PASSWORD` is wrong, or `KEY_ALIAS` does not exist in that keystore. List aliases with `keytool -list -keystore ipdial.jks`. |
-| `Tag v1.2.3 does not match app version v1.2.2` | Bump `versionName`, commit, or push the matching tag. |
+| `Tag v2.0.0 does not match app version v1.2.2` | Bump `versionName`, commit, or push the matching tag. |
 | Build passes locally but fails in CI | CI recreates the gitignored `gradle.properties`; if you add new required Gradle flags, add them to the workflow's **Configure Gradle for CI** step. |
 | `apksigner verify` fails | The keystore decoding step or passwords are wrong; check the build log around the signing config. |
