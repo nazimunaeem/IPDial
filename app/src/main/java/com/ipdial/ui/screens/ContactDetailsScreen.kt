@@ -127,7 +127,8 @@ fun ContactDetailsScreen(
     contactId: String,
     vm: SipViewModel,
     onBack: () -> Unit,
-    onOpenInDialpad: (String) -> Unit
+    onOpenInDialpad: (String) -> Unit,
+    onOpenStats: ((Contact) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val contacts by vm.contacts.collectAsState()
@@ -236,6 +237,7 @@ fun ContactDetailsScreen(
                     vm = vm,
                     onOpenInDialpad = onOpenInDialpad,
                     onContactDeleted = onBack,
+                    onOpenStats = onOpenStats,
                     showHeaderActions = false,
                     externalDeleteTrigger = requestDeleteTrigger,
                     modifier = Modifier
@@ -253,6 +255,7 @@ fun ContactDetailsContent(
     vm: SipViewModel,
     onOpenInDialpad: (String) -> Unit,
     onContactDeleted: () -> Unit,
+    onOpenStats: ((Contact) -> Unit)? = null,
     showHeaderActions: Boolean = false,
     externalDeleteTrigger: Int = 0,
     modifier: Modifier = Modifier
@@ -717,7 +720,13 @@ fun ContactDetailsContent(
                     modifier = Modifier.weight(1f)
                 )
                 IconButton(
-                    onClick = { showContactStats = true },
+                    onClick = {
+                        if (onOpenStats != null) {
+                            onOpenStats(contact)
+                        } else {
+                            showContactStats = true
+                        }
+                    },
                     modifier = Modifier
                         .size(48.dp)
                         .testTag("contact_details_stats_button")

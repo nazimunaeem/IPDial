@@ -541,7 +541,11 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         SipEngine.callSession,
         SimCallManager.callSession
     ) { sip, sim -> sip ?: sim }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+        .stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            SipEngine.callSession.value ?: SimCallManager.callSession.value
+        )
 
     val audioDeviceMode: StateFlow<AudioDeviceMode> = combine(
         callSession,

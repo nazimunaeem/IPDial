@@ -98,7 +98,7 @@ class SipConnectionService : ConnectionService() {
     ): Connection {
         Log.d(TAG, "onCreateOutgoingConnection")
         com.ipdial.util.SipLogger.log(TAG, "onCreateOutgoingConnection called by Telecom framework")
-        val connection = SipConnection()
+        val connection = SipConnection(applicationContext)
         val address = request?.address
         address?.let { connection.setAddress(it, TelecomManager.PRESENTATION_ALLOWED) }
         connection.setInitializing()
@@ -201,7 +201,7 @@ class SipConnectionService : ConnectionService() {
     ): Connection {
         Log.d(TAG, "onCreateIncomingConnection from Telecom framework")
         com.ipdial.util.SipLogger.log(TAG, "onCreateIncomingConnection called by Telecom framework")
-        val connection = SipConnection()
+        val connection = SipConnection(applicationContext)
         request?.address?.let { connection.setAddress(it, TelecomManager.PRESENTATION_ALLOWED) }
         
         // Set caller display name from extras if available
@@ -260,7 +260,7 @@ class SipConnectionService : ConnectionService() {
     }
 }
 
-class SipConnection : Connection() {
+class SipConnection(private val appContext: android.content.Context) : Connection() {
     var callId: Int = -1
     @Volatile var isDestroyed: Boolean = false
     private val connectionScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -270,6 +270,18 @@ class SipConnection : Connection() {
         // MODE_IN_CALL for a self-managed SIP connection and take ownership of the
         // microphone, leaving DTMF working but live voice silent.
         setAudioModeIsVoip(true)
+    }
+
+    override fun onShowIncomingCallUi() {
+        Log.d("SipConnection", "onShowIncomingCallUi(id=$callId)")
+        com.ipdial.util.SipLogger.log("SipConnection", "onShowIncomingCallUi called for callId=$callId")
+        if (isDestroyed || callId == -1 || !SipEngine.hasActiveCall(callId)) return
+        val session = SipEngine.callSession.value ?: return
+        if (session.callId != callId || session.state == com.ipdial.data.model.CallState.DISCONNECTED) return
+        if (IncomingCallPresentationHelper.shouldPresentIncomingOverLockScreen(com.ipdial.AppState.isForeground, appContext)) {
+            showIncomingCallNotificationStatic(appContext, session.remoteDisplayName, callId)
+            IncomingCallPresentationHelper.launchIncomingCallUiIfLocked(appContext, callId)
+        }
     }
 
     override fun onAnswer() {

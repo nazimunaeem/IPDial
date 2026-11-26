@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -42,6 +43,7 @@ import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Audiotrack
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.CardGiftcard
@@ -125,6 +127,7 @@ import com.ipdial.ui.screens.AccountsScreen
 import com.ipdial.ui.screens.ActivityLogScreen
 import com.ipdial.ui.screens.AudioCodecScreen
 import com.ipdial.ui.screens.CallScreen
+import com.ipdial.ui.screens.CallStatsScreen
 import com.ipdial.ui.screens.ContactDetailsScreen
 import com.ipdial.ui.screens.ContactsScreen
 import com.ipdial.ui.screens.DialpadScreen
@@ -169,6 +172,18 @@ class MainActivity : ComponentActivity() {
 
     private val vm: SipViewModel by viewModels()
 
+    private fun currentLiveSession(): CallSession? =
+        com.ipdial.service.SipEngine.callSession.value
+            ?: com.ipdial.service.sim.SimCallManager.callSession.value
+            ?: vm.callSession.value
+
+    override fun onStart() {
+        super.onStart()
+        if (isCallScreenVisible(currentLiveSession())) {
+            applyLockScreenFlags()
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         AppState.isForeground = true
@@ -177,10 +192,18 @@ class MainActivity : ComponentActivity() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) {
             vm.syncContacts()
         }
-        val session = vm.callSession.value
-        if (session != null && session.state != CallState.DISCONNECTED) {
+        val session = currentLiveSession()
+        if (isCallScreenVisible(session)) {
             applyLockScreenFlags()
             vm.setShowFullIncomingScreen(true)
+        } else if (!com.ipdial.service.IncomingCallPresentationHelper.isCallLaunchAction(intent?.action)) {
+            clearLockScreenFlags()
+        }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && isCallScreenVisible(currentLiveSession())) {
             val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
             nm.cancel(com.ipdial.service.NOTIF_ID_INCOMING)
         }
@@ -189,8 +212,8 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         AppState.isForeground = false
-        val session = vm.callSession.value
-        if (session != null && session.state != CallState.DISCONNECTED) {
+        val session = currentLiveSession()
+        if (isCallScreenVisible(session) && session != null) {
             com.ipdial.service.showCallNotificationStatic(this, session.remoteDisplayName, session.callId)
         }
     }
@@ -244,8 +267,14 @@ class MainActivity : ComponentActivity() {
             androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, true)
         }
         super.onCreate(savedInstanceState)
-        
-        updateVolumeControlStream(vm.callSession.value)
+
+        if (com.ipdial.service.IncomingCallPresentationHelper.isCallLaunchAction(intent?.action) ||
+            isCallScreenVisible(currentLiveSession())
+        ) {
+            applyLockScreenFlags()
+        }
+
+        updateVolumeControlStream(currentLiveSession())
         lifecycleScope.launch {
             vm.callSession.collect { session ->
                 updateVolumeControlStream(session)
@@ -265,33 +294,18 @@ class MainActivity : ComponentActivity() {
             val themeMode by vm.themeMode.collectAsState()
             val fontMultiplier by vm.fontSizeMultiplier.collectAsState()
 
-            // Keep screen on when there's an active call
+            // Keep screen on and show over lock screen when there's an active call
             val callSession by vm.callSession.collectAsState()
             val localView = LocalView.current
             
             LaunchedEffect(callSession) {
-                val window = (localView.context as? android.app.Activity)?.window
-                val activity = localView.context as? android.app.Activity
+                val activity = localView.context as? MainActivity
                 val isActiveCall = isCallScreenVisible(callSession)
-                (activity as? MainActivity)?.updateVolumeControlStream(callSession)
+                activity?.updateVolumeControlStream(callSession)
                 if (isActiveCall) {
-                    window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-                        activity?.setTurnScreenOn(true)
-                        activity?.setShowWhenLocked(true)
-                    }
+                    activity?.applyLockScreenFlags()
                 } else {
-                    window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-                        activity?.setTurnScreenOn(false)
-                        activity?.setShowWhenLocked(false)
-                    }
-                    @Suppress("DEPRECATION")
-                    window?.clearFlags(
-                        android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                        android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
-                        android.view.WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
-                    )
+                    activity?.clearLockScreenFlags()
                     // Keep the app in the foreground after hangup so users return
                     // to the in-app screen instead of being sent to the launcher.
                 }
@@ -339,8 +353,9 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        if (intent.action == "com.ipdial.ACTION_INCOMING_CALL" ||
-            intent.action == "com.ipdial.ACTION_SHOW_CALL") {
+        if (com.ipdial.service.IncomingCallPresentationHelper.isCallLaunchAction(intent.action) ||
+            isCallScreenVisible(currentLiveSession())
+        ) {
             applyLockScreenFlags()
         }
         handleIntent(intent)
@@ -350,19 +365,26 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
             setTurnScreenOn(true)
-            val km = getSystemService(KEYGUARD_SERVICE) as KeyguardManager
-            try {
-                km.requestDismissKeyguard(this, null)
-            } catch (e: Exception) {
-                Log.e("MainActivity", "requestDismissKeyguard failed", e)
-            }
         }
         @Suppress("DEPRECATION")
         window.addFlags(
             android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
             android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
-            android.view.WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
             android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+        )
+    }
+
+    private fun clearLockScreenFlags() {
+        window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setTurnScreenOn(false)
+            setShowWhenLocked(false)
+        }
+        @Suppress("DEPRECATION")
+        window.clearFlags(
+            android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+            android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+            android.view.WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
         )
     }
 
@@ -468,6 +490,10 @@ sealed class NavDest(val route: String, val label: String, val icon: ImageVector
     object IncomingCallStyle : NavDest("incoming_call_style", "Incoming Call Style", Icons.Default.Call)
     object DialpadStyle : NavDest("dialpad_style", "Dialpad Style", Icons.Default.Dialpad)
     object ServerInspector : NavDest("server_inspector", "Server Inspector", Icons.Default.NetworkCheck)
+    object CallStats : NavDest("call_stats?contactId={contactId}&number={number}&title={title}", "Call Statistics", Icons.Default.BarChart) {
+        fun route(contactId: String = "", number: String = "", title: String = ""): String =
+            "call_stats?contactId=${android.net.Uri.encode(contactId)}&number=${android.net.Uri.encode(number)}&title=${android.net.Uri.encode(title)}"
+    }
     object ContactDetails : NavDest("contact_details/{contactId}", "Contact Details", Icons.Default.Person) {
         fun route(contactId: String): String = "contact_details/${android.net.Uri.encode(contactId)}"
     }
@@ -706,6 +732,12 @@ fun AppMainContent(
 @Composable
 fun CallOverlay(vm: SipViewModel, session: CallSession) {
     if (session.state == CallState.DISCONNECTED) return
+    val context = androidx.compose.ui.platform.LocalContext.current
+    BackHandler {
+        if (!com.ipdial.service.IncomingCallPresentationHelper.isDeviceLockedOrScreenOff(context)) {
+            (context as? android.app.Activity)?.moveTaskToBack(true)
+        }
+    }
     when (session.direction) {
         CallDirection.INCOMING -> {
             if (session.state == CallState.INCOMING || session.state == CallState.EARLY) {
@@ -757,6 +789,9 @@ fun MainPagerScreen(
                     },
                     onOpenContactDetails = { contactId ->
                         navController.navigate(NavDest.ContactDetails.route(contactId))
+                    },
+                    onOpenStats = { contactId, number, title ->
+                        navController.navigate(NavDest.CallStats.route(contactId, number, title))
                     }
                 )
                 1 -> DialpadScreen(
@@ -779,6 +814,15 @@ fun MainPagerScreen(
                                 launchSingleTop = true
                             }
                         }
+                    },
+                    onOpenContactStats = { contact ->
+                        navController.navigate(
+                            NavDest.CallStats.route(
+                                contactId = contact.id,
+                                number = contact.numbers.firstOrNull().orEmpty(),
+                                title = "${contact.name} · Stats"
+                            )
+                        )
                     }
                 )
             }
@@ -894,6 +938,28 @@ fun AppNavHost(
             )
         }
         composable(
+            route = NavDest.CallStats.route,
+            arguments = listOf(
+                navArgument("contactId") { type = NavType.StringType; defaultValue = "" },
+                navArgument("number") { type = NavType.StringType; defaultValue = "" },
+                navArgument("title") { type = NavType.StringType; defaultValue = "" }
+            )
+        ) { backStackEntry ->
+            val contactId = android.net.Uri.decode(backStackEntry.arguments?.getString("contactId").orEmpty())
+            val number = android.net.Uri.decode(backStackEntry.arguments?.getString("number").orEmpty())
+            val title = android.net.Uri.decode(backStackEntry.arguments?.getString("title").orEmpty())
+            CallStatsScreen(
+                vm = vm,
+                contactId = contactId,
+                targetNumber = number,
+                customTitle = title,
+                onBack = { navController.popBackStack() },
+                onOpenContactDetails = { id ->
+                    navController.navigate(NavDest.ContactDetails.route(id))
+                }
+            )
+        }
+        composable(
             route = NavDest.ContactDetails.route,
             arguments = listOf(navArgument("contactId") { type = NavType.StringType })
         ) { backStackEntry ->
@@ -912,6 +978,15 @@ fun AppNavHost(
                             launchSingleTop = true
                         }
                     }
+                },
+                onOpenStats = { contact ->
+                    navController.navigate(
+                        NavDest.CallStats.route(
+                            contactId = contact.id,
+                            number = contact.numbers.firstOrNull().orEmpty(),
+                            title = "${contact.name} · Stats"
+                        )
+                    )
                 }
             )
         }

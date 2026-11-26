@@ -17,6 +17,7 @@ const val NOTIF_CHANNEL_SIP = "sip_service_v1"
 // Bump the channel ID so devices that created the previous non-vibrating
 // channel receive the updated call-alert behavior (channel settings are immutable).
 const val NOTIF_CHANNEL_CALL = "incoming_call_v5"
+const val NOTIF_CHANNEL_CALL_SILENT = "incoming_call_silent_v1"
 const val NOTIF_CHANNEL_MISSED = "missed_calls_v1"
 const val NOTIF_ID_SERVICE = 1001
 const val NOTIF_ID_INCOMING = 1002
@@ -51,6 +52,16 @@ fun createNotificationChannels(context: Context) {
             setSound(null, null)
             enableVibration(true)
             vibrationPattern = longArrayOf(0L, 800L, 600L, 800L, 600L)
+        }
+    )
+
+    nm.createNotificationChannel(
+        NotificationChannel(NOTIF_CHANNEL_CALL_SILENT, "Incoming Calls (Silent)", NotificationManager.IMPORTANCE_HIGH).apply {
+            description = "Silent incoming call alerts when Do Not Disturb is active"
+            lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            setShowBadge(true)
+            setSound(null, null)
+            enableVibration(false)
         }
     )
 
@@ -144,13 +155,14 @@ fun showCallNotificationStatic(context: Context, callerName: String = "", callId
         .setImportant(true)
         .build()
 
-    val fullscreenIntent = Intent(context, MainActivity::class.java).apply {
-        action = if (isIncomingRinging) "com.ipdial.ACTION_INCOMING_CALL" else "com.ipdial.ACTION_SHOW_CALL"
-        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-        putExtra("callId", targetCallId)
-    }
+    val fullscreenIntent = IncomingCallPresentationHelper.buildIncomingCallActivityIntent(
+        context = context,
+        isIncomingRinging = isIncomingRinging,
+        callId = targetCallId
+    )
+    val contentRequestCode = (targetCallId and 0xFFFF) + if (isIncomingRinging) 10000 else 20000
     val contentPi = PendingIntent.getActivity(
-        context, targetCallId, fullscreenIntent,
+        context, contentRequestCode, fullscreenIntent,
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )
 
@@ -173,7 +185,13 @@ fun showCallNotificationStatic(context: Context, callerName: String = "", callId
         )
     }
 
-    val notifBuilder = NotificationCompat.Builder(context, NOTIF_CHANNEL_CALL)
+    val channelId = if (isIncomingRinging && !isSimCall && SipEngine.isDndActive()) {
+        NOTIF_CHANNEL_CALL_SILENT
+    } else {
+        NOTIF_CHANNEL_CALL
+    }
+
+    val notifBuilder = NotificationCompat.Builder(context, channelId)
         .setSmallIcon(R.drawable.ic_notif_call)
         .setPriority(priority)
         .setCategory(NotificationCompat.CATEGORY_CALL)
@@ -239,7 +257,6 @@ fun showCallNotificationStatic(context: Context, callerName: String = "", callId
         notifBuilder
             .setContentTitle(titleText)
             .setContentText(displayName)
-            .setFullScreenIntent(contentPi, true)
             .setStyle(NotificationCompat.CallStyle.forOngoingCall(callerPerson, hangupPi))
 
         if (session.state == CallState.CONFIRMED) {

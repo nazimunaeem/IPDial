@@ -357,9 +357,11 @@ class SipService : Service() {
                     audioRouter.routeAudioToEarpiece()
                 }
                 cancelIncomingNotification(this)
-                val fullIntent = Intent(this, MainActivity::class.java).apply {
-                    this.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                }
+                val fullIntent = IncomingCallPresentationHelper.buildIncomingCallActivityIntent(
+                    context = this,
+                    isIncomingRinging = false,
+                    callId = callId
+                )
                 try {
                     startActivity(fullIntent)
                 } catch (e: Exception) {

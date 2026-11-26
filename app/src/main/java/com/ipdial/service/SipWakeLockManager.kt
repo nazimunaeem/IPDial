@@ -12,6 +12,7 @@ class SipWakeLockManager(private val context: Context) {
     private var cpuWakeLock: PowerManager.WakeLock? = null
     private var proximityWakeLock: PowerManager.WakeLock? = null
     private var incomingWakeLock: PowerManager.WakeLock? = null
+    private var incomingScreenWakeLock: PowerManager.WakeLock? = null
 
     fun acquireWakeLock() {
         if (cpuWakeLock == null) {
@@ -26,27 +27,26 @@ class SipWakeLockManager(private val context: Context) {
     fun acquireWakeLockForIncoming() {
         try {
             val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                // FULL_WAKE_LOCK / ACQUIRE_CAUSES_WAKEUP are ignored on API 33+ for
-                // non-system apps; keeping the CPU awake is all they can do. Screen
-                // wake is handled by the full-screen intent on the incoming-call
-                // notification (NOTIF_CHANNEL_CALL, IMPORTANCE_HIGH).
-                if (incomingWakeLock?.isHeld != true) {
-                    incomingWakeLock = pm.newWakeLock(
-                        PowerManager.PARTIAL_WAKE_LOCK,
-                        "IPDial:cpu_incoming"
-                    ).apply {
-                        setReferenceCounted(false)
-                        acquire(20000L)
-                    }
+            if (incomingWakeLock?.isHeld != true) {
+                incomingWakeLock = pm.newWakeLock(
+                    PowerManager.PARTIAL_WAKE_LOCK,
+                    "IPDial:cpu_incoming"
+                ).apply {
+                    setReferenceCounted(false)
+                    acquire(20000L)
                 }
-            } else {
+            }
+            if (!pm.isInteractive && incomingScreenWakeLock?.isHeld != true) {
                 @Suppress("DEPRECATION")
-                val wl = pm.newWakeLock(
-                    PowerManager.FULL_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP or PowerManager.ON_AFTER_RELEASE,
+                incomingScreenWakeLock = pm.newWakeLock(
+                    PowerManager.SCREEN_BRIGHT_WAKE_LOCK or
+                        PowerManager.ACQUIRE_CAUSES_WAKEUP or
+                        PowerManager.ON_AFTER_RELEASE,
                     "IPDial:incoming_call_wake"
-                )
-                wl.acquire(20000L)
+                ).apply {
+                    setReferenceCounted(false)
+                    acquire(10000L)
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to acquire incoming wake lock", e)
@@ -81,6 +81,8 @@ class SipWakeLockManager(private val context: Context) {
         cpuWakeLock = null
         incomingWakeLock?.let { if (it.isHeld) it.release() }
         incomingWakeLock = null
+        incomingScreenWakeLock?.let { if (it.isHeld) it.release() }
+        incomingScreenWakeLock = null
         releaseProximityWakeLock()
     }
 }

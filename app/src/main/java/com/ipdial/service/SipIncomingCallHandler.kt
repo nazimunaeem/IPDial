@@ -42,10 +42,15 @@ class SipIncomingCallHandler(
                     SipEngine.setDndActive(true)
                 }
 
-                if (!isDnd && !com.ipdial.AppState.isForeground) {
-                    // Post the actionable call notification as soon as DND is
-                    // known. Contact lookup and Telecom reporting can take longer.
+                val presentOverLock = IncomingCallPresentationHelper.shouldPresentIncomingOverLockScreen(
+                    com.ipdial.AppState.isForeground,
+                    context
+                )
+                if (presentOverLock) {
+                    // Post the actionable call notification (with fullScreenIntent) as soon as
+                    // DND is known, and directly launch MainActivity if locked/screen-off.
                     showIncomingCallNotificationStatic(context, session.remoteDisplayName, session.callId)
+                    IncomingCallPresentationHelper.launchIncomingCallUiIfLocked(context, session.callId)
                 }
 
                 val displayName = session.remoteDisplayName
@@ -71,7 +76,7 @@ class SipIncomingCallHandler(
                     return@launch
                 }
 
-                if (!isDnd && !com.ipdial.AppState.isForeground) {
+                if (IncomingCallPresentationHelper.shouldPresentIncomingOverLockScreen(com.ipdial.AppState.isForeground, context)) {
                     // Refresh the already visible notification with the resolved
                     // contact name. setOnlyAlertOnce prevents another ring/vibrate.
                     showIncomingCallNotificationStatic(context, finalDisplayName, session.callId)

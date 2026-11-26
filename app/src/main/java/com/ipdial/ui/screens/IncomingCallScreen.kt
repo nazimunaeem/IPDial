@@ -27,6 +27,7 @@ import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
@@ -156,10 +157,12 @@ fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
         }
 
         Column(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Spacer(Modifier.height(80.dp))
+            Spacer(Modifier.height(48.dp))
 
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
@@ -236,7 +239,8 @@ fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = 140.dp)
+                    .navigationBarsPadding()
+                    .padding(bottom = 110.dp)
             ) {
                 Box(
                     modifier = Modifier
@@ -322,6 +326,7 @@ fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
                                     }
                                 )
                                 .border(2.dp, if (isDarkOrObsidian) Color.White.copy(alpha = 0.4f) else Color.White.copy(alpha = 0.5f), CircleShape)
+                                .testTag("incoming_call_slider")
                                 .draggable(
                                     orientation = Orientation.Horizontal,
                                     state = rememberDraggableState { delta ->
@@ -359,7 +364,8 @@ fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = 80.dp),
+                    .navigationBarsPadding()
+                    .padding(bottom = 64.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Row(
@@ -374,6 +380,7 @@ fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
                                 .size(64.dp)
                                 .clip(CircleShape)
                                 .background(EndRed)
+                                .testTag("incoming_decline_button")
                         ) {
                             Icon(
                                 Icons.Default.CallEnd,
@@ -397,6 +404,7 @@ fun IncomingCallScreen(vm: SipViewModel, session: CallSession) {
                                 .size(64.dp)
                                 .clip(CircleShape)
                                 .background(ForestGreen)
+                                .testTag("incoming_answer_button")
                         ) {
                             Icon(
                                 Icons.Default.Call,

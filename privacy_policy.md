@@ -1,47 +1,47 @@
-# IPDial Privacy Policy
+# DialDuo Privacy Policy
 
-**Last updated: September 2026**
+**Last updated: November 2026**
 
-## Information Collection
+DialDuo is a privacy-first SIP and SIM phone dialer for Android. The app is designed to run locally on your device without user accounts, cloud tracking, analytics SDKs, or third-party advertisements.
 
-IPDial is a VoIP application. We collect minimal information required to provide app features and account synchronization, including a device identifier and, when you sign in, your Google/Firebase account identifier. When you register for Pro, we collect your email address to associate it with your Pro subscription. SIP account credentials are stored locally and securely on your device. SIP credentials are not uploaded to our servers or stored in Firestore.
+## 1. Information We Do Not Collect
 
-## Permissions
+DialDuo does **not** operate developer-hosted servers to collect, store, or sell your personal data. We do not collect analytics, crash telemetry, advertising identifiers, or call content.
 
-IPDial may request the following permissions:
+## 2. Data Stored Locally on Your Device
 
-- **Microphone:** Required for voice calls.
-- **Contacts:** Used to display and search your phonebook inside the app.
-- **Phone state and call management:** Used to manage VoIP calls and call state.
-- **Notifications:** Used to show call and service notifications where enabled.
+All app data stays in app-private storage on your device:
 
-Permissions are used only for the related app functionality.
+- **SIP & TURN Account Credentials:** Server addresses, usernames, and passwords you configure are stored locally. Sensitive passwords (SIP and TURN passwords) are encrypted at rest using AES-256-GCM keys managed by the Android Keystore.
+- **Call History & Statistics:** Unified SIP and device call logs and the statistics/charts computed from them are processed and stored locally on your device. You can export or import call history as a JSON file at your discretion.
+- **Call Recordings:** When you record a call or enable auto-recording, audio files are saved only in app-private storage on your device until you share or delete them.
+- **Preferences & Diagnostics:** App themes, dialpad styles, codec preferences, and local activity logs are stored on-device.
 
-## Data Stored and Synchronized
+## 3. Permissions We Use
 
-SIP credentials and local call logs remain on your device. When account synchronization is used, IPDial may store your email, Pro points, Pro expiration date, device identifier, and related account metadata in Firebase/Firestore. Google sign-in is used to associate synchronized data with your account.
+DialDuo requests Android permissions strictly for core calling features:
 
-## Data Security
+- **Microphone (`RECORD_AUDIO`):** Required to transmit your voice during VoIP calls and capture audio if you record a call.
+- **Contacts (`READ_CONTACTS`, `WRITE_CONTACTS`):** Used to display your phonebook, match caller names and photos, and edit or delete contacts when you initiate those actions.
+- **Phone State, Calling & Call Log (`READ_PHONE_STATE`, `CALL_PHONE`, `MANAGE_OWN_CALLS`, `READ_CALL_LOG`, `WRITE_CALL_LOG`):** Used to manage SIM and SIP calls through Android Telecom, display unified call history, and act as your Default Phone App when selected.
+- **Notifications & Full-Screen Alerts (`POST_NOTIFICATIONS`, `USE_FULL_SCREEN_INTENT`):** Used to show incoming call screens, ongoing call controls, and persistent SIP registration status.
+- **Run at Startup (`RECEIVE_BOOT_COMPLETED`):** Restarts background SIP registration after your device reboots so you can continue receiving calls.
+- **Install Updates (`REQUEST_INSTALL_PACKAGES`):** Used only when you choose to download and install a signed update APK from GitHub Releases.
 
-IPDial stores SIP credentials locally using Android-protected storage. We take reasonable measures to protect locally stored data and synchronized account information. No method of electronic storage or transmission is completely secure.
+## 4. Network Connections & Third-Party Services
 
-## Google Sign-In and Pro Management
+DialDuo only initiates network connections directly required by features you use:
 
-Google Sign-In is optional. It is used to authenticate your IPDial account and associate your Pro points and Pro expiration date with that account. Signing in allows Pro information to be synchronized through Firebase across supported app sessions. Google account authentication is handled by Firebase Authentication; IPDial does not receive or store your Google password.
+- **Your SIP, STUN, and TURN Providers:** Voice media, SIP registration, and optional account balance queries are sent directly to the providers you configure, under their respective privacy policies.
+- **GitHub Releases (`github.com` / `api.github.com`):** Used only to check for newer public DialDuo releases and download signed APK updates when initiated.
+- **Other Calling & Messaging Apps:** Contact Details may detect compatible apps installed on your device (such as SMS, WhatsApp, Telegram, Signal, Google Meet, Viber, or Messenger) and open them only when you tap an action.
 
-## Third-Party Services
+## 5. Your Choices & Control
 
-IPDial uses the following third-party services:
+- You can revoke any permission at any time in Android **Settings → Apps → DialDuo → Permissions**.
+- You can remove SIP accounts, clear call history, delete call recordings, or reset app preferences directly inside DialDuo.
+- Uninstalling DialDuo removes all locally stored app-private data.
 
-- **Firebase Authentication and Firestore:** Used for optional sign-in and synchronization of Pro-related account data.
-- **Start.io:** Used to provide advertisements in the free version of the app. Start.io may collect device or usage information for advertising, measurement, and fraud prevention according to its own privacy policy.
+## 6. Changes to This Policy
 
-These third-party services process data under their respective privacy policies.
-
-## Your Choices
-
-You can manage Android permissions through system settings. You can also sign out of IPDial or delete your associated account from the app where those options are available. Deleting an account may remove associated synchronized Pro data; data already processed by third-party services may be subject to their retention policies.
-
-## Changes to This Policy
-
-We may update this Privacy Policy when app features or data practices change. The revised date shown above indicates when this policy was last updated.
+We may update this Privacy Policy as DialDuo evolves. The **Last updated** date at the top indicates the latest revision.

@@ -83,7 +83,8 @@ fun HomeScreen(
     onOpenDrawer: () -> Unit,
     onNavigateToAccounts: () -> Unit = {},
     onEditBeforeCall: (String) -> Unit = {},
-    onOpenContactDetails: (String) -> Unit = {}
+    onOpenContactDetails: (String) -> Unit = {},
+    onOpenStats: ((contactId: String, number: String, title: String) -> Unit)? = null
 ) {
     val accounts  by vm.accounts.collectAsState()
     val callLog   by vm.callLog.collectAsState()
@@ -207,12 +208,16 @@ fun HomeScreen(
             ) {
                 IconButton(
                     onClick = {
-                        activeStatsRequest = StatsModalRequest(
-                            title = "Call Statistics",
-                            subtitle = null,
-                            entries = callLog,
-                            isUniversal = true
-                        )
+                        if (onOpenStats != null) {
+                            onOpenStats("", "", "Call Statistics")
+                        } else {
+                            activeStatsRequest = StatsModalRequest(
+                                title = "Call Statistics",
+                                subtitle = null,
+                                entries = callLog,
+                                isUniversal = true
+                            )
+                        }
                     },
                     modifier = Modifier
                         .size(48.dp)
@@ -231,10 +236,14 @@ fun HomeScreen(
         var isDefaultDialer by remember {
             mutableStateOf(com.ipdial.service.sim.DefaultDialerHelper.isDefaultDialer(context))
         }
+        var canUseFullScreenIntent by remember {
+            mutableStateOf(com.ipdial.service.IncomingCallPresentationHelper.canUseFullScreenIntent(context))
+        }
         val defaultDialerLauncher = rememberLauncherForActivityResult(
             contract = ActivityResultContracts.StartActivityForResult()
         ) {
             isDefaultDialer = com.ipdial.service.sim.DefaultDialerHelper.isDefaultDialer(context)
+            canUseFullScreenIntent = com.ipdial.service.IncomingCallPresentationHelper.canUseFullScreenIntent(context)
             vm.refreshSimAccounts()
             vm.refreshCallHistory()
         }
@@ -243,6 +252,7 @@ fun HomeScreen(
             val observer = LifecycleEventObserver { _, event ->
                 if (event == Lifecycle.Event.ON_RESUME) {
                     isDefaultDialer = com.ipdial.service.sim.DefaultDialerHelper.isDefaultDialer(context)
+                    canUseFullScreenIntent = com.ipdial.service.IncomingCallPresentationHelper.canUseFullScreenIntent(context)
                 }
             }
             lifecycleOwner.lifecycle.addObserver(observer)
@@ -252,6 +262,19 @@ fun HomeScreen(
         val hasSipAccount = remember(accounts) { accounts.any { it.isEnabled } }
         if (!hasSipAccount) {
             SipSetupBanner(onSetup = onNavigateToAccounts)
+        } else if (!canUseFullScreenIntent) {
+            FullScreenIntentPermissionBanner(
+                onAllow = {
+                    val intent = com.ipdial.service.IncomingCallPresentationHelper.createManageFullScreenIntentSettingsIntent(context)
+                    if (intent != null) {
+                        try {
+                            context.startActivity(intent)
+                        } catch (_: Exception) {
+                            Toast.makeText(context, "Open App Info → Notifications → Full screen notifications", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
+            )
         } else if (!isDefaultDialer) {
             DefaultDialerBanner(
                 onSetDefault = {
@@ -446,12 +469,20 @@ fun HomeScreen(
             onCall = { vm.callBack(entry) },
             onOpenContactDetails = onOpenContactDetails,
             onOpenStats = { title, subtitle, entries ->
-                activeStatsRequest = StatsModalRequest(
-                    title = title,
-                    subtitle = subtitle,
-                    entries = entries,
-                    isUniversal = false
-                )
+                if (onOpenStats != null) {
+                    onOpenStats(
+                        contact?.id.orEmpty(),
+                        cleanUri(entry.remoteUri),
+                        "$title · Stats"
+                    )
+                } else {
+                    activeStatsRequest = StatsModalRequest(
+                        title = title,
+                        subtitle = subtitle,
+                        entries = entries,
+                        isUniversal = false
+                    )
+                }
             },
             onDismiss = { activeHistoryEntryForDetail = null }
         )
@@ -684,6 +715,58 @@ private fun DefaultDialerBanner(onSetDefault: () -> Unit) {
             IconButton(
                 onClick = { dismissed = true },
                 modifier = Modifier.size(32.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Dismiss",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FullScreenIntentPermissionBanner(onAllow: () -> Unit) {
+    var dismissed by remember { mutableStateOf(false) }
+    if (dismissed) return
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.55f)
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 14.dp, top = 8.dp, bottom = 8.dp, end = 2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Allow Lock-Screen Incoming Calls",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "Enable full-screen notifications so calls wake your locked screen.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            TextButton(
+                onClick = onAllow,
+                modifier = Modifier.testTag("home_allow_full_screen_button")
+            ) {
+                Text("Allow")
+            }
+            IconButton(
+                onClick = { dismissed = true },
+                modifier = Modifier.size(48.dp)
             ) {
                 Icon(
                     imageVector = Icons.Default.Close,

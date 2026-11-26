@@ -93,7 +93,8 @@ fun ContactsScreen(
     onOpenDrawer: () -> Unit,
     onNavigateToAccounts: () -> Unit = {},
     onOpenContactDetails: (Contact) -> Unit = {},
-    onOpenInDialpad: (String) -> Unit = {}
+    onOpenInDialpad: (String) -> Unit = {},
+    onOpenContactStats: ((Contact) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val groupedContacts by vm.groupedContacts.collectAsState()
@@ -318,6 +319,7 @@ fun ContactsScreen(
                                 vm = vm,
                                 onOpenInDialpad = onOpenInDialpad,
                                 onContactDeleted = { selectedContactId = null },
+                                onOpenStats = onOpenContactStats,
                                 showHeaderActions = true,
                                 modifier = Modifier.fillMaxSize()
                             )

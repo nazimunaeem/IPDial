@@ -31,7 +31,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -164,19 +163,15 @@ fun DialDuoWordmark(
     style: TextStyle = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.ExtraBold),
     modifier: Modifier = Modifier
 ) {
-    val primary = MaterialTheme.colorScheme.primary
     val isLightSurface = MaterialTheme.colorScheme.surface.luminance() > 0.5f
-    val duoTint = if (isLightSurface) {
-        lerp(primary, Color(0xFF0284C7), 0.44f)
-    } else {
-        lerp(primary, Color(0xFF38BDF8), 0.44f)
-    }
+    val dialColor = if (isLightSurface) Color(0xFF0E9F6E) else Color(0xFF34D399)
+    val duoColor = if (isLightSurface) Color(0xFF0891B2) else Color(0xFF22D3EE)
     Text(
         text = buildAnnotatedString {
-            withStyle(SpanStyle(color = primary)) {
+            withStyle(SpanStyle(color = dialColor)) {
                 append("Dial")
             }
-            withStyle(SpanStyle(color = duoTint)) {
+            withStyle(SpanStyle(color = duoColor)) {
                 append("Duo")
             }
         },

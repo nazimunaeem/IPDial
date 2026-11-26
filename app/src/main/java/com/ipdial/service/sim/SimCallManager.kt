@@ -147,7 +147,9 @@ object SimCallManager {
                         val cur = _callSession.value
                         if (cur != null && cur.callId == callId) {
                             _callSession.value = cur.copy(remoteDisplayName = contact.name)
-                            if (!AppState.isForeground && cur.state != CallState.DISCONNECTED) {
+                            if (com.ipdial.service.IncomingCallPresentationHelper.shouldPresentIncomingOverLockScreen(AppState.isForeground, ctx) &&
+                                cur.state != CallState.DISCONNECTED
+                            ) {
                                 showCallNotificationStatic(ctx, contact.name, callId)
                             }
                         }
@@ -240,8 +242,12 @@ object SimCallManager {
 
         when (telecomState) {
             Call.STATE_RINGING -> {
+                getOrCreateWakeLockManager(ctx).acquireWakeLockForIncoming()
                 ringtonePlayer?.playRingtone()
-                showCallNotificationStatic(ctx, updated.remoteDisplayName, updated.callId)
+                if (com.ipdial.service.IncomingCallPresentationHelper.shouldPresentIncomingOverLockScreen(AppState.isForeground, ctx)) {
+                    showCallNotificationStatic(ctx, updated.remoteDisplayName, updated.callId)
+                    com.ipdial.service.IncomingCallPresentationHelper.launchIncomingCallUiIfLocked(ctx, updated.callId)
+                }
             }
             Call.STATE_DIALING,
             Call.STATE_CONNECTING -> {
@@ -308,6 +314,7 @@ object SimCallManager {
         }
         when (session.state) {
             CallState.INCOMING, CallState.EARLY -> {
+                wl.acquireWakeLockForIncoming()
                 wl.acquireWakeLock()
                 wl.releaseProximityWakeLock()
             }

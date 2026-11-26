@@ -130,7 +130,7 @@ fun AboutScreen(
             )
             Spacer(Modifier.height(24.dp))
             Text(
-                text = "A simple VoIP client for Android.",
+                text = "Dual SIP & SIM dialer for Android with call recording, statistics, and smart contact tools.",
                 style = MaterialTheme.typography.bodyLarge,
                 modifier = Modifier.padding(horizontal = 32.dp),
                 textAlign = TextAlign.Center

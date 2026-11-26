@@ -28,6 +28,7 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CardGiftcard
 import androidx.compose.material.icons.filled.Coffee
@@ -300,6 +301,15 @@ fun AppMenuBottomSheet(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column {
+                    MenuRowItem(
+                        icon = Icons.Default.BarChart,
+                        title = "Call Statistics",
+                        subtitle = "Monthly & yearly call charts",
+                        onClick = {
+                            onDismissRequest()
+                            onNavigate(NavDest.CallStats.route())
+                        }
+                    )
                     MenuRowItem(
                         icon = Icons.Default.Settings,
                         title = "All Settings",

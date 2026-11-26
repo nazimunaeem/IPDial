@@ -82,10 +82,14 @@ fun SettingsScreen(
     var isDefaultDialer by remember {
         mutableStateOf(com.ipdial.service.sim.DefaultDialerHelper.isDefaultDialer(context))
     }
+    var canUseFullScreenIntent by remember {
+        mutableStateOf(com.ipdial.service.IncomingCallPresentationHelper.canUseFullScreenIntent(context))
+    }
     val defaultDialerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) {
         isDefaultDialer = com.ipdial.service.sim.DefaultDialerHelper.isDefaultDialer(context)
+        canUseFullScreenIntent = com.ipdial.service.IncomingCallPresentationHelper.canUseFullScreenIntent(context)
         vm.refreshSimAccounts()
     }
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
@@ -93,6 +97,7 @@ fun SettingsScreen(
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
                 isDefaultDialer = com.ipdial.service.sim.DefaultDialerHelper.isDefaultDialer(context)
+                canUseFullScreenIntent = com.ipdial.service.IncomingCallPresentationHelper.canUseFullScreenIntent(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -643,6 +648,43 @@ fun SettingsScreen(
                         onNavigateToIncomingCallStyle()
                     }
                 )
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                item {
+                    SettingsRow(
+                        icon = Icons.Default.ScreenLockPortrait,
+                        title = "Lock-Screen Incoming Calls",
+                        subtitle = if (canUseFullScreenIntent) {
+                            "Allowed — incoming calls wake & appear over lock screen"
+                        } else {
+                            "Permission required — tap to allow full-screen call alerts"
+                        },
+                        trailing = {
+                            if (canUseFullScreenIntent) {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = "Allowed",
+                                    tint = Color(0xFF2E7D32)
+                                )
+                            }
+                        },
+                        onClick = {
+                            val intent = com.ipdial.service.IncomingCallPresentationHelper.createManageFullScreenIntentSettingsIntent(context)
+                            if (intent != null) {
+                                try {
+                                    context.startActivity(intent)
+                                } catch (_: Exception) {
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        "Open App Info → Notifications → Full screen notifications",
+                                        android.widget.Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                            }
+                        }
+                    )
+                }
             }
 
             item {
