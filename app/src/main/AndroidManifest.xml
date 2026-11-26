@@ -27,8 +27,9 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
-    <!-- Keep alive -->
+    <!-- Keep alive & scheduled alarms -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
 
 
@@ -59,10 +60,11 @@
             android:launchMode="singleTop"
             android:windowSoftInputMode="adjustResize"
             tools:targetApi="o_mr1">
-            <!-- Deep link for incoming call notification -->
+            <!-- Deep link for incoming call and scheduled call alert -->
             <intent-filter>
                 <action android:name="com.ipdial.ACTION_INCOMING_CALL" />
                 <action android:name="com.ipdial.ACTION_SHOW_CALL" />
+                <action android:name="com.ipdial.ACTION_SCHEDULED_CALL_ALERT" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
 
@@ -207,7 +209,21 @@
             android:name=".service.sim.SimCallActionReceiver"
             android:exported="false" />
 
-        <!-- Boot receiver to restart SIP registration -->
+        <!-- Scheduled call alert service & receiver -->
+        <service
+            android:name=".data.scheduler.ScheduledCallAlertService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="scheduled_call_alert" />
+        </service>
+
+        <receiver
+            android:name=".data.scheduler.ScheduledCallReceiver"
+            android:exported="false" />
+
+        <!-- Boot receiver to restart SIP registration and reschedule calls -->
         <receiver
             android:name=".service.BootReceiver"
             android:exported="true">

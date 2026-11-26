@@ -23,7 +23,11 @@ import com.ipdial.data.model.RegStatus
 import com.ipdial.data.model.SipAccount
 import com.ipdial.data.model.ThemeMode
 import com.ipdial.data.model.TurnTransport
+import com.ipdial.data.backup.BackupFrequency
+import com.ipdial.data.backup.BackupOptions
+import com.ipdial.data.backup.BackupSettings
 import com.ipdial.util.CryptoHelper
+import com.google.gson.JsonObject
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
@@ -83,6 +87,18 @@ class AccountRepository(private val context: Context) {
     private val turnUsernameKey = stringPreferencesKey("turn_username")
     private val turnPasswordKey = stringPreferencesKey("turn_password")
     private val turnTransportKey = androidx.datastore.preferences.core.stringPreferencesKey("turn_transport")
+
+    private val backupIncludeSettingsKey = booleanPreferencesKey("backup_include_settings")
+    private val backupIncludeSipAccountsKey = booleanPreferencesKey("backup_include_sip_accounts")
+    private val backupIncludeCallHistoryKey = booleanPreferencesKey("backup_include_call_history")
+    private val backupIncludeRecordingsKey = booleanPreferencesKey("backup_include_recordings")
+    private val backupAutoEnabledKey = booleanPreferencesKey("backup_auto_enabled")
+    private val backupFrequencyKey = stringPreferencesKey("backup_frequency")
+    private val backupTreeUriKey = stringPreferencesKey("backup_tree_uri")
+    private val backupFolderLabelKey = stringPreferencesKey("backup_folder_label")
+    private val backupLastAtMsKey = androidx.datastore.preferences.core.longPreferencesKey("backup_last_at_ms")
+    private val backupLastStatusKey = stringPreferencesKey("backup_last_status")
+    private val backupLastDestinationKey = stringPreferencesKey("backup_last_destination")
 
     val savedLabels: Flow<List<String>> = context.dataStore.data.map { prefs ->
         val json = prefs[savedLabelsKey] ?: "[]"
@@ -206,6 +222,24 @@ class AccountRepository(private val context: Context) {
     val groupSubsequentCalls: Flow<Boolean> = context.dataStore.data.map { it[groupSubsequentCallsKey] ?: true }
     val disableProximitySensor: Flow<Boolean> = context.dataStore.data.map { it[disableProximityKey] ?: false }
 
+    val backupSettings: Flow<BackupSettings> = context.dataStore.data.map { prefs ->
+        BackupSettings(
+            options = BackupOptions(
+                includeSettings = prefs[backupIncludeSettingsKey] ?: true,
+                includeSipAccounts = prefs[backupIncludeSipAccountsKey] ?: true,
+                includeCallHistory = prefs[backupIncludeCallHistoryKey] ?: true,
+                includeRecordings = prefs[backupIncludeRecordingsKey] ?: true
+            ),
+            autoBackupEnabled = prefs[backupAutoEnabledKey] ?: false,
+            frequency = BackupFrequency.fromNameOrDefault(prefs[backupFrequencyKey]),
+            autoBackupTreeUri = prefs[backupTreeUriKey] ?: "",
+            autoBackupFolderLabel = prefs[backupFolderLabelKey] ?: "",
+            lastBackupAtMs = prefs[backupLastAtMsKey] ?: 0L,
+            lastBackupStatus = prefs[backupLastStatusKey] ?: "",
+            lastBackupDestination = prefs[backupLastDestinationKey] ?: ""
+        )
+    }
+
     suspend fun getOrCreateDeviceId(): String {
         val current = context.dataStore.data.map { it[deviceIdKey] }.first()
         if (!current.isNullOrBlank()) return current
@@ -319,4 +353,162 @@ class AccountRepository(private val context: Context) {
     private fun encryptPassword(plain: String): String = CryptoHelper.encrypt(plain)
 
     private fun decryptPassword(cipher: String): String = CryptoHelper.decrypt(cipher)
+
+    suspend fun setBackupOptions(options: BackupOptions) = context.dataStore.edit { prefs ->
+        prefs[backupIncludeSettingsKey] = options.includeSettings
+        prefs[backupIncludeSipAccountsKey] = options.includeSipAccounts
+        prefs[backupIncludeCallHistoryKey] = options.includeCallHistory
+        prefs[backupIncludeRecordingsKey] = options.includeRecordings
+    }
+
+    suspend fun setAutoBackupEnabled(enabled: Boolean) = context.dataStore.edit {
+        it[backupAutoEnabledKey] = enabled
+    }
+
+    suspend fun setBackupFrequency(frequency: BackupFrequency) = context.dataStore.edit {
+        it[backupFrequencyKey] = frequency.name
+    }
+
+    suspend fun setAutoBackupFolder(treeUri: String, label: String) = context.dataStore.edit { prefs ->
+        prefs[backupTreeUriKey] = treeUri
+        prefs[backupFolderLabelKey] = label
+    }
+
+    suspend fun recordBackupStatus(timestampMs: Long, status: String, destination: String) =
+        context.dataStore.edit { prefs ->
+            prefs[backupLastAtMsKey] = timestampMs
+            prefs[backupLastStatusKey] = status
+            prefs[backupLastDestinationKey] = destination
+        }
+
+    suspend fun exportAllSettingsJson(): JsonObject {
+        val prefs = context.dataStore.data.first()
+        return JsonObject().apply {
+            addProperty("themeMode", prefs[themeKey] ?: ThemeMode.System.name)
+            addProperty("fontSizeMultiplier", prefs[fontSizeKey]?.toFloatOrNull()?.toDouble() ?: 1.0)
+            addProperty("appIconAlias", prefs[appIconKey] ?: "Default")
+            addProperty("keypadDesign", prefs[keypadDesignKey] ?: KeypadDesign.Rounded.name)
+            addProperty("incomingCallMode", prefs[incomingCallModeKey] ?: IncomingCallMode.Slider.name)
+            addProperty("defaultDomain", prefs[defaultDomainKey] ?: "103.129.202.202")
+            addProperty("dndEnabled", prefs[dndKey] ?: false)
+            addProperty("globalVibrate", prefs[vibrateKey] ?: true)
+            addProperty("autoRecordEnabled", prefs[autoRecordKey] ?: false)
+            addProperty("globalNoiseCancellation", prefs[globalNoiseCancellationKey] ?: true)
+            addProperty("globalEcEnabled", prefs[globalEcEnabledKey] ?: true)
+            addProperty("globalNsEnabled", prefs[globalNsEnabledKey] ?: true)
+            addProperty("globalAgcEnabled", prefs[globalAgcEnabledKey] ?: true)
+            addProperty("sipEcEnabled", prefs[sipEcEnabledKey] ?: false)
+            addProperty("sipNsEnabled", prefs[sipNsEnabledKey] ?: false)
+            addProperty("turnServer", prefs[turnServerKey] ?: "")
+            addProperty("turnUsername", prefs[turnUsernameKey] ?: "")
+            addProperty("turnPassword", decryptPassword(prefs[turnPasswordKey] ?: ""))
+            addProperty("turnTransport", prefs[turnTransportKey] ?: TurnTransport.UDP.name)
+            addProperty("fullScreenContactPhoto", prefs[fullScreenContactPhotoKey] ?: false)
+            addProperty("alwaysAskDialLine", prefs[alwaysAskDialLineKey] ?: true)
+            addProperty("dialpadVibrate", prefs[dialpadVibrateKey] ?: true)
+            addProperty("dialpadBeep", prefs[dialpadBeepKey] ?: false)
+            addProperty("hideDialpadDigits", prefs[hideDialpadDigitsKey] ?: false)
+            addProperty("openDialpadAtLaunch", prefs[openDialpadAtLaunchKey] ?: false)
+            addProperty("groupSubsequentCalls", prefs[groupSubsequentCallsKey] ?: true)
+            addProperty("disableProximitySensor", prefs[disableProximityKey] ?: false)
+            prefs[ringtoneKey]?.let { addProperty("globalRingtone", it) }
+        }
+    }
+
+    suspend fun restoreSettingsFromJson(json: JsonObject) {
+        fun str(key: String, default: String = ""): String =
+            json.get(key)?.takeIf { !it.isJsonNull }?.asString ?: default
+
+        fun bool(key: String, default: Boolean): Boolean =
+            runCatching { json.get(key)?.takeIf { !it.isJsonNull }?.asBoolean }.getOrNull() ?: default
+
+        context.dataStore.edit { prefs ->
+            if (json.has("themeMode")) {
+                val mode = runCatching { ThemeMode.valueOf(str("themeMode")) }.getOrNull()
+                if (mode != null) prefs[themeKey] = mode.name
+            }
+            if (json.has("fontSizeMultiplier")) {
+                val mult = runCatching { json.get("fontSizeMultiplier").asFloat }.getOrDefault(1.0f)
+                    .coerceIn(0.75f, 1.5f)
+                prefs[fontSizeKey] = mult.toString()
+            }
+            if (json.has("appIconAlias")) {
+                prefs[appIconKey] = str("appIconAlias", "Default").ifBlank { "Default" }
+            }
+            if (json.has("keypadDesign")) {
+                val design = runCatching { KeypadDesign.valueOf(str("keypadDesign")) }.getOrNull()
+                if (design != null) prefs[keypadDesignKey] = design.name
+            }
+            if (json.has("incomingCallMode")) {
+                val mode = runCatching { IncomingCallMode.valueOf(str("incomingCallMode")) }.getOrNull()
+                if (mode != null) prefs[incomingCallModeKey] = mode.name
+            }
+            if (json.has("defaultDomain")) {
+                prefs[defaultDomainKey] = str("defaultDomain", "103.129.202.202")
+            }
+            if (json.has("dndEnabled")) prefs[dndKey] = bool("dndEnabled", false)
+            if (json.has("globalVibrate")) prefs[vibrateKey] = bool("globalVibrate", true)
+            if (json.has("autoRecordEnabled")) prefs[autoRecordKey] = bool("autoRecordEnabled", false)
+            if (json.has("globalNoiseCancellation")) prefs[globalNoiseCancellationKey] = bool("globalNoiseCancellation", true)
+            if (json.has("globalEcEnabled")) prefs[globalEcEnabledKey] = bool("globalEcEnabled", true)
+            if (json.has("globalNsEnabled")) prefs[globalNsEnabledKey] = bool("globalNsEnabled", true)
+            if (json.has("globalAgcEnabled")) prefs[globalAgcEnabledKey] = bool("globalAgcEnabled", true)
+            if (json.has("sipEcEnabled")) prefs[sipEcEnabledKey] = bool("sipEcEnabled", false)
+            if (json.has("sipNsEnabled")) prefs[sipNsEnabledKey] = bool("sipNsEnabled", false)
+            if (json.has("turnServer")) prefs[turnServerKey] = str("turnServer").trim()
+            if (json.has("turnUsername")) prefs[turnUsernameKey] = str("turnUsername").trim()
+            if (json.has("turnPassword")) {
+                val pass = str("turnPassword").trim()
+                prefs[turnPasswordKey] = if (pass.isEmpty()) "" else encryptPassword(pass)
+            }
+            if (json.has("turnTransport")) {
+                val tp = runCatching { TurnTransport.valueOf(str("turnTransport")) }.getOrNull()
+                if (tp != null) prefs[turnTransportKey] = tp.name
+            }
+            if (json.has("fullScreenContactPhoto")) prefs[fullScreenContactPhotoKey] = bool("fullScreenContactPhoto", false)
+            if (json.has("alwaysAskDialLine")) prefs[alwaysAskDialLineKey] = bool("alwaysAskDialLine", true)
+            if (json.has("dialpadVibrate")) prefs[dialpadVibrateKey] = bool("dialpadVibrate", true)
+            if (json.has("dialpadBeep")) prefs[dialpadBeepKey] = bool("dialpadBeep", false)
+            if (json.has("hideDialpadDigits")) prefs[hideDialpadDigitsKey] = bool("hideDialpadDigits", false)
+            if (json.has("openDialpadAtLaunch")) prefs[openDialpadAtLaunchKey] = bool("openDialpadAtLaunch", false)
+            if (json.has("groupSubsequentCalls")) prefs[groupSubsequentCallsKey] = bool("groupSubsequentCalls", true)
+            if (json.has("disableProximitySensor")) prefs[disableProximityKey] = bool("disableProximitySensor", false)
+            if (json.has("globalRingtone")) {
+                val uri = str("globalRingtone")
+                if (uri.isNotBlank()) {
+                    prefs[ringtoneKey] = uri
+                }
+            }
+        }
+    }
+
+    suspend fun mergeRestoredAccounts(restored: List<SipAccount>): Int {
+        if (restored.isEmpty()) return 0
+        val current = accounts.first().toMutableList()
+        var mergedCount = 0
+        for (incoming in restored) {
+            if (incoming.username.isBlank() && incoming.domain.isBlank()) continue
+            val sanitizedIncoming = incoming.copy(
+                id = incoming.id.ifBlank { UUID.randomUUID().toString() },
+                regStatus = RegStatus.UNREGISTERED,
+                regStatusText = ""
+            )
+            val existingIndex = current.indexOfFirst {
+                it.id == sanitizedIncoming.id ||
+                    (it.username.equals(sanitizedIncoming.username, ignoreCase = true) &&
+                        it.domain.equals(sanitizedIncoming.domain, ignoreCase = true) &&
+                        it.port == sanitizedIncoming.port)
+            }
+            if (existingIndex >= 0) {
+                current[existingIndex] = sanitizedIncoming.copy(id = current[existingIndex].id)
+            } else {
+                current.add(sanitizedIncoming)
+            }
+            mergedCount++
+        }
+        if (mergedCount > 0) {
+            saveAccounts(current)
+        }
+        return mergedCount
+    }
 }

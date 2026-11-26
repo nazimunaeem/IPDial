@@ -52,8 +52,11 @@ class IPDialApplication : Application() {
                 if (currentAlias != "Default") {
                     com.ipdial.util.AppIconHelper.setAppIcon(this@IPDialApplication, currentAlias)
                 }
+                val backupSettings = repo.backupSettings.first()
+                com.ipdial.data.backup.BackupScheduler.syncSchedule(this@IPDialApplication, backupSettings)
+                com.ipdial.data.scheduler.CallSchedulerManager.rescheduleAllPending(this@IPDialApplication)
             } catch (e: Throwable) {
-                android.util.Log.w("IPDialApp", "Failed to sync icon alias: ${e.message}")
+                android.util.Log.w("IPDialApp", "Failed to sync startup state: ${e.message}")
             }
         }
     }

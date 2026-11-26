@@ -39,10 +39,24 @@ import com.ipdial.data.model.SipAccount
 import com.ipdial.data.model.ThemeMode
 import com.ipdial.data.model.Transport
 import com.ipdial.data.model.TurnTransport
+import com.ipdial.data.backup.BackupArchivePreview
+import com.ipdial.data.backup.BackupFrequency
+import com.ipdial.data.backup.BackupManager
+import com.ipdial.data.backup.BackupOptions
+import com.ipdial.data.backup.BackupResult
+import com.ipdial.data.backup.BackupScheduler
+import com.ipdial.data.backup.BackupSettings
+import com.ipdial.data.backup.RestoreResult
 import com.ipdial.data.repository.AccountRepository
 import com.ipdial.data.repository.CallLogRepository
 import com.ipdial.data.repository.ContactsRepository
 import com.ipdial.data.repository.SystemCallLogRepository
+import com.ipdial.data.scheduler.CallSchedulerManager
+import com.ipdial.data.scheduler.ScheduledCall
+import com.ipdial.data.scheduler.ScheduledCallAlertService
+import com.ipdial.data.scheduler.ScheduledCallAlertState
+import com.ipdial.data.scheduler.ScheduledCallRepository
+import com.ipdial.data.scheduler.ScheduledCallStatus
 import com.ipdial.service.SipAudioController
 import com.ipdial.service.SipEngine
 import com.ipdial.service.sim.DefaultDialerHelper
@@ -76,6 +90,7 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     val repo = AccountRepository(app)
     private val logRepo = CallLogRepository.getInstance(app)
     private val contactsRepo = ContactsRepository(app)
+    private val scheduledCallRepo = ScheduledCallRepository(app)
 
     private val _balances = MutableStateFlow<Map<String, String>>(emptyMap())
     val balances: StateFlow<Map<String, String>> = _balances.asStateFlow()
@@ -99,6 +114,12 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
     val disableProximitySensor: StateFlow<Boolean> = repo.disableProximitySensor
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    val backupSettings: StateFlow<BackupSettings> = repo.backupSettings
+        .stateIn(viewModelScope, SharingStarted.Eagerly, BackupSettings())
+
+    val scheduledCalls: StateFlow<List<ScheduledCall>> = scheduledCallRepo.scheduledCalls
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     private val _showFullIncomingScreen = MutableStateFlow(false)
     val showFullIncomingScreen: StateFlow<Boolean> = _showFullIncomingScreen.asStateFlow()
@@ -1100,6 +1121,198 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
 
     fun importCallLog(entries: List<CallLogEntry>) = viewModelScope.launch(Dispatchers.IO) {
         logRepo.importAll(entries)
+    }
+
+    fun updateBackupOptions(options: BackupOptions) = viewModelScope.launch(Dispatchers.IO) {
+        repo.setBackupOptions(options)
+    }
+
+    fun setAutoBackupEnabled(enabled: Boolean) = viewModelScope.launch(Dispatchers.IO) {
+        repo.setAutoBackupEnabled(enabled)
+        val updated = repo.backupSettings.first()
+        BackupScheduler.syncSchedule(getApplication(), updated)
+    }
+
+    fun setBackupFrequency(frequency: BackupFrequency) = viewModelScope.launch(Dispatchers.IO) {
+        repo.setBackupFrequency(frequency)
+        val updated = repo.backupSettings.first()
+        BackupScheduler.syncSchedule(getApplication(), updated)
+    }
+
+    fun setAutoBackupFolder(treeUri: android.net.Uri, enableAutoBackupIfUnset: Boolean = false) =
+        viewModelScope.launch(Dispatchers.IO) {
+            saveFolderPermission(treeUri, enableAutoBackupIfUnset)
+        }
+
+    private suspend fun saveFolderPermission(
+        treeUri: android.net.Uri,
+        enableAutoBackupIfUnset: Boolean = false
+    ): String {
+        val app = getApplication<Application>()
+        try {
+            val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            app.contentResolver.takePersistableUriPermission(treeUri, flags)
+        } catch (_: Throwable) {}
+        val label = BackupManager.resolveFolderLabel(app, treeUri)
+        repo.setAutoBackupFolder(treeUri.toString(), label)
+        if (enableAutoBackupIfUnset) {
+            repo.setAutoBackupEnabled(true)
+        }
+        val updated = repo.backupSettings.first()
+        BackupScheduler.syncSchedule(app, updated)
+        return label
+    }
+
+    suspend fun grantBackupFolderAndRunBackup(
+        treeUri: android.net.Uri,
+        options: BackupOptions,
+        enableAutoBackupIfUnset: Boolean = false
+    ): BackupResult = withContext(Dispatchers.IO) {
+        val label = saveFolderPermission(treeUri, enableAutoBackupIfUnset)
+        val app = getApplication<Application>()
+        val result = BackupManager.backupToTreeUri(app, treeUri, options)
+        recordLocalBackupResult(result, label)
+        result
+    }
+
+    suspend fun runBackupNow(options: BackupOptions): BackupResult = withContext(Dispatchers.IO) {
+        val app = getApplication<Application>()
+        val settings = repo.backupSettings.first()
+        if (!BackupManager.hasFolderAccess(app, settings.autoBackupTreeUri)) {
+            return@withContext BackupResult(
+                success = false,
+                needsFolderPermission = true,
+                errorMessage = "Folder permission required"
+            )
+        }
+        val treeUri = android.net.Uri.parse(settings.autoBackupTreeUri)
+        val result = BackupManager.backupToTreeUri(app, treeUri, options)
+        val destLabel = settings.autoBackupFolderLabel.ifBlank { "Local backup folder" }
+        recordLocalBackupResult(result, destLabel)
+        result
+    }
+
+    private suspend fun recordLocalBackupResult(result: BackupResult, destLabel: String) {
+        val now = System.currentTimeMillis()
+        if (result.success) {
+            repo.recordBackupStatus(
+                timestampMs = now,
+                status = result.humanSummary(),
+                destination = destLabel
+            )
+        } else if (!result.needsFolderPermission) {
+            repo.recordBackupStatus(
+                timestampMs = now,
+                status = "Backup failed: ${result.errorMessage ?: "Unknown error"}",
+                destination = destLabel
+            )
+        }
+    }
+
+    suspend fun inspectBackupFolder(treeUri: android.net.Uri): BackupArchivePreview? =
+        withContext(Dispatchers.IO) {
+            val app = getApplication<Application>()
+            try {
+                val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                app.contentResolver.takePersistableUriPermission(treeUri, flags)
+            } catch (_: Throwable) {}
+            BackupManager.inspectFolderUri(app, treeUri)
+        }
+
+    suspend fun restoreFromBackupFolder(
+        treeUri: android.net.Uri,
+        options: BackupOptions
+    ): RestoreResult = withContext(Dispatchers.IO) {
+        val app = getApplication<Application>()
+        val result = BackupManager.restoreFromTreeUri(app, treeUri, options)
+        if (result.success) {
+            if (result.restoredSettings) {
+                val restoredAlias = repo.appIconAlias.first()
+                runCatching { com.ipdial.util.AppIconHelper.setAppIcon(app, restoredAlias) }
+            }
+            if (result.restoredCalls > 0) {
+                refreshCallHistory()
+            }
+        }
+        result
+    }
+
+    fun scheduleCall(
+        contactName: String,
+        phoneNumber: String,
+        scheduledAtMs: Long,
+        note: String = "",
+        existingId: String? = null
+    ) {
+        val cleanNumber = phoneNumber.trim()
+        if (cleanNumber.isBlank()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val app = getApplication<Application>()
+            val resolvedName = contactName.trim().ifBlank {
+                findContactByNumber(cleanNumber)?.name
+                    ?: contactsRepo.lookupDeviceContactByNumber(cleanNumber)?.name
+                    ?: ""
+            }
+            val call = ScheduledCall(
+                id = existingId ?: java.util.UUID.randomUUID().toString(),
+                contactName = resolvedName,
+                phoneNumber = cleanNumber,
+                scheduledAtMs = scheduledAtMs,
+                note = note.trim(),
+                status = ScheduledCallStatus.PENDING,
+                createdAtMs = System.currentTimeMillis()
+            )
+            scheduledCallRepo.upsert(call)
+            CallSchedulerManager.scheduleAlarm(app, call)
+        }
+    }
+
+    fun deleteScheduledCall(id: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val app = getApplication<Application>()
+            CallSchedulerManager.cancelAlarm(app, id)
+            ScheduledCallAlertService.stop(app)
+            ScheduledCallAlertState.clear(id)
+            scheduledCallRepo.delete(id)
+        }
+    }
+
+    fun confirmScheduledCallAndDial(call: ScheduledCall) {
+        val app = getApplication<Application>()
+        ScheduledCallAlertService.stop(app)
+        ScheduledCallAlertState.clear(call.id)
+        viewModelScope.launch(Dispatchers.IO) {
+            scheduledCallRepo.upsert(call.copy(status = ScheduledCallStatus.COMPLETED))
+        }
+        makeCall(call.phoneNumber)
+    }
+
+    fun dismissScheduledCallAlert(id: String) {
+        val app = getApplication<Application>()
+        ScheduledCallAlertService.stop(app)
+        ScheduledCallAlertState.clear(id)
+        viewModelScope.launch(Dispatchers.IO) {
+            scheduledCallRepo.updateStatus(id, ScheduledCallStatus.DISMISSED)
+        }
+    }
+
+    fun snoozeScheduledCallAlert(id: String, minutes: Int = 5) {
+        val app = getApplication<Application>()
+        ScheduledCallAlertService.stop(app)
+        ScheduledCallAlertState.clear(id)
+        viewModelScope.launch(Dispatchers.IO) {
+            val existing = scheduledCallRepo.getById(id)
+            if (existing != null) {
+                val snoozed = existing.copy(
+                    scheduledAtMs = System.currentTimeMillis() + minutes * 60_000L,
+                    status = ScheduledCallStatus.PENDING
+                )
+                scheduledCallRepo.upsert(snoozed)
+                CallSchedulerManager.scheduleAlarm(app, snoozed)
+            }
+        }
     }
 
     private fun mergeCallLogs(

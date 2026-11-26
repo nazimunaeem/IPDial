@@ -3,16 +3,14 @@ package com.ipdial.ui.components
 import android.content.Intent
 import android.os.Build
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -24,25 +22,16 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
-import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Audiotrack
-import androidx.compose.material.icons.filled.AccountCircle
-import androidx.compose.material.icons.filled.BarChart
-import androidx.compose.material.icons.filled.Call
-import androidx.compose.material.icons.filled.CardGiftcard
-import androidx.compose.material.icons.filled.Coffee
-import androidx.compose.material.icons.filled.Dialpad
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -62,12 +51,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -77,11 +66,10 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ipdial.NavDest
 import com.ipdial.data.model.RegStatus
+import com.ipdial.data.scheduler.ScheduledCallStatus
 import com.ipdial.ui.SipViewModel
 import com.ipdial.ui.theme.GlassMode
 import com.ipdial.ui.theme.LocalGlassMode
-import coil.compose.AsyncImage
-import java.util.concurrent.TimeUnit
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -94,8 +82,8 @@ fun AppMenuBottomSheet(
     val context = LocalContext.current
     val accounts by vm.accounts.collectAsState()
     val activeAccount by vm.activeAccount.collectAsState()
+    val scheduledCalls by vm.scheduledCalls.collectAsState()
     val glassMode = LocalGlassMode.current
-    val isGlass = glassMode != GlassMode.None
     val isQuartz = glassMode == GlassMode.Quartz
     val isObsidian = glassMode == GlassMode.Obsidian
 
@@ -106,6 +94,12 @@ fun AppMenuBottomSheet(
     }
 
     var showExitDialog by remember { mutableStateOf(false) }
+
+    val upcomingCount = remember(scheduledCalls) {
+        scheduledCalls.count {
+            it.status == ScheduledCallStatus.PENDING || it.status == ScheduledCallStatus.TRIGGERED
+        }
+    }
 
     val currentAccount = activeAccount ?: accounts.firstOrNull { it.isEnabled } ?: accounts.firstOrNull()
     val regDotColor = when (currentAccount?.regStatus) {
@@ -136,12 +130,7 @@ fun AppMenuBottomSheet(
                 (view.parent as? DialogWindowProvider)?.window
                     ?: (view.context as? android.app.Activity)?.window
             }
-            // Apply navigation-bar styling ONCE per (window, theme) instead of on
-            // every recomposition. Re-applying these window flags while the sheet
-            // scrolls — e.g. when an async balance/regStatus update recomposes the
-            // content — makes ColorOS flash the navigation bar, which reads as the
-            // whole sheet "blinking".
-            androidx.compose.runtime.LaunchedEffect(sheetWindow, isLight) {
+            LaunchedEffect(sheetWindow, isLight) {
                 val window = sheetWindow ?: return@LaunchedEffect
                 @Suppress("DEPRECATION")
                 window.navigationBarColor = android.graphics.Color.TRANSPARENT
@@ -156,23 +145,16 @@ fun AppMenuBottomSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 16.dp)
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 12.dp)
                 .verticalScroll(rememberScrollState())
         ) {
-            // Title
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = "Menu & Services",
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-            }
+            Text(
+                text = "Menu",
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.padding(bottom = 10.dp)
+            )
 
             // 1. Active Account Banner Card
             AccountStatusCard(
@@ -186,23 +168,30 @@ fun AppMenuBottomSheet(
                 }
             )
 
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(14.dp))
 
-            // 3. Quick Actions Section (6 Tiles in 3-Column Grid)
-            Text(
-                text = "Quick Actions & VoIP",
-                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = 6.dp)
-            )
-
-            // Row 1 of 6 Tiles: Accounts | Recordings | Call Style
+            // 2. Core Actions (6-Item Grid: 2 rows x 3 columns)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 MenuGridItem(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("menu_call_scheduler"),
+                    icon = Icons.Default.Schedule,
+                    title = "Scheduler",
+                    subtitle = if (upcomingCount > 0) "$upcomingCount upcoming" else "Plan calls",
+                    tint = Color(0xFF26A69A),
+                    onClick = {
+                        onDismissRequest()
+                        onNavigate(NavDest.CallScheduler.route)
+                    }
+                )
+                MenuGridItem(
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("menu_accounts"),
                     icon = Icons.Default.AccountBalance,
                     title = "Accounts",
                     subtitle = "${accounts.size} configured",
@@ -213,7 +202,9 @@ fun AppMenuBottomSheet(
                     }
                 )
                 MenuGridItem(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("menu_recordings"),
                     icon = Icons.Default.Mic,
                     title = "Recordings",
                     subtitle = "Audio files",
@@ -223,39 +214,18 @@ fun AppMenuBottomSheet(
                         onNavigate(NavDest.Recordings.route)
                     }
                 )
-                MenuGridItem(
-                    modifier = Modifier.weight(1f),
-                    icon = Icons.Default.Call,
-                    title = "Call Style",
-                    subtitle = "Banner/Full",
-                    tint = Color(0xFF4CAF50),
-                    onClick = {
-                        onDismissRequest()
-                        onNavigate(NavDest.IncomingCallStyle.route)
-                    }
-                )
             }
 
             Spacer(Modifier.height(8.dp))
 
-            // Row 2 of 6 Tiles: Dialpad Style | Audio Codecs | Appearance
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 MenuGridItem(
-                    modifier = Modifier.weight(1f),
-                    icon = Icons.Default.Dialpad,
-                    title = "Dialpad Style",
-                    subtitle = "Grid/Rounded/Ring",
-                    tint = Color(0xFF64B5F6),
-                    onClick = {
-                        onDismissRequest()
-                        onNavigate(NavDest.DialpadStyle.route)
-                    }
-                )
-                MenuGridItem(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("menu_codecs"),
                     icon = Icons.Default.Audiotrack,
                     title = "Codecs",
                     subtitle = "Audio setup",
@@ -266,70 +236,44 @@ fun AppMenuBottomSheet(
                     }
                 )
                 MenuGridItem(
-                    modifier = Modifier.weight(1f),
-                    icon = Icons.Default.Palette,
-                    title = "Themes",
-                    subtitle = "Appearance",
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("menu_backup_restore"),
+                    icon = Icons.Default.Folder,
+                    title = "Backup",
+                    subtitle = "Local folder",
+                    tint = Color(0xFF64B5F6),
+                    onClick = {
+                        onDismissRequest()
+                        onNavigate(NavDest.Backup.route)
+                    }
+                )
+                MenuGridItem(
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("menu_settings"),
+                    icon = Icons.Default.Settings,
+                    title = "Settings",
+                    subtitle = "Preferences",
                     tint = Color(0xFFBA68C8),
                     onClick = {
                         onDismissRequest()
-                        onNavigate(NavDest.ThemeSettings.route)
+                        onNavigate(NavDest.Settings.route)
                     }
                 )
             }
 
             Spacer(Modifier.height(14.dp))
 
-            // Highlighted Support Developer / Buy Me a Coffee Banner
-            SupportKoriBanner(
-                onClick = { onDismissRequest() }
-            )
-
-            Spacer(Modifier.height(14.dp))
-
-            // 4. Preferences & App Info
-            Text(
-                text = "Preferences & App Info",
-                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
-
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column {
-                    MenuRowItem(
-                        icon = Icons.Default.BarChart,
-                        title = "Call Statistics",
-                        subtitle = "Monthly & yearly call charts",
-                        onClick = {
-                            onDismissRequest()
-                            onNavigate(NavDest.CallStats.route())
-                        }
-                    )
-                    MenuRowItem(
-                        icon = Icons.Default.Settings,
-                        title = "All Settings",
-                        subtitle = "Ringtone, Noise Cancellation, App Icon",
-                        onClick = {
-                            onDismissRequest()
-                            onNavigate(NavDest.Settings.route)
-                        }
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(16.dp))
-
-            // 5. Exit App Button
+            // 3. Exit App Button
             Surface(
                 onClick = { showExitDialog = true },
                 color = MaterialTheme.colorScheme.error.copy(alpha = 0.1f),
                 shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .testTag("menu_exit_app")
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
@@ -350,17 +294,15 @@ fun AppMenuBottomSheet(
                         )
                     }
                     Spacer(Modifier.width(14.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Exit & Stop Background Service",
-                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    }
+                    Text(
+                        text = "Exit & Stop Background Service",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                        color = MaterialTheme.colorScheme.error
+                    )
                 }
             }
 
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(12.dp))
         }
     }
 
@@ -521,58 +463,5 @@ private fun MenuGridItem(
                 overflow = TextOverflow.Ellipsis
             )
         }
-    }
-}
-
-@Composable
-private fun MenuRowItem(
-    icon: ImageVector,
-    title: String,
-    subtitle: String,
-    onClick: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            modifier = Modifier
-                .size(32.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.08f)),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(18.dp)
-            )
-        }
-
-        Spacer(Modifier.width(14.dp))
-
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-
-        Icon(
-            imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
-            contentDescription = null,
-            modifier = Modifier.size(12.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-        )
     }
 }

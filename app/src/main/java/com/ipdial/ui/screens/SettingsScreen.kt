@@ -69,6 +69,7 @@ fun SettingsScreen(
     onNavigateToPrivacy: () -> Unit = {},
     onNavigateToAbout: () -> Unit = {},
     onNavigateToServerInspector: () -> Unit = {},
+    onNavigateToBackup: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -713,6 +714,30 @@ fun SettingsScreen(
                         )
                     },
                     onClick = { vm.setDisableProximitySensor(!disableProximity) }
+                )
+            }
+
+            // ── Backup & Restore ──
+            stickyHeader { SettingsSection("Backup & Restore") }
+            item {
+                val backupSettings by vm.backupSettings.collectAsState()
+                val backupSubtitle = if (backupSettings.autoBackupEnabled) {
+                    "Auto backup: ${backupSettings.frequency.label} • ${backupSettings.autoBackupFolderLabel.ifBlank { "Folder set" }}"
+                } else {
+                    "Back up settings, SIP accounts, history & recordings"
+                }
+                SettingsRow(
+                    icon = Icons.Default.Folder,
+                    title = "Backup & Restore",
+                    subtitle = backupSubtitle,
+                    trailing = {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    },
+                    onClick = { onNavigateToBackup() }
                 )
             }
 

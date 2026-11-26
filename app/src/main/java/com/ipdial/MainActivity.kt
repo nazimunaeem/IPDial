@@ -47,15 +47,16 @@ import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.CardGiftcard
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Contacts
 import androidx.compose.material.icons.filled.Dialpad
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PrivacyTip
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -126,6 +127,12 @@ import com.ipdial.ui.screens.AboutScreen
 import com.ipdial.ui.screens.AccountsScreen
 import com.ipdial.ui.screens.ActivityLogScreen
 import com.ipdial.ui.screens.AudioCodecScreen
+import com.ipdial.ui.screens.BackupScreen
+import com.ipdial.data.scheduler.CallSchedulerManager
+import com.ipdial.data.scheduler.ScheduledCall
+import com.ipdial.data.scheduler.ScheduledCallAlertState
+import com.ipdial.data.scheduler.ScheduledCallStatus
+import com.ipdial.ui.screens.CallSchedulerScreen
 import com.ipdial.ui.screens.CallScreen
 import com.ipdial.ui.screens.CallStatsScreen
 import com.ipdial.ui.screens.ContactDetailsScreen
@@ -137,6 +144,7 @@ import com.ipdial.ui.screens.IncomingCallScreen
 import com.ipdial.ui.screens.IncomingCallSettingsScreen
 import com.ipdial.ui.screens.PrivacyPolicyScreen
 import com.ipdial.ui.screens.RecordingsScreen
+import com.ipdial.ui.screens.ScheduledCallConfirmOverlay
 import com.ipdial.ui.screens.ServerInspectorScreen
 import com.ipdial.ui.screens.SettingsScreen
 import com.ipdial.ui.screens.ThemeSettingsScreen
@@ -177,9 +185,13 @@ class MainActivity : ComponentActivity() {
             ?: com.ipdial.service.sim.SimCallManager.callSession.value
             ?: vm.callSession.value
 
+    private fun isScheduledAlertPresentationActive(action: String? = intent?.action): Boolean =
+        ScheduledCallAlertState.activeAlert.value != null ||
+            action == CallSchedulerManager.ACTION_SCHEDULED_CALL_ALERT
+
     override fun onStart() {
         super.onStart()
-        if (isCallScreenVisible(currentLiveSession())) {
+        if (isCallScreenVisible(currentLiveSession()) || isScheduledAlertPresentationActive()) {
             applyLockScreenFlags()
         }
     }
@@ -196,6 +208,8 @@ class MainActivity : ComponentActivity() {
         if (isCallScreenVisible(session)) {
             applyLockScreenFlags()
             vm.setShowFullIncomingScreen(true)
+        } else if (isScheduledAlertPresentationActive()) {
+            applyLockScreenFlags()
         } else if (!com.ipdial.service.IncomingCallPresentationHelper.isCallLaunchAction(intent?.action)) {
             clearLockScreenFlags()
         }
@@ -269,7 +283,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         if (com.ipdial.service.IncomingCallPresentationHelper.isCallLaunchAction(intent?.action) ||
-            isCallScreenVisible(currentLiveSession())
+            isCallScreenVisible(currentLiveSession()) ||
+            isScheduledAlertPresentationActive(intent?.action)
         ) {
             applyLockScreenFlags()
         }
@@ -294,15 +309,16 @@ class MainActivity : ComponentActivity() {
             val themeMode by vm.themeMode.collectAsState()
             val fontMultiplier by vm.fontSizeMultiplier.collectAsState()
 
-            // Keep screen on and show over lock screen when there's an active call
+            // Keep screen on and show over lock screen when there's an active call or scheduled call alert
             val callSession by vm.callSession.collectAsState()
+            val activeScheduledAlert by ScheduledCallAlertState.activeAlert.collectAsState()
             val localView = LocalView.current
             
-            LaunchedEffect(callSession) {
+            LaunchedEffect(callSession, activeScheduledAlert) {
                 val activity = localView.context as? MainActivity
                 val isActiveCall = isCallScreenVisible(callSession)
                 activity?.updateVolumeControlStream(callSession)
-                if (isActiveCall) {
+                if (isActiveCall || activeScheduledAlert != null) {
                     activity?.applyLockScreenFlags()
                 } else {
                     activity?.clearLockScreenFlags()
@@ -354,7 +370,8 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         if (com.ipdial.service.IncomingCallPresentationHelper.isCallLaunchAction(intent.action) ||
-            isCallScreenVisible(currentLiveSession())
+            isCallScreenVisible(currentLiveSession()) ||
+            isScheduledAlertPresentationActive(intent.action)
         ) {
             applyLockScreenFlags()
         }
@@ -399,6 +416,23 @@ class MainActivity : ComponentActivity() {
                 vm.hangup()
             } else if (i.action == "com.ipdial.ACTION_INCOMING_CALL" || i.action == "com.ipdial.ACTION_SHOW_CALL") {
                 vm.setShowFullIncomingScreen(true)
+            } else if (i.action == CallSchedulerManager.ACTION_SCHEDULED_CALL_ALERT) {
+                val callId = i.getStringExtra(CallSchedulerManager.EXTRA_SCHEDULED_CALL_ID).orEmpty()
+                val name = i.getStringExtra(CallSchedulerManager.EXTRA_SCHEDULED_CALL_NAME).orEmpty()
+                val number = i.getStringExtra(CallSchedulerManager.EXTRA_SCHEDULED_CALL_NUMBER).orEmpty()
+                val note = i.getStringExtra(CallSchedulerManager.EXTRA_SCHEDULED_CALL_NOTE).orEmpty()
+                if (number.isNotBlank() && ScheduledCallAlertState.activeAlert.value?.id != callId) {
+                    ScheduledCallAlertState.trigger(
+                        ScheduledCall(
+                            id = callId,
+                            contactName = name,
+                            phoneNumber = number,
+                            scheduledAtMs = System.currentTimeMillis(),
+                            note = note,
+                            status = ScheduledCallStatus.TRIGGERED
+                        )
+                    )
+                }
             } else if (i.action == Intent.ACTION_DIAL || i.action == Intent.ACTION_VIEW || i.action == Intent.ACTION_CALL) {
                 val data = i.data
                 if (data != null && data.scheme == "tel") {
@@ -487,6 +521,8 @@ sealed class NavDest(val route: String, val label: String, val icon: ImageVector
     object Privacy : NavDest("privacy",  "Privacy Policy", Icons.Default.PrivacyTip)
     object AudioCodecs : NavDest("audio_codecs", "Audio Codecs", Icons.Default.Audiotrack)
     object ThemeSettings : NavDest("theme_settings", "Theme", Icons.Default.Settings)
+    object Backup : NavDest("backup", "Backup & Restore", Icons.Default.Folder)
+    object CallScheduler : NavDest("call_scheduler", "Call Scheduler", Icons.Default.Schedule)
     object IncomingCallStyle : NavDest("incoming_call_style", "Incoming Call Style", Icons.Default.Call)
     object DialpadStyle : NavDest("dialpad_style", "Dialpad Style", Icons.Default.Dialpad)
     object ServerInspector : NavDest("server_inspector", "Server Inspector", Icons.Default.NetworkCheck)
@@ -505,6 +541,7 @@ fun IPDialApp() {
     val vm: SipViewModel = viewModel()
     val callSession by vm.callSession.collectAsState()
     val showFullIncomingScreen by vm.showFullIncomingScreen.collectAsState()
+    val activeScheduledAlert by ScheduledCallAlertState.activeAlert.collectAsState()
     
     val navController = rememberNavController()
     val navBackStack by navController.currentBackStackEntryAsState()
@@ -600,6 +637,7 @@ fun IPDialApp() {
             pagerState = pagerState,
             currentRoute = currentRoute,
             callSession = callSession,
+            activeScheduledAlert = activeScheduledAlert,
             showFullIncomingScreen = showFullIncomingScreen,
             isMenuOpen = showMenuBottomSheet,
             onOpenMenu = { showMenuBottomSheet = true },
@@ -657,12 +695,12 @@ fun AppScaffold(
     pagerState: PagerState,
     currentRoute: String,
     callSession: CallSession?,
+    activeScheduledAlert: ScheduledCall?,
     showFullIncomingScreen: Boolean,
     isMenuOpen: Boolean = false,
     onOpenMenu: () -> Unit,
     onShowFullIncoming: () -> Unit
 ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
     val isGlass = com.ipdial.ui.theme.LocalGlassMode.current != com.ipdial.ui.theme.GlassMode.None
 
     Box(
@@ -676,12 +714,13 @@ fun AppScaffold(
             pagerState = pagerState,
             innerPadding = PaddingValues(0.dp),
             callSession = callSession,
+            activeScheduledAlert = activeScheduledAlert,
             showFullIncomingScreen = showFullIncomingScreen,
             onOpenMenu = onOpenMenu,
             onShowFullIncoming = onShowFullIncoming
         )
 
-        if (!isMenuOpen) {
+        if (!isMenuOpen && activeScheduledAlert == null) {
             FloatingPillNavBar(
                 navController = navController,
                 pagerState = pagerState,
@@ -712,11 +751,12 @@ fun AppMainContent(
     pagerState: PagerState,
     innerPadding: PaddingValues,
     callSession: CallSession?,
+    activeScheduledAlert: ScheduledCall?,
     showFullIncomingScreen: Boolean,
     onOpenMenu: () -> Unit,
     onShowFullIncoming: () -> Unit
 ) {
-    Log.d("MainActivity", "AppMainContent: session=${callSession?.state}, showFull=$showFullIncomingScreen")
+    Log.d("MainActivity", "AppMainContent: session=${callSession?.state}, showFull=$showFullIncomingScreen, scheduledAlert=${activeScheduledAlert?.id}")
     
     // Logic: Always show CallOverlay if there is an active call (incoming OR outgoing)
     // regardless of showFullIncomingScreen flag, as long as it's not disconnected.
@@ -724,6 +764,14 @@ fun AppMainContent(
     
     if (hasActiveCall) {
         CallOverlay(vm, callSession!!)
+    } else if (activeScheduledAlert != null) {
+        ScheduledCallConfirmOverlay(
+            vm = vm,
+            call = activeScheduledAlert,
+            onConfirmCall = { call -> vm.confirmScheduledCallAndDial(call) },
+            onRejectCall = { call -> vm.dismissScheduledCallAlert(call.id) },
+            onSnoozeCall = { call -> vm.snoozeScheduledCallAlert(call.id, 5) }
+        )
     } else {
         AppNavHost(vm, navController, pagerState, innerPadding, onOpenMenu)
     }
@@ -866,8 +914,21 @@ fun AppNavHost(
                 onNavigateToIncomingCallStyle = { navController.navigate(NavDest.IncomingCallStyle.route) },
                 onNavigateToPrivacy = { navController.navigate(NavDest.Privacy.route) },
                 onNavigateToAbout = { navController.navigate(NavDest.About.route) },
-                onNavigateToServerInspector = { navController.navigate(NavDest.ServerInspector.route) }
+                onNavigateToServerInspector = { navController.navigate(NavDest.ServerInspector.route) },
+                onNavigateToBackup = { navController.navigate(NavDest.Backup.route) }
             ) 
+        }
+        composable(NavDest.Backup.route) {
+            BackupScreen(
+                vm = vm,
+                onBack = { navController.popBackStack() }
+            )
+        }
+        composable(NavDest.CallScheduler.route) {
+            CallSchedulerScreen(
+                vm = vm,
+                onBack = { navController.popBackStack() }
+            )
         }
         composable(NavDest.ThemeSettings.route) {
             ThemeSettingsScreen(
