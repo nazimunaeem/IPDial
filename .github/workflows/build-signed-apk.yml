@@ -1,0 +1,155 @@
+name: Export Signed APK
+
+# Manual-only workflow to build, sign, verify, and export the release APK
+# as a downloadable GitHub Actions artifact without creating a GitHub Release.
+#   • Run: Actions → Export Signed APK → Run workflow
+#
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   KEYSTORE_BASE64   base64-encoded release keystore (.jks / .keystore)
+#   STORE_PASSWORD    keystore password
+#   KEY_ALIAS         signing key alias
+#   KEY_PASSWORD      signing key password
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_tests:
+        description: "Run unit tests before building"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: export-signed-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build & export signed APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Accept Android SDK licenses
+        run: |
+          SDK_DIR="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          echo "ANDROID_HOME=${SDK_DIR}" >> "$GITHUB_ENV"
+          mkdir -p "${SDK_DIR}/licenses"
+          for hash in \
+            24333f8a63b6825ea9c5514f83c2829b004d1fee \
+            d56f5187479451eabf01fb78af6dfcb131a6481e \
+            8933bad161af4178b1185d1a37fbf41ea5269c55; do
+            grep -qxF "$hash" "${SDK_DIR}/licenses/android-sdk-license" 2>/dev/null || echo "$hash" >> "${SDK_DIR}/licenses/android-sdk-license"
+          done
+          for hash in \
+            84831b9409646a918e30573bab4c9c91346d8abd \
+            504667f4c0de7af1a06de9f4b1727b84351f2910; do
+            grep -qxF "$hash" "${SDK_DIR}/licenses/android-sdk-preview-license" 2>/dev/null || echo "$hash" >> "${SDK_DIR}/licenses/android-sdk-preview-license"
+          done
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Read version from app/build.gradle
+        id: version
+        run: |
+          VERSION=$(sed -nE 's/^[[:space:]]*versionName[[:space:]]+"([^"]+)".*/\1/p' app/build.gradle | head -1)
+          CODE=$(sed -nE 's/^[[:space:]]*versionCode[[:space:]]+([0-9]+).*/\1/p' app/build.gradle | head -1)
+          if [ -z "$VERSION" ] || [ -z "$CODE" ]; then
+            echo "::error::Could not read versionName/versionCode from app/build.gradle"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "Building DialDuo $VERSION (build $CODE)"
+
+      # gradle.properties is gitignored, so CI recreates the flags the build needs.
+      - name: Configure Gradle for CI
+        run: |
+          {
+            echo "android.useAndroidX=true"
+            echo "android.nonTransitiveRClass=true"
+            echo "android.uniquePackageNames=false"
+            echo "android.r8.strictFullModeForKeepRules=false"
+            echo "android.r8.optimizedResourceShrinking=true"
+            echo "android.disallowKotlinSourceSets=false"
+            echo "org.gradle.jvmargs=-Xmx4g -XX:+UseG1GC"
+            echo "org.gradle.daemon=false"
+          } > gradle.properties
+          chmod +x gradlew
+
+      - name: Validate & decode signing secrets
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::KEYSTORE_BASE64 secret is missing. Add it in Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          for var in STORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!var}" ]; then
+              echo "::error::$var secret is missing. Add it in Settings → Secrets and variables → Actions."
+              exit 1
+            fi
+          done
+          printf '%s' "$KEYSTORE_BASE64" | tr -d '[:space:]' | base64 --decode > "$RUNNER_TEMP/dialduo-release.jks"
+          test -s "$RUNNER_TEMP/dialduo-release.jks" || { echo "::error::Decoded keystore is empty — verify KEYSTORE_BASE64 is valid base64."; exit 1; }
+
+      - name: Run unit tests
+        if: inputs.run_tests
+        run: ./gradlew :app:testDebugUnitTest --stacktrace
+
+      - name: Build signed APK
+        env:
+          STORE_FILE: ${{ runner.temp }}/dialduo-release.jks
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew :app:assembleRelease --stacktrace
+
+      - name: Verify APK signature
+        run: |
+          APK=app/build/outputs/apk/release/app-release.apk
+          test -f "$APK" || { echo "::error::$APK was not generated"; exit 1; }
+          APKSIGNER=$(find "${ANDROID_HOME}/build-tools" -name apksigner -type f | sort -V | tail -1)
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+
+      - name: Stage APK artifact
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          CODE="${{ steps.version.outputs.code }}"
+          mkdir -p dist
+          APK_NAME="DialDuo-v${VERSION}-b${CODE}-signed.apk"
+          cp app/build/outputs/apk/release/app-release.apk "dist/${APK_NAME}"
+          ls -lh dist
+          {
+            echo "### Signed Release APK Exported"
+            echo "- **File**: \`${APK_NAME}\`"
+            echo "- **Version**: \`${VERSION}\` (build \`${CODE}\`)"
+            echo "- Download it from the **Artifacts** section at the bottom of this workflow run."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove signing keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/dialduo-release.jks"
+
+      - name: Upload signed APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: DialDuo-v${{ steps.version.outputs.version }}-b${{ steps.version.outputs.code }}-signed-apk
+          path: dist/*.apk
+          if-no-files-found: error
+          retention-days: 30
