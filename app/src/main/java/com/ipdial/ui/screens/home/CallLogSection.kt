@@ -4,6 +4,8 @@ import android.content.Intent
 import android.provider.ContactsContract
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,18 +18,23 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.CallMade
 import androidx.compose.material.icons.automirrored.filled.CallMissed
 import androidx.compose.material.icons.automirrored.filled.CallReceived
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Sms
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -41,19 +48,23 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.ipdial.data.model.CallDirection
 import com.ipdial.data.model.CallLogEntry
+import com.ipdial.data.model.CallTransport
 import com.ipdial.data.model.Contact
 import com.ipdial.data.model.SipAccount
 import com.ipdial.ui.components.ContactAvatar
+import com.ipdial.ui.components.filterHistoryForTarget
 import com.ipdial.ui.screens.cleanDisplayName
 import com.ipdial.ui.screens.cleanUri
 import com.ipdial.ui.screens.call.formatDuration
@@ -61,6 +72,7 @@ import com.ipdial.ui.theme.GlassMode
 import com.ipdial.ui.theme.LocalGlassMode
 import com.ipdial.ui.theme.glass
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
@@ -267,202 +279,352 @@ fun formatTime(ms: Long): String {
     }
 }
 
+private enum class HistoryDialogFilter { ALL, MISSED, INCOMING, OUTGOING }
+
 @Composable
 fun CallHistoryDetailDialog(
     selectedEntry: CallLogEntry,
     allEntries: List<CallLogEntry>,
     contact: Contact?,
     onCall: () -> Unit,
+    onOpenContactDetails: (String) -> Unit = {},
+    onOpenStats: (String, String?, List<CallLogEntry>) -> Unit = { _, _, _ -> },
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
     val locale = LocalConfiguration.current.locales[0]
+    val isGlass = LocalGlassMode.current != GlassMode.None
     val cleanNumber = cleanUri(selectedEntry.remoteUri)
-    val displayName = contact?.name ?: selectedEntry.remoteDisplayName.ifBlank { cleanNumber }
+    val displayName = contact?.name?.takeIf { it.isNotBlank() }
+        ?: cleanDisplayName(selectedEntry.remoteDisplayName, selectedEntry.remoteUri).ifBlank { cleanNumber }
 
-    // Filter calls in the last 7 days for this number
-    val sevenDaysAgo = System.currentTimeMillis() - 7 * 24 * 60 * 60 * 1000L
-    val filteredHistory = remember(allEntries, selectedEntry) {
-        allEntries.filter {
-            cleanUri(it.remoteUri) == cleanNumber && it.timestampMs >= sevenDaysAgo
-        }.sortedByDescending { it.timestampMs }
+    val matchingHistory = remember(allEntries, selectedEntry, contact) {
+        filterHistoryForTarget(allEntries, selectedEntry.remoteUri, contact)
     }
 
-    AlertDialog(
+    var activeFilter by remember { mutableStateOf(HistoryDialogFilter.ALL) }
+    val missedCount = remember(matchingHistory) { matchingHistory.count { it.missed } }
+    val incomingCount = remember(matchingHistory) {
+        matchingHistory.count { !it.missed && it.direction == CallDirection.INCOMING }
+    }
+    val outgoingCount = remember(matchingHistory) {
+        matchingHistory.count { !it.missed && it.direction == CallDirection.OUTGOING }
+    }
+
+    val visibleHistory = remember(matchingHistory, activeFilter) {
+        when (activeFilter) {
+            HistoryDialogFilter.ALL -> matchingHistory
+            HistoryDialogFilter.MISSED -> matchingHistory.filter { it.missed }
+            HistoryDialogFilter.INCOMING -> matchingHistory.filter { !it.missed && it.direction == CallDirection.INCOMING }
+            HistoryDialogFilter.OUTGOING -> matchingHistory.filter { !it.missed && it.direction == CallDirection.OUTGOING }
+        }
+    }
+
+    val currentYear = remember { Calendar.getInstance().get(Calendar.YEAR) }
+    val sameYearFmt = remember(locale) { SimpleDateFormat("MMM d, h:mm a", locale) }
+    val otherYearFmt = remember(locale) { SimpleDateFormat("MMM d, yyyy • h:mm a", locale) }
+
+    Dialog(
         onDismissRequest = onDismiss,
-        title = {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                ContactAvatar(
-                    name = displayName,
-                    photoUri = contact?.photoUri,
-                    size = 40.dp,
-                    backgroundColor = MaterialTheme.colorScheme.secondaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                )
-                Column {
-                    Text(
-                        text = displayName,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    if (displayName != cleanNumber) {
-                        Text(
-                            text = cleanNumber,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-        },
-        text = {
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            shape = RoundedCornerShape(26.dp),
+            tonalElevation = if (isGlass) 0.dp else 6.dp,
+            color = if (isGlass) MaterialTheme.colorScheme.surface.copy(alpha = 0.92f) else MaterialTheme.colorScheme.surface,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 24.dp)
+                .widthIn(max = 420.dp)
+                .then(if (isGlass) Modifier.glass(RoundedCornerShape(26.dp)) else Modifier)
+        ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 300.dp)
+                    .padding(top = 18.dp, start = 16.dp, end = 16.dp, bottom = 10.dp)
             ) {
-                Text(
-                    text = "Calls in the last 7 days",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
-
-                if (filteredHistory.isEmpty()) {
-                    Text(
-                        text = "No calls found",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                // Clickable Contact / Caller Name Header
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .then(
+                            if (contact != null) {
+                                Modifier.clickable {
+                                    onDismiss()
+                                    onOpenContactDetails(contact.id)
+                                }
+                            } else {
+                                Modifier
+                            }
+                        )
+                        .padding(horizontal = 4.dp, vertical = 6.dp)
+                        .testTag("history_dialog_contact_header"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    ContactAvatar(
+                        name = displayName,
+                        photoUri = contact?.photoUri,
+                        size = 44.dp,
+                        backgroundColor = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
                     )
-                } else {
-                    LazyColumn(
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(filteredHistory) { entry ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = when {
-                                        entry.missed                           -> Icons.AutoMirrored.Filled.CallMissed
-                                        entry.direction == CallDirection.INCOMING -> Icons.AutoMirrored.Filled.CallReceived
-                                        else                                   -> Icons.AutoMirrored.Filled.CallMade
-                                    },
-                                    contentDescription = null,
-                                    tint = when {
-                                        entry.missed -> MaterialTheme.colorScheme.error
-                                        else         -> MaterialTheme.colorScheme.onSurfaceVariant
-                                    },
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(Modifier.width(8.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    val dateStr = SimpleDateFormat("MMM d, h:mm a", locale).format(Date(entry.timestampMs))
-                                    Text(
-                                        text = dateStr,
-                                        style = MaterialTheme.typography.bodyMedium
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = displayName,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (displayName != cleanNumber && cleanNumber.isNotBlank()) {
+                            Text(
+                                text = cleanNumber,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                    if (contact != null) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = "Open contact details",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                // Filter Chips for All / Missed / In / Out
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    FilterChip(
+                        selected = activeFilter == HistoryDialogFilter.ALL,
+                        onClick = { activeFilter = HistoryDialogFilter.ALL },
+                        label = { Text("All (${matchingHistory.size})", maxLines = 1, softWrap = false) }
+                    )
+                    FilterChip(
+                        selected = activeFilter == HistoryDialogFilter.MISSED,
+                        onClick = { activeFilter = HistoryDialogFilter.MISSED },
+                        label = { Text("Missed ($missedCount)", maxLines = 1, softWrap = false) }
+                    )
+                    FilterChip(
+                        selected = activeFilter == HistoryDialogFilter.INCOMING,
+                        onClick = { activeFilter = HistoryDialogFilter.INCOMING },
+                        label = { Text("In ($incomingCount)", maxLines = 1, softWrap = false) }
+                    )
+                    FilterChip(
+                        selected = activeFilter == HistoryDialogFilter.OUTGOING,
+                        onClick = { activeFilter = HistoryDialogFilter.OUTGOING },
+                        label = { Text("Out ($outgoingCount)", maxLines = 1, softWrap = false) }
+                    )
+                }
+
+                Spacer(Modifier.height(6.dp))
+
+                // All-Time Call History List
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 120.dp, max = 320.dp)
+                ) {
+                    if (visibleHistory.isEmpty()) {
+                        Text(
+                            text = "No calls found",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .padding(vertical = 24.dp)
+                        )
+                    } else {
+                        LazyColumn(
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            items(visibleHistory, key = { it.id }) { entry ->
+                                val entryYear = Calendar.getInstance().apply {
+                                    timeInMillis = entry.timestampMs
+                                }.get(Calendar.YEAR)
+                                val dateStr = if (entryYear == currentYear) {
+                                    sameYearFmt.format(Date(entry.timestampMs))
+                                } else {
+                                    otherYearFmt.format(Date(entry.timestampMs))
+                                }
+                                val callTypeText = when {
+                                    entry.missed -> "Missed"
+                                    entry.direction == CallDirection.INCOMING -> "Incoming"
+                                    else -> "Outgoing"
+                                }
+                                val viaLabel = entry.lineLabel.ifBlank {
+                                    if (entry.transport == CallTransport.SIM) "SIM" else "SIP"
+                                }
+                                val durationStr = if (entry.missed) "" else " • ${formatDuration(entry.durationSeconds)}"
+                                val entryNumber = cleanUri(entry.remoteUri)
+                                val numberSuffix = if ((contact?.numbers?.size ?: 0) > 1 && entryNumber.isNotBlank()) {
+                                    " • $entryNumber"
+                                } else {
+                                    ""
+                                }
+
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = when {
+                                            entry.missed -> Icons.AutoMirrored.Filled.CallMissed
+                                            entry.direction == CallDirection.INCOMING -> Icons.AutoMirrored.Filled.CallReceived
+                                            else -> Icons.AutoMirrored.Filled.CallMade
+                                        },
+                                        contentDescription = callTypeText,
+                                        tint = if (entry.missed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(16.dp)
                                     )
-                                    val callTypeText = when {
-                                        entry.missed -> "Missed"
-                                        entry.direction == CallDirection.INCOMING -> "Incoming"
-                                        else -> "Outgoing"
+                                    Spacer(Modifier.width(10.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = dateStr,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = if (entry.missed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = "$callTypeText$durationStr • $viaLabel$numberSuffix",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
                                     }
-                                    val durationStr = if (entry.missed) "" else " (${formatDuration(entry.durationSeconds)})"
-                                    Text(
-                                        text = "$callTypeText$durationStr",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
                                 }
                             }
                         }
                     }
                 }
-            }
-        },
-        confirmButton = {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                TextButton(
-                    onClick = onDismiss,
-                    contentPadding = PaddingValues(horizontal = 8.dp),
-                    modifier = Modifier.testTag("history_dialog_close_button")
+
+                Spacer(Modifier.height(8.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                Spacer(Modifier.height(4.dp))
+
+                // Single-Line Action Bar: Close, [Add to contact], Stats icon, Message icon, Call icon
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "Close",
-                        maxLines = 1,
-                        softWrap = false
-                    )
-                }
-                if (contact == null) {
                     TextButton(
-                        onClick = {
-                            val number = cleanNumber.filter { it.isDigit() || it == '+' }
-                            val intent = android.content.Intent(android.content.Intent.ACTION_INSERT).apply {
-                                type = android.provider.ContactsContract.Contacts.CONTENT_TYPE
-                                putExtra(android.provider.ContactsContract.Intents.Insert.PHONE, number)
-                            }
-                            try {
-                                context.startActivity(intent)
-                            } catch (e: Exception) {
-                                android.widget.Toast.makeText(context, "Could not open contacts app", android.widget.Toast.LENGTH_SHORT).show()
-                            }
-                            onDismiss()
-                        },
-                        contentPadding = PaddingValues(horizontal = 8.dp),
-                        modifier = Modifier.testTag("history_dialog_add_contact_button")
+                        onClick = onDismiss,
+                        contentPadding = PaddingValues(horizontal = 6.dp),
+                        modifier = Modifier
+                            .heightIn(min = 48.dp)
+                            .testTag("history_dialog_close_button")
                     ) {
                         Text(
-                            text = "Add to contact",
+                            text = "Close",
                             maxLines = 1,
-                            softWrap = false
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    if (contact == null) {
+                        TextButton(
+                            onClick = {
+                                val number = cleanNumber.filter { it.isDigit() || it == '+' }
+                                val intent = Intent(Intent.ACTION_INSERT).apply {
+                                    type = ContactsContract.Contacts.CONTENT_TYPE
+                                    putExtra(ContactsContract.Intents.Insert.PHONE, number)
+                                }
+                                try {
+                                    context.startActivity(intent)
+                                } catch (_: Exception) {
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        "Could not open contacts app",
+                                        android.widget.Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                                onDismiss()
+                            },
+                            contentPadding = PaddingValues(horizontal = 6.dp),
+                            modifier = Modifier
+                                .heightIn(min = 48.dp)
+                                .weight(1f, fill = false)
+                                .testTag("history_dialog_add_contact_button")
+                        ) {
+                            Text(
+                                text = "Add to contact",
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                    Spacer(Modifier.weight(1f))
+                    IconButton(
+                        onClick = {
+                            onDismiss()
+                            onOpenStats(
+                                displayName,
+                                if (displayName != cleanNumber) cleanNumber else "Call statistics",
+                                matchingHistory
+                            )
+                        },
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("history_dialog_stats_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.BarChart,
+                            contentDescription = "Call statistics",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    IconButton(
+                        onClick = {
+                            launchSmsIntent(context, cleanNumber)
+                            onDismiss()
+                        },
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("history_dialog_sms_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Sms,
+                            contentDescription = "Send message",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    IconButton(
+                        onClick = {
+                            onCall()
+                            onDismiss()
+                        },
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("history_dialog_call_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Call,
+                            contentDescription = "Call",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(22.dp)
                         )
                     }
                 }
-                Spacer(Modifier.weight(1f))
-                IconButton(
-                    onClick = {
-                        launchSmsIntent(context, cleanNumber)
-                        onDismiss()
-                    },
-                    modifier = Modifier
-                        .size(48.dp)
-                        .testTag("history_dialog_sms_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Sms,
-                        contentDescription = "Send message",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-                IconButton(
-                    onClick = {
-                        onCall()
-                        onDismiss()
-                    },
-                    modifier = Modifier
-                        .size(48.dp)
-                        .testTag("history_dialog_call_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Call,
-                        contentDescription = "Call",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
             }
         }
-    )
+    }
 }
 
 private fun launchSmsIntent(context: android.content.Context, rawNumber: String) {

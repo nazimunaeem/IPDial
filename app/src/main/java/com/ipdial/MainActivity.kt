@@ -754,6 +754,9 @@ fun MainPagerScreen(
                                 launchSingleTop = true
                             }
                         }
+                    },
+                    onOpenContactDetails = { contactId ->
+                        navController.navigate(NavDest.ContactDetails.route(contactId))
                     }
                 )
                 1 -> DialpadScreen(

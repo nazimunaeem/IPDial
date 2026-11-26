@@ -142,13 +142,13 @@ jobs:
       - name: Run unit tests
         run: ./gradlew :app:testDebugUnitTest --stacktrace
 
-      - name: Build signed APK and App Bundle
+      - name: Build signed APK
         env:
           STORE_FILE: ${{ runner.temp }}/dialduo-release.jks
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: ./gradlew :app:assembleRelease :app:bundleRelease --stacktrace
+        run: ./gradlew :app:assembleRelease --stacktrace
 
       - name: Verify APK signature
         run: |
@@ -162,10 +162,6 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           mkdir -p dist
           cp app/build/outputs/apk/release/app-release.apk "dist/DialDuo-v${VERSION}.apk"
-          if [ -f app/build/outputs/bundle/release/app-release.aab ]; then
-            cp app/build/outputs/bundle/release/app-release.aab "dist/DialDuo-v${VERSION}.aab"
-          fi
-          (cd dist && sha256sum ./* > SHA256SUMS.txt)
           ls -lh dist
 
       - name: Generate release notes
@@ -208,10 +204,6 @@ jobs:
             fi
             echo "### Downloads"
             echo "- Signed release APK: \`DialDuo-v${VERSION}.apk\`"
-            if [ -f "dist/DialDuo-v${VERSION}.aab" ]; then
-              echo "- Play Store bundle: \`DialDuo-v${VERSION}.aab\`"
-            fi
-            echo "- SHA-256 checksums: \`SHA256SUMS.txt\`"
             echo ""
             echo "_Built from commit \`${COMMIT_SHA}\`._"
           } > dist/release-notes.md
@@ -253,5 +245,3 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             dist/DialDuo-v${{ needs.build.outputs.version }}.apk
-            dist/DialDuo-v${{ needs.build.outputs.version }}.aab
-            dist/SHA256SUMS.txt

@@ -32,13 +32,19 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.CallMade
+import androidx.compose.material.icons.automirrored.filled.CallMissed
+import androidx.compose.material.icons.automirrored.filled.CallReceived
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Dialpad
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material.icons.filled.Star
@@ -76,6 +82,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
@@ -88,17 +95,25 @@ import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.ipdial.data.model.CallDirection
+import com.ipdial.data.model.CallTransport
 import com.ipdial.data.model.Contact
 import com.ipdial.data.repository.ContactDetailInfo
 import com.ipdial.data.repository.ContactPhoneNumber
 import com.ipdial.data.repository.ExternalAppAction
 import com.ipdial.ui.SipViewModel
+import com.ipdial.ui.components.CallStatsDialog
 import com.ipdial.ui.components.ContactAvatar
 import com.ipdial.ui.components.NumberPickerDialog
+import com.ipdial.ui.components.filterHistoryForTarget
+import com.ipdial.ui.screens.call.formatDuration
 import com.ipdial.ui.theme.GlassMode
 import com.ipdial.ui.theme.LocalGlassMode
 import com.ipdial.ui.theme.glass
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
 
 private enum class HeroActionType {
     CALL,
@@ -255,6 +270,10 @@ fun ContactDetailsContent(
     var showDeleteDialog by remember { mutableStateOf(false) }
     var isDeleting by remember { mutableStateOf(false) }
     var pendingHeroAction by remember { mutableStateOf<HeroActionType?>(null) }
+    var showAllHistory by remember(contact.id) { mutableStateOf(false) }
+    var showContactStats by remember { mutableStateOf(false) }
+    val callLog by vm.callLog.collectAsState()
+    val locale = LocalConfiguration.current.locales[0]
 
     LaunchedEffect(externalDeleteTrigger) {
         if (externalDeleteTrigger > 0) {
@@ -311,6 +330,11 @@ fun ContactDetailsContent(
     val phones: List<ContactPhoneNumber> = detailInfo?.phones
         ?: contact.numbers.map { ContactPhoneNumber(number = it, label = "Phone") }
     val externalActions: List<ExternalAppAction> = detailInfo?.externalActions.orEmpty()
+    val contactCallHistory = remember(callLog, contact.id, phones) {
+        val mergedNumbers = (contact.numbers + phones.map { it.number }).distinct()
+        val matchingContact = contact.copy(numbers = mergedNumbers)
+        filterHistoryForTarget(callLog, mergedNumbers.firstOrNull().orEmpty(), matchingContact)
+    }
 
     val runHeroAction: (HeroActionType, String) -> Unit = { actionType, number ->
         when (actionType) {
@@ -678,6 +702,159 @@ fun ContactDetailsContent(
 
             Spacer(Modifier.height(20.dp))
 
+            // Call History Section
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 4.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Call History",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(
+                    onClick = { showContactStats = true },
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("contact_details_stats_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.BarChart,
+                        contentDescription = "Call statistics for ${contact.name}",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+            Card(
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (isGlass) Color.Transparent else MaterialTheme.colorScheme.surfaceContainerLow
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(if (isGlass) Modifier.glass(RoundedCornerShape(20.dp)) else Modifier)
+            ) {
+                if (contactCallHistory.isEmpty()) {
+                    Text(
+                        text = "No call history for this contact",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(20.dp)
+                    )
+                } else {
+                    val currentYear = remember { Calendar.getInstance().get(Calendar.YEAR) }
+                    val sameYearFmt = remember(locale) { SimpleDateFormat("MMM d, h:mm a", locale) }
+                    val otherYearFmt = remember(locale) { SimpleDateFormat("MMM d, yyyy • h:mm a", locale) }
+                    val visibleHistory = if (showAllHistory) contactCallHistory else contactCallHistory.take(5)
+
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        visibleHistory.forEachIndexed { idx, entry ->
+                            val entryYear = Calendar.getInstance().apply {
+                                timeInMillis = entry.timestampMs
+                            }.get(Calendar.YEAR)
+                            val dateStr = if (entryYear == currentYear) {
+                                sameYearFmt.format(Date(entry.timestampMs))
+                            } else {
+                                otherYearFmt.format(Date(entry.timestampMs))
+                            }
+                            val callTypeText = when {
+                                entry.missed -> "Missed"
+                                entry.direction == CallDirection.INCOMING -> "Incoming"
+                                else -> "Outgoing"
+                            }
+                            val viaLabel = entry.lineLabel.ifBlank {
+                                if (entry.transport == CallTransport.SIM) "SIM" else "SIP"
+                            }
+                            val durationStr = if (entry.missed) "" else " • ${formatDuration(entry.durationSeconds)}"
+                            val entryNumber = cleanUri(entry.remoteUri)
+                            val numberSuffix = if (phones.size > 1 && entryNumber.isNotBlank()) " • $entryNumber" else ""
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 56.dp)
+                                    .clickableWithRipple { vm.callBack(entry) }
+                                    .padding(horizontal = 16.dp, vertical = 10.dp)
+                                    .testTag("contact_history_row_$idx"),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = when {
+                                        entry.missed -> Icons.AutoMirrored.Filled.CallMissed
+                                        entry.direction == CallDirection.INCOMING -> Icons.AutoMirrored.Filled.CallReceived
+                                        else -> Icons.AutoMirrored.Filled.CallMade
+                                    },
+                                    contentDescription = callTypeText,
+                                    tint = if (entry.missed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = dateStr,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium,
+                                        color = if (entry.missed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = "$callTypeText$durationStr • $viaLabel$numberSuffix",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Icon(
+                                    imageVector = Icons.Default.Call,
+                                    contentDescription = "Call back",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            if (idx < visibleHistory.lastIndex || contactCallHistory.size > 5) {
+                                HorizontalDivider(
+                                    modifier = Modifier.padding(horizontal = 16.dp),
+                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                                )
+                            }
+                        }
+
+                        if (contactCallHistory.size > 5) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 48.dp)
+                                    .clickableWithRipple { showAllHistory = !showAllHistory }
+                                    .padding(horizontal = 16.dp, vertical = 10.dp)
+                                    .testTag("contact_history_toggle_button"),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Text(
+                                    text = if (showAllHistory) "Show less" else "Show all (${contactCallHistory.size})",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Icon(
+                                    imageVector = if (showAllHistory) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+
             // Contact Settings Section
             SectionHeader(title = "Contact Settings")
             Card(
@@ -776,6 +953,17 @@ fun ContactDetailsContent(
                 pendingHeroAction = null
             },
             onDismiss = { pendingHeroAction = null }
+        )
+    }
+
+    if (showContactStats) {
+        CallStatsDialog(
+            title = contact.name,
+            subtitle = phones.firstOrNull()?.number ?: "Contact statistics",
+            entries = contactCallHistory,
+            contacts = listOf(contact),
+            isUniversal = false,
+            onDismiss = { showContactStats = false }
         )
     }
 

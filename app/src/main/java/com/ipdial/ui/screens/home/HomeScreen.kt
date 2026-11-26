@@ -4,6 +4,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -21,12 +22,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
@@ -40,9 +43,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -53,21 +58,32 @@ import com.ipdial.data.model.CallLogEntry
 import com.ipdial.data.model.Contact
 import com.ipdial.data.model.SipAccount
 import com.ipdial.ui.SipViewModel
-import com.ipdial.ui.components.AccountSelectionDialog
+import com.ipdial.ui.components.CallStatsDialog
 import com.ipdial.ui.components.ContactItem
 import com.ipdial.ui.components.NumberPickerDialog
 import com.ipdial.ui.screens.cleanUri
+import com.ipdial.ui.theme.GlassMode
+import com.ipdial.ui.theme.LocalGlassMode
+import com.ipdial.ui.theme.glass
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+
+private data class StatsModalRequest(
+    val title: String,
+    val subtitle: String?,
+    val entries: List<CallLogEntry>,
+    val isUniversal: Boolean
+)
 
 @Composable
 fun HomeScreen(
     vm: SipViewModel, 
     onOpenDrawer: () -> Unit,
     onNavigateToAccounts: () -> Unit = {},
-    onEditBeforeCall: (String) -> Unit = {}
+    onEditBeforeCall: (String) -> Unit = {},
+    onOpenContactDetails: (String) -> Unit = {}
 ) {
     val accounts  by vm.accounts.collectAsState()
     val callLog   by vm.callLog.collectAsState()
@@ -78,6 +94,7 @@ fun HomeScreen(
     
     var activeContactForNumberPicker by remember { mutableStateOf<Contact?>(null) }
     var activeHistoryEntryForDetail by remember { mutableStateOf<CallLogEntry?>(null) }
+    var activeStatsRequest by remember { mutableStateOf<StatsModalRequest?>(null) }
 
     val locale = LocalConfiguration.current.locales[0]
     
@@ -168,10 +185,47 @@ fun HomeScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
-        SearchBarRow(
-            query = searchQuery,
-            onQueryChange = { vm.onSearchQueryChanged(it) }
-        )
+        val isGlass = LocalGlassMode.current != GlassMode.None
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 12.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            SearchBarRow(
+                query = searchQuery,
+                onQueryChange = { vm.onSearchQueryChanged(it) },
+                modifier = Modifier.weight(1f)
+            )
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = if (isGlass) Color.Transparent else MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier
+                    .size(48.dp)
+                    .then(if (isGlass) Modifier.glass(RoundedCornerShape(24.dp)) else Modifier)
+            ) {
+                IconButton(
+                    onClick = {
+                        activeStatsRequest = StatsModalRequest(
+                            title = "Call Statistics",
+                            subtitle = null,
+                            entries = callLog,
+                            isUniversal = true
+                        )
+                    },
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("home_universal_stats_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.BarChart,
+                        contentDescription = "Call statistics",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+        }
 
         val context = LocalContext.current
         var isDefaultDialer by remember {
@@ -390,7 +444,27 @@ fun HomeScreen(
             allEntries = callLog,
             contact = contact,
             onCall = { vm.callBack(entry) },
+            onOpenContactDetails = onOpenContactDetails,
+            onOpenStats = { title, subtitle, entries ->
+                activeStatsRequest = StatsModalRequest(
+                    title = title,
+                    subtitle = subtitle,
+                    entries = entries,
+                    isUniversal = false
+                )
+            },
             onDismiss = { activeHistoryEntryForDetail = null }
+        )
+    }
+
+    activeStatsRequest?.let { statsReq ->
+        CallStatsDialog(
+            title = statsReq.title,
+            subtitle = statsReq.subtitle,
+            entries = statsReq.entries,
+            contacts = contactsState,
+            isUniversal = statsReq.isUniversal,
+            onDismiss = { activeStatsRequest = null }
         )
     }
 }

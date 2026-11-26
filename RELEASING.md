@@ -1,8 +1,8 @@
 # Releasing DialDuo
 
 The release pipeline lives in [`.github/workflows/release.yml`](.github/workflows/release.yml).
-It runs unit tests, builds a **signed release APK** and an **AAB**, verifies the
-signature, and publishes a GitHub Release with checksums.
+It runs unit tests, builds a **signed release APK**, verifies its
+signature, and publishes a GitHub Release.
 
 You only need to set up the signing secrets **once** per repository.
 
@@ -158,8 +158,6 @@ The run creates (or updates) the GitHub Release
 `v<versionName>` with the release notes and attaches:
 
 - `DialDuo-v<versionName>.apk` — signed, installable APK
-- `DialDuo-v<versionName>.aab` — signed bundle for Google Play
-- `SHA256SUMS.txt` — checksums
 
 ---
 

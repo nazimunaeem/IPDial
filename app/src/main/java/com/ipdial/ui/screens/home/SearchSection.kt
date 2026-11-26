@@ -31,13 +31,14 @@ import com.ipdial.ui.theme.glass
 fun SearchBarRow(
     query: String,
     onQueryChange: (String) -> Unit,
-    placeholder: String = "Search history"
+    placeholder: String = "Search history",
+    modifier: Modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 12.dp, vertical = 4.dp)
 ) {
     val isGlass = LocalGlassMode.current != GlassMode.None
     Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 4.dp)
+        modifier = modifier
             .then(if (isGlass) Modifier.glass(RoundedCornerShape(24.dp)) else Modifier),
         shape = RoundedCornerShape(24.dp),
         color = if (isGlass) Color.Transparent else MaterialTheme.colorScheme.surfaceVariant,
