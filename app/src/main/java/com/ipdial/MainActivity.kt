@@ -421,6 +421,8 @@ class MainActivity : ComponentActivity() {
                 val name = i.getStringExtra(CallSchedulerManager.EXTRA_SCHEDULED_CALL_NAME).orEmpty()
                 val number = i.getStringExtra(CallSchedulerManager.EXTRA_SCHEDULED_CALL_NUMBER).orEmpty()
                 val note = i.getStringExtra(CallSchedulerManager.EXTRA_SCHEDULED_CALL_NOTE).orEmpty()
+                val lineId = i.getStringExtra(CallSchedulerManager.EXTRA_SCHEDULED_CALL_LINE_ID)?.takeIf { it.isNotBlank() }
+                val lineLabel = i.getStringExtra(CallSchedulerManager.EXTRA_SCHEDULED_CALL_LINE_LABEL)?.takeIf { it.isNotBlank() }
                 if (number.isNotBlank() && ScheduledCallAlertState.activeAlert.value?.id != callId) {
                     ScheduledCallAlertState.trigger(
                         ScheduledCall(
@@ -429,6 +431,8 @@ class MainActivity : ComponentActivity() {
                             phoneNumber = number,
                             scheduledAtMs = System.currentTimeMillis(),
                             note = note,
+                            lineId = lineId,
+                            lineLabel = lineLabel,
                             status = ScheduledCallStatus.TRIGGERED
                         )
                     )

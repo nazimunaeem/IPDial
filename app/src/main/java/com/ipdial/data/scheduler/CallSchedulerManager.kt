@@ -39,6 +39,8 @@ object CallSchedulerManager {
     const val EXTRA_SCHEDULED_CALL_NAME = "scheduled_call_name"
     const val EXTRA_SCHEDULED_CALL_NUMBER = "scheduled_call_number"
     const val EXTRA_SCHEDULED_CALL_NOTE = "scheduled_call_note"
+    const val EXTRA_SCHEDULED_CALL_LINE_ID = "scheduled_call_line_id"
+    const val EXTRA_SCHEDULED_CALL_LINE_LABEL = "scheduled_call_line_label"
 
     fun requestCodeFor(callId: String): Int = 30_000 + (callId.hashCode() and 0x7FFF)
 
@@ -115,6 +117,8 @@ object CallSchedulerManager {
             putExtra(EXTRA_SCHEDULED_CALL_NAME, call.contactName)
             putExtra(EXTRA_SCHEDULED_CALL_NUMBER, call.phoneNumber)
             putExtra(EXTRA_SCHEDULED_CALL_NOTE, call.note)
+            putExtra(EXTRA_SCHEDULED_CALL_LINE_ID, call.lineId.orEmpty())
+            putExtra(EXTRA_SCHEDULED_CALL_LINE_LABEL, call.lineLabel.orEmpty())
         }
     }
 
@@ -125,6 +129,8 @@ object CallSchedulerManager {
             putExtra(EXTRA_SCHEDULED_CALL_NAME, call.contactName)
             putExtra(EXTRA_SCHEDULED_CALL_NUMBER, call.phoneNumber)
             putExtra(EXTRA_SCHEDULED_CALL_NOTE, call.note)
+            putExtra(EXTRA_SCHEDULED_CALL_LINE_ID, call.lineId.orEmpty())
+            putExtra(EXTRA_SCHEDULED_CALL_LINE_LABEL, call.lineLabel.orEmpty())
         }
         return PendingIntent.getBroadcast(
             context,

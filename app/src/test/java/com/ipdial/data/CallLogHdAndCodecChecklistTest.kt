@@ -6,12 +6,16 @@ import com.ipdial.data.model.CallDirection
 import com.ipdial.data.model.CallLogEntry
 import com.ipdial.data.model.CallTransport
 import com.ipdial.data.model.CodecInfo
+import com.ipdial.data.model.CodecProfile
 import com.ipdial.data.model.CodecQuality
 import com.ipdial.data.model.DEFAULT_ENABLED_CODECS
 import com.ipdial.data.model.PreferredCodec
+import com.ipdial.data.model.SipAccount
+import com.ipdial.data.model.withSanitizedCodecs
 import com.ipdial.data.repository.SystemCallLogRepository
 import com.ipdial.ui.mergeCallLogEntries
 import com.ipdial.ui.screens.checklistCodecs
+import com.ipdial.ui.screens.hasUniversalFallback
 import com.ipdial.ui.screens.matchCodec
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -121,7 +125,6 @@ class CallLogHdAndCodecChecklistTest {
         assertTrue(shown.contains(PreferredCodec.GSM))
         assertTrue(shown.contains(PreferredCodec.Speex))
         assertFalse(shown.contains(PreferredCodec.ILBC))
-        assertFalse(shown.contains(PreferredCodec.Opus))
     }
 
     @Test
@@ -139,6 +142,33 @@ class CallLogHdAndCodecChecklistTest {
         assertTrue(shown.contains(PreferredCodec.G729))
         assertTrue(shown.contains(PreferredCodec.GSM))
         assertFalse(matchCodec(PreferredCodec.G722, "G7221/16000/1"))
+    }
+
+    @Test
+    fun allCodecProfiles_includeUniversalFallbackForReliableCalling() {
+        CodecProfile.entries.forEach { profile ->
+            assertTrue(
+                "Profile ${profile.name} must include a universal fallback codec",
+                hasUniversalFallback(profile.enabled)
+            )
+            profile.preferred?.let { pref ->
+                assertTrue(
+                    "Profile ${profile.name} preferred codec must be in enabled set",
+                    pref in profile.enabled
+                )
+            }
+        }
+    }
+
+    @Test
+    fun sanitizeCodecs_recoversFromEmptyOrRemovedLegacyEntries() {
+        @Suppress("UNCHECKED_CAST")
+        val legacySetWithNull = setOf<PreferredCodec?>(null) as Set<PreferredCodec>
+        val migrated = SipAccount(codec = null, enabledCodecs = legacySetWithNull).withSanitizedCodecs()
+
+        assertEquals(DEFAULT_ENABLED_CODECS, migrated.enabledCodecs)
+        assertEquals(null, migrated.codec)
+        assertTrue(hasUniversalFallback(migrated.enabledCodecs))
     }
 
     private fun codecInfo(id: String, ready: Boolean) = CodecInfo(

@@ -82,6 +82,9 @@ object CallAudioQualityHelper {
             base.contains("PCMA") -> "G.711A"
             base.contains("PCMU") -> "G.711U"
             base.contains("G729") -> "G.729"
+            base.contains("SPEEX") -> "Speex"
+            base.contains("ILBC") -> "iLBC"
+            base.contains("GSM") -> "GSM"
             else -> base
         }
     }

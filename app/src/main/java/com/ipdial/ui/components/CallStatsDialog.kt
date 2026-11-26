@@ -40,6 +40,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -62,6 +63,43 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
+
+/**
+ * Seaborn "deep" chart palette adapted cleanly for light and dark surfaces.
+ */
+object SeabornChartPalette {
+    fun incoming(isDark: Boolean): Color = if (isDark) Color(0xFF6BC080) else Color(0xFF55A868)
+    fun outgoing(isDark: Boolean): Color = if (isDark) Color(0xFF6C8EC9) else Color(0xFF4C72B0)
+    fun missed(isDark: Boolean): Color = if (isDark) Color(0xFFDC6B6F) else Color(0xFFC44E52)
+    fun sim(isDark: Boolean): Color = if (isDark) Color(0xFF7EC8DE) else Color(0xFF64B5CD)
+    fun sip(isDark: Boolean): Color = if (isDark) Color(0xFF9B8EC8) else Color(0xFF8172B3)
+    fun peak(isDark: Boolean): Color = if (isDark) Color(0xFFE89C72) else Color(0xFFDD8452)
+
+    fun categorical(index: Int, isDark: Boolean): Color {
+        val lightColors = listOf(
+            Color(0xFF4C72B0), // Blue
+            Color(0xFFDD8452), // Orange
+            Color(0xFF55A868), // Green
+            Color(0xFFC44E52), // Red
+            Color(0xFF8172B3), // Purple
+            Color(0xFF64B5CD), // Cyan
+            Color(0xFFCCB974), // Gold
+            Color(0xFFDA8BC3), // Pink
+        )
+        val darkColors = listOf(
+            Color(0xFF6C8EC9),
+            Color(0xFFE89C72),
+            Color(0xFF6BC080),
+            Color(0xFFDC6B6F),
+            Color(0xFF9B8EC8),
+            Color(0xFF7EC8DE),
+            Color(0xFFD9C98A),
+            Color(0xFFE3A1D0),
+        )
+        val palette = if (isDark) darkColors else lightColors
+        return palette[index.mod(palette.size)]
+    }
+}
 
 data class DailyCallBucket(
     val dayLabel: String,
@@ -418,7 +456,12 @@ fun CallStatsDialog(
                                 )
                                 Spacer(Modifier.height(10.dp))
 
-                                // Segmented distribution bar
+                                // Segmented distribution bar (Seaborn Deep)
+                                val isDarkSurface = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+                                val incomingColor = SeabornChartPalette.incoming(isDarkSurface)
+                                val outgoingColor = SeabornChartPalette.outgoing(isDarkSurface)
+                                val missedColor = SeabornChartPalette.missed(isDarkSurface)
+
                                 val totalF = stats.totalCalls.coerceAtLeast(1).toFloat()
                                 val inWeight = stats.incomingCalls / totalF
                                 val outWeight = stats.outgoingCalls / totalF
@@ -436,7 +479,7 @@ fun CallStatsDialog(
                                             modifier = Modifier
                                                 .weight(inWeight)
                                                 .fillMaxHeight()
-                                                .background(MaterialTheme.colorScheme.primary)
+                                                .background(incomingColor)
                                         )
                                     }
                                     if (outWeight > 0f) {
@@ -444,7 +487,7 @@ fun CallStatsDialog(
                                             modifier = Modifier
                                                 .weight(outWeight)
                                                 .fillMaxHeight()
-                                                .background(MaterialTheme.colorScheme.tertiary)
+                                                .background(outgoingColor)
                                         )
                                     }
                                     if (missedWeight > 0f) {
@@ -452,7 +495,7 @@ fun CallStatsDialog(
                                             modifier = Modifier
                                                 .weight(missedWeight)
                                                 .fillMaxHeight()
-                                                .background(MaterialTheme.colorScheme.error)
+                                                .background(missedColor)
                                         )
                                     }
                                 }
@@ -467,25 +510,52 @@ fun CallStatsDialog(
                                         icon = Icons.AutoMirrored.Filled.CallReceived,
                                         label = "Incoming",
                                         count = stats.incomingCalls,
-                                        color = MaterialTheme.colorScheme.primary
+                                        color = incomingColor
                                     )
                                     BreakdownItem(
                                         icon = Icons.AutoMirrored.Filled.CallMade,
                                         label = "Outgoing",
                                         count = stats.outgoingCalls,
-                                        color = MaterialTheme.colorScheme.tertiary
+                                        color = outgoingColor
                                     )
                                     BreakdownItem(
                                         icon = Icons.AutoMirrored.Filled.CallMissed,
                                         label = "Missed",
                                         count = stats.missedCalls,
-                                        color = MaterialTheme.colorScheme.error
+                                        color = missedColor
                                     )
                                 }
 
                                 if (stats.simCalls > 0 || stats.sipCalls > 0) {
                                     Spacer(Modifier.height(10.dp))
                                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                                    Spacer(Modifier.height(8.dp))
+                                    val totalLineCount = (stats.simCalls + stats.sipCalls).coerceAtLeast(1).toFloat()
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(6.dp)
+                                            .clip(RoundedCornerShape(3.dp))
+                                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                    ) {
+                                        if (stats.simCalls > 0) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .weight(stats.simCalls / totalLineCount)
+                                                    .fillMaxHeight()
+                                                    .background(SeabornChartPalette.sim(isDarkSurface))
+                                            )
+                                        }
+                                        if (stats.sipCalls > 0) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .weight(stats.sipCalls / totalLineCount)
+                                                    .fillMaxHeight()
+                                                    .background(SeabornChartPalette.sip(isDarkSurface))
+                                            )
+                                        }
+                                    }
                                     Spacer(Modifier.height(8.dp))
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
@@ -506,7 +576,8 @@ fun CallStatsDialog(
                             }
                         }
 
-                        // Last 7 Days Chart
+                        // Last 7 Days Chart (Seaborn Deep)
+                        val isDarkDialogSurface = MaterialTheme.colorScheme.surface.luminance() < 0.5f
                         Card(
                             shape = RoundedCornerShape(16.dp),
                             colors = CardDefaults.cardColors(
@@ -532,6 +603,7 @@ fun CallStatsDialog(
                                     verticalAlignment = Alignment.Bottom
                                 ) {
                                     stats.dailyBuckets.forEach { bucket ->
+                                        val isPeakDay = bucket.totalCalls > 0 && bucket.totalCalls == maxDaily
                                         Column(
                                             modifier = Modifier.weight(1f),
                                             horizontalAlignment = Alignment.CenterHorizontally,
@@ -540,7 +612,12 @@ fun CallStatsDialog(
                                             Text(
                                                 text = if (bucket.totalCalls > 0) bucket.totalCalls.toString() else "",
                                                 style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                color = if (isPeakDay) {
+                                                    SeabornChartPalette.peak(isDarkDialogSurface)
+                                                } else {
+                                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                                },
+                                                fontWeight = if (isPeakDay) FontWeight.Bold else FontWeight.Normal,
                                                 maxLines = 1
                                             )
                                             Spacer(Modifier.height(4.dp))
@@ -548,8 +625,9 @@ fun CallStatsDialog(
                                                 .coerceIn(if (bucket.totalCalls > 0) 0.14f else 0.05f, 1f)
                                             val barColor = when {
                                                 bucket.totalCalls == 0 -> MaterialTheme.colorScheme.surfaceVariant
-                                                bucket.missedCalls == bucket.totalCalls -> MaterialTheme.colorScheme.error.copy(alpha = 0.85f)
-                                                else -> MaterialTheme.colorScheme.primary
+                                                bucket.missedCalls == bucket.totalCalls -> SeabornChartPalette.missed(isDarkDialogSurface)
+                                                isPeakDay -> SeabornChartPalette.peak(isDarkDialogSurface)
+                                                else -> SeabornChartPalette.outgoing(isDarkDialogSurface)
                                             }
                                             Box(
                                                 modifier = Modifier
@@ -590,6 +668,7 @@ fun CallStatsDialog(
                                     )
                                     Spacer(Modifier.height(8.dp))
                                     stats.topContacts.forEachIndexed { idx, top ->
+                                        val rowAccent = SeabornChartPalette.categorical(idx, isDarkDialogSurface)
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
@@ -598,7 +677,7 @@ fun CallStatsDialog(
                                         ) {
                                             Surface(
                                                 shape = CircleShape,
-                                                color = MaterialTheme.colorScheme.primaryContainer,
+                                                color = rowAccent.copy(alpha = 0.18f),
                                                 modifier = Modifier.size(24.dp)
                                             ) {
                                                 Box(contentAlignment = Alignment.Center) {
@@ -606,7 +685,7 @@ fun CallStatsDialog(
                                                         text = "${idx + 1}",
                                                         style = MaterialTheme.typography.labelSmall,
                                                         fontWeight = FontWeight.Bold,
-                                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                                        color = rowAccent
                                                     )
                                                 }
                                             }
@@ -635,7 +714,7 @@ fun CallStatsDialog(
                                                     text = "${top.totalCalls} ${if (top.totalCalls == 1) "call" else "calls"}",
                                                     style = MaterialTheme.typography.labelMedium,
                                                     fontWeight = FontWeight.SemiBold,
-                                                    color = MaterialTheme.colorScheme.primary
+                                                    color = rowAccent
                                                 )
                                                 if (top.totalDurationSeconds > 0L) {
                                                     Text(

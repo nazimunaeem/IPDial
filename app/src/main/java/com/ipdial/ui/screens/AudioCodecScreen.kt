@@ -1,55 +1,91 @@
 package com.ipdial.ui.screens
 
+import android.content.Intent
+import android.provider.Settings
+import android.telecom.TelecomManager
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Hd
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.SimCard
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material3.*
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
-import androidx.compose.runtime.*
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import android.content.Intent
-import android.provider.Settings
-import android.telecom.TelecomManager
-import androidx.compose.material.icons.filled.Hd
-import androidx.compose.material.icons.filled.SimCard
-import androidx.compose.ui.platform.LocalContext
-import com.ipdial.data.model.*
+import com.ipdial.data.model.CodecInfo
+import com.ipdial.data.model.CodecProfile
+import com.ipdial.data.model.DEFAULT_ENABLED_CODECS
+import com.ipdial.data.model.PreferredCodec
+import com.ipdial.data.model.SipAccount
+import com.ipdial.data.model.UNIVERSAL_FALLBACK_CODECS
 import com.ipdial.service.CallAudioQualityHelper
-import com.ipdial.ui.components.IPDialTopBar
 import com.ipdial.ui.SipViewModel
 
 internal fun matchCodec(codec: PreferredCodec, engineName: String): Boolean {
     val name = engineName.lowercase()
     return when (codec) {
+        PreferredCodec.G722 -> name.startsWith("g722/") || name == "g722"
         PreferredCodec.G711A -> name.contains("pcma") || name.contains("g711a")
         PreferredCodec.G711U -> name.contains("pcmu") || name.contains("g711u") || name.contains("g.711u")
-        PreferredCodec.G722 -> name.startsWith("g722/") || name == "g722"
         PreferredCodec.G729 -> name.contains("g729")
-        PreferredCodec.GSM -> name.contains("gsm")
-        PreferredCodec.Opus -> name.contains("opus")
         PreferredCodec.Speex -> name.contains("speex")
+        PreferredCodec.GSM -> name.contains("gsm")
         PreferredCodec.ILBC -> name.contains("ilbc")
     }
 }
+
+internal fun hasUniversalFallback(enabled: Set<PreferredCodec>): Boolean =
+    enabled.any { it in UNIVERSAL_FALLBACK_CODECS }
 
 /**
  * Returns every codec to show in the checklist:
  * - Always includes every [PreferredCodec] that is currently "Ready" in [availableCodecs]
  * - Keeps default/already-enabled supported codecs visible so unchecking one doesn't hide it
- * - Falls back to [DEFAULT_ENABLED_CODECS] when engine codec info isn't available yet.
+ * - Falls back to [DEFAULT_ENABLED_CODECS] + Speex/iLBC when engine codec info isn't available yet.
  */
 internal fun checklistCodecs(
     availableCodecs: List<CodecInfo>,
@@ -68,6 +104,20 @@ internal fun checklistCodecs(
     }.ifEmpty {
         PreferredCodec.entries.filter { it in DEFAULT_ENABLED_CODECS }
     }
+}
+
+private fun toggleAccountCodec(account: SipAccount, codec: PreferredCodec): SipAccount? {
+    val set = account.enabledCodecs.toMutableSet()
+    if (set.contains(codec)) set.remove(codec) else set.add(codec)
+    if (set.isEmpty()) return null
+    val preferred = if (account.codec == codec && !set.contains(codec)) null else account.codec
+    return account.copy(enabledCodecs = set, codec = preferred)
+}
+
+private fun togglePreferredCodec(account: SipAccount, codec: PreferredCodec): SipAccount {
+    if (!account.enabledCodecs.contains(codec)) return account
+    val next = if (account.codec == codec) null else codec
+    return account.copy(codec = next)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -121,36 +171,103 @@ fun AudioCodecScreen(
             }
 
             if (enabledAccounts.isNotEmpty()) {
-                item {
-                    Text(
-                        "Enabled Codecs",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(vertical = 8.dp)
-                    )
-                }
-
                 if (enabledAccounts.size > 1) {
+                    item {
+                        Text(
+                            "SIP Codec Profiles & Codecs",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
                     items(enabledAccounts) { account ->
                         AccountCodecSection(
                             account = account,
                             availableCodecs = availableCodecs,
+                            onApplyProfile = { profile ->
+                                vm.saveAccount(
+                                    account.copy(
+                                        enabledCodecs = profile.enabled,
+                                        codec = profile.preferred
+                                    )
+                                )
+                            },
+                            onRestoreFallbacks = {
+                                vm.saveAccount(
+                                    account.copy(
+                                        enabledCodecs = account.enabledCodecs + UNIVERSAL_FALLBACK_CODECS
+                                    )
+                                )
+                            },
+                            onClearPreferred = {
+                                vm.saveAccount(account.copy(codec = null))
+                            },
                             onToggleCodec = { codec ->
-                                val set = account.enabledCodecs.toMutableSet()
-                                if (set.contains(codec)) set.remove(codec) else set.add(codec)
-                                if (set.isNotEmpty()) {
-                                    val preferred = if (account.codec == codec && !set.contains(codec))
-                                        set.first() else account.codec
-                                    vm.saveAccount(account.copy(enabledCodecs = set, codec = preferred))
-                                }
+                                toggleAccountCodec(account, codec)?.let { vm.saveAccount(it) }
                             },
                             onSelectPreferred = { codec ->
-                                vm.saveAccount(account.copy(codec = codec))
+                                vm.saveAccount(togglePreferredCodec(account, codec))
                             }
                         )
                     }
                 } else if (activeAccount != null) {
                     val acct = activeAccount!!
+                    item {
+                        CodecProfileSelector(
+                            account = acct,
+                            onSelectProfile = { profile ->
+                                vm.saveAccount(
+                                    acct.copy(
+                                        enabledCodecs = profile.enabled,
+                                        codec = profile.preferred
+                                    )
+                                )
+                            }
+                        )
+                    }
+                    if (!hasUniversalFallback(acct.enabledCodecs)) {
+                        item {
+                            CompatibilityWarningCard(
+                                onRestoreFallbacks = {
+                                    vm.saveAccount(
+                                        acct.copy(
+                                            enabledCodecs = acct.enabledCodecs + UNIVERSAL_FALLBACK_CODECS
+                                        )
+                                    )
+                                }
+                            )
+                        }
+                    }
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                "Enabled Codecs",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            if (acct.codec != null) {
+                                TextButton(
+                                    onClick = { vm.saveAccount(acct.copy(codec = null)) },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                ) {
+                                    Text("Use Auto Priority")
+                                }
+                            } else {
+                                Text(
+                                    text = "Auto Priority",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
                     items(availablePreferredCodecs) { codec ->
                         CodecSelectionRow(
                             codec = codec,
@@ -158,16 +275,10 @@ fun AudioCodecScreen(
                             isPreferred = acct.codec == codec,
                             isEngineAvailable = true,
                             onToggleEnabled = {
-                                val set = acct.enabledCodecs.toMutableSet()
-                                if (set.contains(codec)) set.remove(codec) else set.add(codec)
-                                if (set.isNotEmpty()) {
-                                    val preferred = if (acct.codec == codec && !set.contains(codec))
-                                        set.first() else acct.codec
-                                    vm.saveAccount(acct.copy(enabledCodecs = set, codec = preferred))
-                                }
+                                toggleAccountCodec(acct, codec)?.let { vm.saveAccount(it) }
                             },
                             onSetPreferred = {
-                                if (acct.enabledCodecs.contains(codec)) vm.saveAccount(acct.copy(codec = codec))
+                                vm.saveAccount(togglePreferredCodec(acct, codec))
                             }
                         )
                     }
@@ -179,13 +290,16 @@ fun AudioCodecScreen(
                     "System Availability & Quality",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
+                    modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)
                 )
             }
 
             if (availableCodecs.isEmpty()) {
                 item {
-                    Text("No engine info available. Register an account first.", color = MaterialTheme.colorScheme.outline)
+                    Text(
+                        "No engine info available. Register an account first.",
+                        color = MaterialTheme.colorScheme.outline
+                    )
                 }
             } else {
                 items(availableCodecs) { info ->
@@ -196,10 +310,117 @@ fun AudioCodecScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CodecProfileSelector(
+    account: SipAccount,
+    onSelectProfile: (CodecProfile) -> Unit
+) {
+    val activeProfile = remember(account.codec, account.enabledCodecs) {
+        CodecProfile.matching(account)
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = "Quick Preset",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold
+            )
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                CodecProfile.entries.forEach { profile ->
+                    val selected = activeProfile == profile
+                    FilterChip(
+                        selected = selected,
+                        onClick = { onSelectProfile(profile) },
+                        label = { Text(profile.title) },
+                        leadingIcon = if (selected) {
+                            {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(FilterChipDefaults.IconSize)
+                                )
+                            }
+                        } else null
+                    )
+                }
+            }
+            Text(
+                text = activeProfile?.subtitle
+                    ?: "Custom selection (${account.enabledCodecs.size} enabled${account.codec?.let { ", ${it.name} preferred" } ?: ", Auto priority"})",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun CompatibilityWarningCard(
+    onRestoreFallbacks: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f)
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Warning,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onErrorContainer
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Compatibility fallback missing",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onErrorContainer
+                )
+                Text(
+                    text = "Keep at least one standard codec (G.711A, G.711U, or G.729) enabled so providers don't reject calls.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer
+                )
+            }
+            TextButton(onClick = onRestoreFallbacks) {
+                Text(
+                    "Fix",
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    }
+}
+
 @Composable
 fun AccountCodecSection(
     account: SipAccount,
     availableCodecs: List<CodecInfo>,
+    onApplyProfile: (CodecProfile) -> Unit,
+    onRestoreFallbacks: () -> Unit,
+    onClearPreferred: () -> Unit,
     onToggleCodec: (PreferredCodec) -> Unit,
     onSelectPreferred: (PreferredCodec) -> Unit
 ) {
@@ -210,14 +431,37 @@ fun AccountCodecSection(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
     ) {
-        Column(Modifier.padding(12.dp)) {
-            Text(
-                text = account.label.ifBlank { account.domain },
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = account.label.ifBlank { account.domain },
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                if (account.codec != null) {
+                    TextButton(
+                        onClick = onClearPreferred,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Text("Auto Priority")
+                    }
+                }
+            }
+            CodecProfileSelector(
+                account = account,
+                onSelectProfile = onApplyProfile
             )
-            Spacer(Modifier.height(8.dp))
+            if (!hasUniversalFallback(account.enabledCodecs)) {
+                CompatibilityWarningCard(onRestoreFallbacks = onRestoreFallbacks)
+            }
             availablePreferredCodecs.forEach { codec ->
                 CodecSelectionRow(
                     codec = codec,
@@ -241,7 +485,7 @@ fun InfoCard() {
             Icon(Icons.Default.Info, null, tint = MaterialTheme.colorScheme.primary)
             Spacer(Modifier.width(16.dp))
             Text(
-                "Opus and G.722 deliver HD wideband SIP voice when supported by your provider; G.711 is the standard fallback.",
+                "G.722 delivers HD wideband SIP voice when supported by your provider; G.711 (PCMA/PCMU) and G.729 ensure reliable calls across BD & global networks.",
                 style = MaterialTheme.typography.bodyMedium
             )
         }
@@ -336,9 +580,9 @@ fun CodecSelectionRow(
         onClick = onToggleEnabled,
         shape = RoundedCornerShape(12.dp),
         color = if (isEnabled) MaterialTheme.colorScheme.primaryContainer
-                else MaterialTheme.colorScheme.surface,
+        else MaterialTheme.colorScheme.surface,
         border = if (isEnabled) null
-                 else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         enabled = isEngineAvailable
     ) {
         Row(
@@ -359,13 +603,21 @@ fun CodecSelectionRow(
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = codec.name,
+                        text = when (codec) {
+                            PreferredCodec.G722 -> "G.722"
+                            PreferredCodec.G711A -> "G.711A (PCMA)"
+                            PreferredCodec.G711U -> "G.711U (PCMU)"
+                            PreferredCodec.G729 -> "G.729"
+                            PreferredCodec.Speex -> "Speex"
+                            PreferredCodec.GSM -> "GSM"
+                            PreferredCodec.ILBC -> "iLBC"
+                        },
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = if (isEnabled) FontWeight.Bold else FontWeight.Normal,
                         color = if (isEngineAvailable) MaterialTheme.colorScheme.onSurface
-                                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
                     )
-                    if (codec == PreferredCodec.Opus || codec == PreferredCodec.G722) {
+                    if (codec == PreferredCodec.G722 || codec == PreferredCodec.Speex) {
                         Spacer(Modifier.width(6.dp))
                         Icon(
                             imageVector = Icons.Default.Hd,
@@ -385,21 +637,20 @@ fun CodecSelectionRow(
                     }
                 }
                 Text(
-                    text = when(codec) {
-                        PreferredCodec.G711A -> "Best compatibility (PCMA) · 64 kbps · MOS 4.1"
-                        PreferredCodec.G711U -> "Standard (PCMU) · 64 kbps · MOS 4.1"
-                        PreferredCodec.G722 -> "High Definition · 48 kbps · MOS 4.0"
-                        PreferredCodec.G729 -> "Low Bandwidth · 8 kbps · MOS 3.9"
-                        PreferredCodec.GSM -> "Mobile Fallback · 13 kbps · MOS 3.5"
-                        PreferredCodec.Opus -> "Best quality & adaptability · variable bitrate"
-                        PreferredCodec.Speex -> "Adaptive wideband/narrowband · 15 kbps"
-                        PreferredCodec.ILBC -> "Packet-loss resilient · 15 kbps"
+                    text = when (codec) {
+                        PreferredCodec.G722 -> "HD Wideband (16 kHz) · 48 kbps · Best clarity"
+                        PreferredCodec.G711A -> "Standard A-Law · 64 kbps · BD & Asia default"
+                        PreferredCodec.G711U -> "Standard u-Law · 64 kbps · Global fallback"
+                        PreferredCodec.G729 -> "Low Bandwidth · 8 kbps · BD VoIP & mobile data"
+                        PreferredCodec.Speex -> "Adaptive Wideband (16 kHz) · 15–27 kbps"
+                        PreferredCodec.GSM -> "Lightweight fallback · 13 kbps"
+                        PreferredCodec.ILBC -> "Packet-loss resilient · 15 kbps · Weak networks"
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = if (isEnabled) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
-                            else MaterialTheme.colorScheme.onSurfaceVariant.copy(
-                                alpha = if (isEngineAvailable) 1f else 0.38f
-                            )
+                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                        alpha = if (isEngineAvailable) 1f else 0.38f
+                    )
                 )
                 if (!isEngineAvailable) {
                     Text(
@@ -415,10 +666,10 @@ fun CodecSelectionRow(
                     enabled = isEngineAvailable
                 ) {
                     Icon(
-                        Icons.Default.Star,
-                        null,
+                        imageVector = Icons.Default.Star,
+                        contentDescription = if (isPreferred) "Clear preferred codec" else "Set as preferred codec",
                         tint = if (isPreferred) MaterialTheme.colorScheme.primary
-                               else MaterialTheme.colorScheme.outline
+                        else MaterialTheme.colorScheme.outline
                     )
                 }
             }

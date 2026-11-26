@@ -1,15 +1,11 @@
 package com.ipdial.ui.screens
 
-import android.Manifest
 import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.ContactsContract
 import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -90,7 +86,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -107,10 +102,11 @@ import com.ipdial.ui.components.ContactAvatar
 import com.ipdial.ui.components.NumberPickerDialog
 import com.ipdial.ui.components.filterHistoryForTarget
 import com.ipdial.ui.screens.call.formatDuration
+import com.ipdial.ui.screens.home.CompactLineBadge
+import com.ipdial.ui.screens.home.callDirectionColor
 import com.ipdial.ui.theme.GlassMode
 import com.ipdial.ui.theme.LocalGlassMode
 import com.ipdial.ui.theme.glass
-import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -261,7 +257,6 @@ fun ContactDetailsContent(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
     val isGlass = LocalGlassMode.current != GlassMode.None
 
@@ -271,7 +266,6 @@ fun ContactDetailsContent(
     var refreshTrigger by remember { mutableIntStateOf(0) }
     var detailInfo by remember(contact.id) { mutableStateOf<ContactDetailInfo?>(null) }
     var showDeleteDialog by remember { mutableStateOf(false) }
-    var isDeleting by remember { mutableStateOf(false) }
     var pendingHeroAction by remember { mutableStateOf<HeroActionType?>(null) }
     var showAllHistory by remember(contact.id) { mutableStateOf(false) }
     var showContactStats by remember { mutableStateOf(false) }
@@ -297,37 +291,6 @@ fun ContactDetailsContent(
 
     LaunchedEffect(contact.id, contact.name, contact.numbers, contact.photoUri, refreshTrigger) {
         detailInfo = vm.loadContactDetails(contact)
-    }
-
-    val performDelete: () -> Unit = {
-        if (!isDeleting) {
-            isDeleting = true
-            coroutineScope.launch {
-                val removed = vm.deleteContact(contact.id)
-                isDeleting = false
-                if (removed) {
-                    showDeleteDialog = false
-                    Toast.makeText(context, "Contact deleted", Toast.LENGTH_SHORT).show()
-                    onContactDeleted()
-                } else {
-                    Toast.makeText(context, "Could not delete contact", Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
-    }
-
-    val writeContactsLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) {
-            performDelete()
-        } else {
-            Toast.makeText(
-                context,
-                "Contacts write permission is required to delete this contact",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
     }
 
     val phones: List<ContactPhoneNumber> = detailInfo?.phones
@@ -799,7 +762,7 @@ fun ContactDetailsContent(
                                         else -> Icons.AutoMirrored.Filled.CallMade
                                     },
                                     contentDescription = callTypeText,
-                                    tint = if (entry.missed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    tint = callDirectionColor(entry),
                                     modifier = Modifier.size(18.dp)
                                 )
                                 Spacer(Modifier.width(12.dp))
@@ -814,8 +777,14 @@ fun ContactDetailsContent(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
+                                        CompactLineBadge(
+                                            label = viaLabel,
+                                            transport = entry.transport,
+                                            accountId = entry.accountId,
+                                            modifier = Modifier.widthIn(max = 110.dp)
+                                        )
                                         Text(
-                                            text = "$callTypeText$durationStr • $viaLabel$numberSuffix",
+                                            text = "$callTypeText$durationStr$numberSuffix",
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             maxLines = 1,
@@ -987,39 +956,28 @@ fun ContactDetailsContent(
 
     if (showDeleteDialog) {
         AlertDialog(
-            onDismissRequest = { if (!isDeleting) showDeleteDialog = false },
-            title = { Text("Delete Contact?") },
+            onDismissRequest = { showDeleteDialog = false },
+            title = { Text("Delete Contact") },
             text = {
-                Text("Remove ${contact.name} from your device contacts? This cannot be undone.")
+                Text("Open ${contact.name} in your device Contacts app to delete or manage it.")
             },
             confirmButton = {
                 Button(
-                    enabled = !isDeleting,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.error,
                         contentColor = MaterialTheme.colorScheme.onError
                     ),
                     onClick = {
-                        val hasWritePermission = ContextCompat.checkSelfPermission(
-                            context,
-                            Manifest.permission.WRITE_CONTACTS
-                        ) == PackageManager.PERMISSION_GRANTED
-                        if (hasWritePermission) {
-                            performDelete()
-                        } else {
-                            writeContactsLauncher.launch(Manifest.permission.WRITE_CONTACTS)
-                        }
+                        showDeleteDialog = false
+                        launchSystemViewContact(context, contact.id)
                     },
                     modifier = Modifier.testTag("confirm_delete_contact_button")
                 ) {
-                    Text(if (isDeleting) "Deleting..." else "Delete")
+                    Text("Open Contacts")
                 }
             },
             dismissButton = {
-                TextButton(
-                    enabled = !isDeleting,
-                    onClick = { showDeleteDialog = false }
-                ) {
+                TextButton(onClick = { showDeleteDialog = false }) {
                     Text("Cancel")
                 }
             }
@@ -1089,6 +1047,20 @@ private fun launchSmsMessage(context: Context, rawNumber: String) {
         context.startActivity(intent)
     } catch (_: Exception) {
         Toast.makeText(context, "No messaging app found", Toast.LENGTH_SHORT).show()
+    }
+}
+
+private fun launchSystemViewContact(context: Context, contactId: String) {
+    val idLong = contactId.toLongOrNull()
+    if (idLong == null) {
+        Toast.makeText(context, "Cannot open this contact", Toast.LENGTH_SHORT).show()
+        return
+    }
+    val contactUri = ContentUris.withAppendedId(ContactsContract.Contacts.CONTENT_URI, idLong)
+    try {
+        context.startActivity(Intent(Intent.ACTION_VIEW, contactUri))
+    } catch (_: Exception) {
+        Toast.makeText(context, "No contacts app found", Toast.LENGTH_SHORT).show()
     }
 }
 

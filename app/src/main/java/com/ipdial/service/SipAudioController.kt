@@ -14,16 +14,16 @@ import org.pjsip.pjsua2.*
 object SipAudioController {
 
     private const val TAG = "SipEngine"
-    const val MIC_GAIN_REAL = 1.2f
+    const val MIC_GAIN_REAL = 1.15f
     const val MIC_GAIN_EMULATOR = 2.5f
 
     /**
-     * Fixed default PJSIP RX bridge gain applied at call start. Set to 6f (maps to
-     * 2.0x via [callVolumeToPjsipLevel]) so a fresh call is clear and audible out of the
-     * box, while the phone's native STREAM_VOICE_CALL volume controls the full physical
-     * volume range via the default system volume slider.
+     * Fixed default PJSIP RX bridge gain applied at call start. Set to 4.2f (maps to
+     * 1.4x via [callVolumeToPjsipLevel]) for crisp, clear speech without digital peak
+     * clipping on wideband G.722 or loud voices, while native STREAM_VOICE_CALL volume
+     * controls full output loudness via the hardware rocker.
      */
-    const val DEFAULT_RX_VOLUME = 6f
+    const val DEFAULT_RX_VOLUME = 4.2f
 
     /** DTMF digits keyed while the call media was not yet ACTIVE (CALLING/EARLY or
      * re-INVITE unhold), flushed by [flushPendingDtmf] once the audio path is up. */

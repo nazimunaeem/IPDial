@@ -28,6 +28,8 @@ class ScheduledCallReceiver : BroadcastReceiver() {
                             phoneNumber = intent.getStringExtra(CallSchedulerManager.EXTRA_SCHEDULED_CALL_NUMBER).orEmpty(),
                             scheduledAtMs = System.currentTimeMillis(),
                             note = intent.getStringExtra(CallSchedulerManager.EXTRA_SCHEDULED_CALL_NOTE).orEmpty(),
+                            lineId = intent.getStringExtra(CallSchedulerManager.EXTRA_SCHEDULED_CALL_LINE_ID)?.takeIf { it.isNotBlank() },
+                            lineLabel = intent.getStringExtra(CallSchedulerManager.EXTRA_SCHEDULED_CALL_LINE_LABEL)?.takeIf { it.isNotBlank() },
                             status = ScheduledCallStatus.TRIGGERED
                         )
                         if (call.phoneNumber.isNotBlank()) {

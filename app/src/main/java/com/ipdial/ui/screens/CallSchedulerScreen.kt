@@ -53,6 +53,8 @@ import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SimCard
+import androidx.compose.material.icons.filled.WifiCalling3
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -102,10 +104,12 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.ipdial.data.model.Contact
+import com.ipdial.data.model.SipAccount
 import com.ipdial.data.scheduler.ScheduledCall
 import com.ipdial.data.scheduler.ScheduledCallStatus
 import com.ipdial.data.scheduler.combineDateAndTimeMillis
 import com.ipdial.data.scheduler.formatCountdownLabel
+import com.ipdial.service.sim.SimLine
 import com.ipdial.ui.SipViewModel
 import com.ipdial.ui.components.ContactAvatar
 import com.ipdial.ui.theme.GlassMode
@@ -132,6 +136,9 @@ fun CallSchedulerScreen(
     val context = LocalContext.current
     val scheduledCalls by vm.scheduledCalls.collectAsState()
     val contacts by vm.contacts.collectAsState()
+    val simLines by vm.simLines.collectAsState()
+    val accounts by vm.accounts.collectAsState()
+    val enabledSipAccounts = remember(accounts) { accounts.filter { it.isEnabled } }
     val isGlass = LocalGlassMode.current != GlassMode.None
 
     val upcomingCalls = remember(scheduledCalls) {
@@ -158,6 +165,7 @@ fun CallSchedulerScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(Unit) {
         canScheduleExact = hasExactAlarmPermission(context)
+        vm.refreshSimAccounts()
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) {
             vm.syncContacts()
         }
@@ -166,6 +174,7 @@ fun CallSchedulerScreen(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 canScheduleExact = hasExactAlarmPermission(context)
+                vm.refreshSimAccounts()
                 if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) {
                     vm.syncContacts()
                 }
@@ -435,14 +444,18 @@ fun CallSchedulerScreen(
         ScheduleCallEditorSheet(
             initialCall = editingCall,
             contacts = contacts,
+            simLines = simLines,
+            enabledAccounts = enabledSipAccounts,
             onSyncContacts = { vm.syncContacts() },
             onDismiss = { showEditorSheet = false },
-            onSave = { name, number, timeMs, note, existingId ->
+            onSave = { name, number, timeMs, note, lineId, lineLabel, existingId ->
                 vm.scheduleCall(
                     contactName = name,
                     phoneNumber = number,
                     scheduledAtMs = timeMs,
                     note = note,
+                    lineId = lineId,
+                    lineLabel = lineLabel,
                     existingId = existingId
                 )
                 showEditorSheet = false
@@ -520,8 +533,13 @@ private fun ScheduledCallCard(
                         )
                     }
                     Spacer(Modifier.height(2.dp))
+                    val lineTag = call.lineLabel?.takeIf { it.isNotBlank() }
                     Text(
-                        text = dateFormat.format(Date(call.scheduledAtMs)),
+                        text = if (lineTag != null) {
+                            "${dateFormat.format(Date(call.scheduledAtMs))} • $lineTag"
+                        } else {
+                            dateFormat.format(Date(call.scheduledAtMs))
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onSurface
@@ -608,9 +626,19 @@ private fun ScheduledCallCard(
 private fun ScheduleCallEditorSheet(
     initialCall: ScheduledCall?,
     contacts: List<Contact>,
+    simLines: List<SimLine>,
+    enabledAccounts: List<SipAccount>,
     onSyncContacts: () -> Unit,
     onDismiss: () -> Unit,
-    onSave: (contactName: String, phoneNumber: String, scheduledAtMs: Long, note: String, existingId: String?) -> Unit
+    onSave: (
+        contactName: String,
+        phoneNumber: String,
+        scheduledAtMs: Long,
+        note: String,
+        lineId: String?,
+        lineLabel: String?,
+        existingId: String?
+    ) -> Unit
 ) {
     val defaultTime = remember(initialCall) {
         val base = initialCall?.scheduledAtMs?.takeIf { it > System.currentTimeMillis() + 60_000L }
@@ -625,6 +653,8 @@ private fun ScheduleCallEditorSheet(
     var contactName by remember(initialCall) { mutableStateOf(initialCall?.contactName ?: "") }
     var phoneNumber by remember(initialCall) { mutableStateOf(initialCall?.phoneNumber ?: "") }
     var note by remember(initialCall) { mutableStateOf(initialCall?.note ?: "") }
+    var selectedLineId by remember(initialCall) { mutableStateOf(initialCall?.lineId?.takeIf { it.isNotBlank() }) }
+    var selectedLineLabel by remember(initialCall) { mutableStateOf(initialCall?.lineLabel?.takeIf { it.isNotBlank() }) }
     var selectedHour by remember(initialCall) { mutableIntStateOf(defaultTime.get(Calendar.HOUR_OF_DAY)) }
     var selectedMinute by remember(initialCall) { mutableIntStateOf(defaultTime.get(Calendar.MINUTE)) }
     var selectedDateUtcMs by remember(initialCall) {
@@ -667,6 +697,70 @@ private fun ScheduleCallEditorSheet(
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
+
+            if (simLines.isNotEmpty() || enabledAccounts.isNotEmpty()) {
+                Text(
+                    text = "Calling Line",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.testTag("scheduler_line_presets")
+                ) {
+                    FilterChip(
+                        selected = selectedLineId == null,
+                        onClick = {
+                            selectedLineId = null
+                            selectedLineLabel = null
+                        },
+                        label = { Text("Ask") },
+                        modifier = Modifier.testTag("scheduler_line_ask")
+                    )
+
+                    simLines.forEachIndexed { idx, sim ->
+                        FilterChip(
+                            selected = selectedLineId == sim.id || selectedLineId == sim.handle.id,
+                            onClick = {
+                                selectedLineId = sim.id
+                                selectedLineLabel = sim.label
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.SimCard,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            },
+                            label = { Text(sim.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            modifier = Modifier.testTag("scheduler_line_sim_$idx")
+                        )
+                    }
+
+                    enabledAccounts.forEach { account ->
+                        val sipLabel = account.label.ifBlank { account.domain }
+                        FilterChip(
+                            selected = selectedLineId == account.id,
+                            onClick = {
+                                selectedLineId = account.id
+                                selectedLineLabel = sipLabel
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.WifiCalling3,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            },
+                            label = { Text(sipLabel, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            modifier = Modifier.testTag("scheduler_line_sip_${account.id}")
+                        )
+                    }
+                }
+            }
 
             OutlinedButton(
                 onClick = { showContactPicker = true },
@@ -829,6 +923,8 @@ private fun ScheduleCallEditorSheet(
                                     trimmedNum,
                                     combinedMillis,
                                     note.trim(),
+                                    selectedLineId,
+                                    selectedLineLabel,
                                     initialCall?.id?.takeIf { initialCall.status == ScheduledCallStatus.PENDING }
                                 )
                             }

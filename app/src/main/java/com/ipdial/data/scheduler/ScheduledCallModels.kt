@@ -23,6 +23,8 @@ data class ScheduledCall(
     val phoneNumber: String = "",
     val scheduledAtMs: Long = 0L,
     val note: String = "",
+    val lineId: String? = null,
+    val lineLabel: String? = null,
     val status: ScheduledCallStatus = ScheduledCallStatus.PENDING,
     val createdAtMs: Long = System.currentTimeMillis()
 ) {

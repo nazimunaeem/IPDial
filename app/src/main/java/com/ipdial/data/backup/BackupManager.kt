@@ -16,6 +16,7 @@ import com.ipdial.data.model.CallLogEntry
 import com.ipdial.data.model.PreferredCodec
 import com.ipdial.data.model.RegStatus
 import com.ipdial.data.model.SipAccount
+import com.ipdial.data.model.withSanitizedCodecs
 import com.ipdial.data.repository.AccountRepository
 import com.ipdial.data.repository.CallLogRepository
 import com.ipdial.data.repository.SystemCallLogRepository
@@ -478,7 +479,10 @@ object BackupManager {
 
     internal fun parseAccountsJson(text: String): List<SipAccount> {
         val type = object : TypeToken<List<SipAccount>>() {}.type
-        return runCatching { gson.fromJson<List<SipAccount>>(text, type) }.getOrNull() ?: emptyList()
+        return runCatching { gson.fromJson<List<SipAccount>>(text, type) }
+            .getOrNull()
+            ?.map { it.withSanitizedCodecs() }
+            ?: emptyList()
     }
 
     internal fun parseCallHistoryJson(text: String): List<CallLogEntry> {

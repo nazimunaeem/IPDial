@@ -68,6 +68,8 @@ import com.ipdial.ui.SipViewModel
 import com.ipdial.ui.screens.dialpad.DialpadKeypad
 import com.ipdial.ui.screens.dialpad.SuggestedContactRow
 import com.ipdial.ui.screens.dialpad.T9_MAP
+import com.ipdial.ui.screens.dialpad.isOneHanded
+import com.ipdial.ui.screens.dialpad.oneHandKeypadWidth
 import com.ipdial.ui.theme.ForestGreen
 import kotlinx.coroutines.awaitCancellation
 
@@ -495,10 +497,20 @@ fun DialpadScreen(
                 )
                 // Ad above digit box (only when a banner will actually render, otherwise
                 // Dial display row
+                val displayRowStartPad = when (keypadDesign) {
+                    KeypadDesign.OneHandLeft -> 12.dp
+                    KeypadDesign.OneHandRight -> 56.dp
+                    else -> 24.dp
+                }
+                val displayRowEndPad = when (keypadDesign) {
+                    KeypadDesign.OneHandLeft -> 56.dp
+                    KeypadDesign.OneHandRight -> 12.dp
+                    else -> 24.dp
+                }
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 24.dp),
+                        .padding(start = displayRowStartPad, end = displayRowEndPad),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -622,21 +634,55 @@ fun DialpadScreen(
                 if (keypadDesign != KeypadDesign.Ring) {
                     Spacer(Modifier.height(13.dp))
 
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier
-                            .width(if (isWide) 220.dp else 150.dp)
-                            .height(if (isWide) 72.dp else 62.dp)
-                            .clip(CircleShape)
-                            .background(ForestGreen)
-                            .clickableWithRipple(onClick = callAction)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Call,
-                            contentDescription = "Call",
-                            tint = Color.White,
-                            modifier = Modifier.size(if (isWide) 34.dp else 28.dp)
-                        )
+                    if (keypadDesign.isOneHanded()) {
+                        val isLeft = keypadDesign == KeypadDesign.OneHandLeft
+                        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                            val blockWidth = oneHandKeypadWidth(maxWidth, isWide = isWide)
+                            Box(
+                                modifier = Modifier
+                                    .align(if (isLeft) Alignment.CenterStart else Alignment.CenterEnd)
+                                    .padding(
+                                        start = if (isLeft) 14.dp else 0.dp,
+                                        end = if (!isLeft) 14.dp else 0.dp
+                                    )
+                                    .width(blockWidth),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier
+                                        .width(if (isWide) 180.dp else 136.dp)
+                                        .height(if (isWide) 64.dp else 56.dp)
+                                        .clip(CircleShape)
+                                        .background(ForestGreen)
+                                        .clickableWithRipple(onClick = callAction)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Call,
+                                        contentDescription = "Call",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(if (isWide) 32.dp else 26.dp)
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .width(if (isWide) 220.dp else 150.dp)
+                                .height(if (isWide) 72.dp else 62.dp)
+                                .clip(CircleShape)
+                                .background(ForestGreen)
+                                .clickableWithRipple(onClick = callAction)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Call,
+                                contentDescription = "Call",
+                                tint = Color.White,
+                                modifier = Modifier.size(if (isWide) 34.dp else 28.dp)
+                            )
+                        }
                     }
                 }
 

@@ -6,6 +6,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -44,6 +45,17 @@ import com.ipdial.ui.theme.ForestGreen
 import com.ipdial.ui.theme.GlassMode
 import com.ipdial.ui.theme.LocalGlassMode
 import com.ipdial.ui.theme.glass
+
+fun KeypadDesign.isOneHanded(): Boolean =
+    this == KeypadDesign.OneHandLeft || this == KeypadDesign.OneHandRight
+
+fun oneHandKeypadWidth(availableWidth: Dp, isWide: Boolean, inSidePane: Boolean = false): Dp {
+    if (inSidePane) {
+        return minOf(availableWidth * 0.88f, 260.dp).coerceAtLeast(minOf(availableWidth, 180.dp))
+    }
+    val cap = if (isWide) 320.dp else 284.dp
+    return minOf(availableWidth * 0.78f, cap)
+}
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -176,6 +188,61 @@ fun DialpadKeypad(
                         tint = Color.White,
                         modifier = Modifier.size(centerSize * 0.42f)
                     )
+                }
+            }
+        }
+    } else if (design.isOneHanded()) {
+        val isLeft = design == KeypadDesign.OneHandLeft
+        val outerMargin = if (paneWidth != null) 4.dp else 14.dp
+        val keyGap = if (paneWidth != null) 6.dp else 8.dp
+        val oneHandHeight = if (paneWidth != null) 48.dp else if (isLandscape) 48.dp else 56.dp
+
+        BoxWithConstraints(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            val availWidth = paneWidth ?: maxWidth
+            val blockWidth = oneHandKeypadWidth(
+                availableWidth = availWidth,
+                isWide = isWide,
+                inSidePane = paneWidth != null
+            )
+            val blockAlignment = if (isLeft) Alignment.CenterStart else Alignment.CenterEnd
+
+            Column(
+                modifier = Modifier
+                    .align(blockAlignment)
+                    .padding(
+                        start = if (isLeft) outerMargin else 0.dp,
+                        end = if (!isLeft) outerMargin else 0.dp
+                    )
+                    .width(blockWidth),
+                verticalArrangement = Arrangement.spacedBy(keyGap)
+            ) {
+                keys.chunked(3).forEach { row ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(keyGap)
+                    ) {
+                        row.forEach { (digit, sub, _) ->
+                            DialKeyOneHand(
+                                digit = digit,
+                                subLabel = sub,
+                                height = oneHandHeight,
+                                showDigit = showDigits,
+                                onClick = {
+                                    if (vibrateOnPress) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    onKeyPress(digit[0])
+                                },
+                                onLongClick = if (digit == "0") {
+                                    {
+                                        if (vibrateOnPress) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        onZeroLongPress()
+                                    }
+                                } else null,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -388,6 +455,60 @@ fun DialKey(
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                     fontSize = if (height > 60.dp) 12.sp else 10.sp
                 )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun DialKeyOneHand(
+    digit: String,
+    subLabel: String,
+    height: Dp,
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
+    showDigit: Boolean = true,
+    modifier: Modifier = Modifier
+) {
+    val isGlass = LocalGlassMode.current != GlassMode.None
+    val shape = RoundedCornerShape(18.dp)
+    Surface(
+        shape = shape,
+        color = if (isGlass) Color.Transparent else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
+        modifier = modifier
+            .height(height)
+            .then(if (isGlass) Modifier.glass(shape) else Modifier)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                if (showDigit) {
+                    Text(
+                        text = digit,
+                        style = MaterialTheme.typography.headlineMedium.copy(
+                            fontWeight = FontWeight.Normal,
+                            fontSize = if (height >= 54.dp) 26.sp else 22.sp
+                        ),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        lineHeight = if (height >= 54.dp) 26.sp else 22.sp
+                    )
+                }
+                if (subLabel.isNotBlank() && digit.any { it.isDigit() }) {
+                    Text(
+                        text = subLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
+                        fontSize = if (height >= 54.dp) 11.sp else 10.sp,
+                        lineHeight = if (height >= 54.dp) 11.sp else 10.sp
+                    )
+                }
             }
         }
     }

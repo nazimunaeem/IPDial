@@ -40,24 +40,98 @@ enum class Transport { UDP, TCP, TLS }
 enum class TurnTransport { UDP, TCP, TLS }
 
 enum class PreferredCodec {
-    G711U,
-    G711A,
     G722,
+    G711A,
+    G711U,
     G729,
-    GSM,
-    Opus,
     Speex,
+    GSM,
     ILBC,
 }
 
 val DEFAULT_ENABLED_CODECS: Set<PreferredCodec> = setOf(
+    PreferredCodec.G722,
     PreferredCodec.G711A,
     PreferredCodec.G711U,
-    PreferredCodec.G722,
     PreferredCodec.G729,
     PreferredCodec.GSM,
-    PreferredCodec.Opus,
 )
+
+val UNIVERSAL_FALLBACK_CODECS: Set<PreferredCodec> = setOf(
+    PreferredCodec.G711A,
+    PreferredCodec.G711U,
+    PreferredCodec.G729,
+)
+
+enum class CodecProfile(
+    val title: String,
+    val subtitle: String,
+    val preferred: PreferredCodec?,
+    val enabled: Set<PreferredCodec>
+) {
+    AUTO_BALANCED(
+        title = "Auto (Balanced)",
+        subtitle = "HD G.722 first with PCMA, PCMU, G.729 & GSM fallbacks",
+        preferred = null,
+        enabled = setOf(
+            PreferredCodec.G722,
+            PreferredCodec.G711A,
+            PreferredCodec.G711U,
+            PreferredCodec.G729,
+            PreferredCodec.GSM,
+        )
+    ),
+    HD_VOICE(
+        title = "HD Voice First",
+        subtitle = "Prioritize G.722 & Speex 16kHz while keeping G.711/G.729 safe fallbacks",
+        preferred = PreferredCodec.G722,
+        enabled = setOf(
+            PreferredCodec.G722,
+            PreferredCodec.Speex,
+            PreferredCodec.G711A,
+            PreferredCodec.G711U,
+            PreferredCodec.G729,
+        )
+    ),
+    BD_LOW_DATA(
+        title = "BD / Low Data",
+        subtitle = "G.729 (8 kbps) first for mobile data & BD IPTSP trunks",
+        preferred = PreferredCodec.G729,
+        enabled = setOf(
+            PreferredCodec.G729,
+            PreferredCodec.G711A,
+            PreferredCodec.G711U,
+            PreferredCodec.ILBC,
+            PreferredCodec.GSM,
+        )
+    ),
+    MAX_COMPATIBILITY(
+        title = "Max Compatibility",
+        subtitle = "G.711 A-Law (PCMA) first for legacy PBXs & gateways",
+        preferred = PreferredCodec.G711A,
+        enabled = setOf(
+            PreferredCodec.G711A,
+            PreferredCodec.G711U,
+            PreferredCodec.G729,
+            PreferredCodec.GSM,
+        )
+    );
+
+    companion object {
+        fun matching(account: SipAccount): CodecProfile? = entries.firstOrNull { profile ->
+            account.codec == profile.preferred && account.enabledCodecs == profile.enabled
+        }
+    }
+}
+
+fun SipAccount.withSanitizedCodecs(): SipAccount {
+    val cleanCodecs = (enabledCodecs as Iterable<PreferredCodec?>)
+        .filterNotNull()
+        .toSet()
+        .ifEmpty { DEFAULT_ENABLED_CODECS }
+    val cleanPreferred = codec?.takeIf { it in cleanCodecs }
+    return copy(codec = cleanPreferred, enabledCodecs = cleanCodecs)
+}
 
 enum class RegStatus {
     UNREGISTERED,
@@ -130,7 +204,7 @@ enum class CallState {
     DISCONNECTED,
 }
 
-enum class KeypadDesign { Grid, Rounded, Ring }
+enum class KeypadDesign { Grid, Rounded, Ring, OneHandLeft, OneHandRight }
 
 enum class IncomingCallMode { Slider, Buttons }
 

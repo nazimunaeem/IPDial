@@ -485,6 +485,8 @@ fun SettingsScreen(
                         KeypadDesign.Rounded -> "Fully Rounded"
                         KeypadDesign.Ring -> "Ring (Rotary)"
                         KeypadDesign.Grid -> "Grid"
+                        KeypadDesign.OneHandLeft -> "One Hand — Left"
+                        KeypadDesign.OneHandRight -> "One Hand — Right"
                     },
                     trailing = {
                         Icon(

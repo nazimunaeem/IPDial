@@ -1083,14 +1083,6 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun loadContactDetails(contact: Contact): com.ipdial.data.repository.ContactDetailInfo =
         contactsRepo.loadContactDetails(contact)
 
-    suspend fun deleteContact(contactId: String): Boolean {
-        val deleted = contactsRepo.deleteContact(contactId)
-        if (deleted) {
-            _contacts.value = _contacts.value.filterNot { it.id == contactId }
-        }
-        return deleted
-    }
-
     fun deleteCallLog(entry: CallLogEntry) = viewModelScope.launch {
         if (entry.id.startsWith("sys_")) {
             withContext(Dispatchers.IO) {
@@ -1244,6 +1236,8 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         phoneNumber: String,
         scheduledAtMs: Long,
         note: String = "",
+        lineId: String? = null,
+        lineLabel: String? = null,
         existingId: String? = null
     ) {
         val cleanNumber = phoneNumber.trim()
@@ -1261,6 +1255,8 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
                 phoneNumber = cleanNumber,
                 scheduledAtMs = scheduledAtMs,
                 note = note.trim(),
+                lineId = lineId?.takeIf { it.isNotBlank() },
+                lineLabel = lineLabel?.takeIf { it.isNotBlank() },
                 status = ScheduledCallStatus.PENDING,
                 createdAtMs = System.currentTimeMillis()
             )
@@ -1286,7 +1282,31 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) {
             scheduledCallRepo.upsert(call.copy(status = ScheduledCallStatus.COMPLETED))
         }
-        makeCall(call.phoneNumber)
+        val preferredId = call.lineId?.takeIf { it.isNotBlank() }
+        if (preferredId != null) {
+            val availableSims = SimPhoneAccountHelper.getAvailableSimLines(app)
+            _simLines.value = availableSims
+            val matchedSim = availableSims.firstOrNull {
+                it.id == preferredId || it.handle.id == preferredId
+            }
+            if (matchedSim != null) {
+                selectAccount(matchedSim.id)
+                placeSimCallInternal(call.phoneNumber, matchedSim)
+                return
+            }
+            val matchedSip = accounts.value.firstOrNull { it.isEnabled && it.id == preferredId }
+            if (matchedSip != null) {
+                selectAccount(matchedSip.id)
+                placeSipCallInternal(call.phoneNumber, matchedSip)
+                return
+            }
+        }
+        promptLineSelection(
+            rawInput = call.phoneNumber,
+            preferredLineId = preferredId,
+            preferredLabel = call.lineLabel?.takeIf { it.isNotBlank() },
+            preferredName = call.contactName.takeIf { it.isNotBlank() }
+        )
     }
 
     fun dismissScheduledCallAlert(id: String) {

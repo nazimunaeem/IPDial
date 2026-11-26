@@ -63,6 +63,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -72,6 +73,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.ipdial.ui.SipViewModel
 import com.ipdial.ui.components.IPDialTopBar
+import com.ipdial.ui.components.SeabornChartPalette
 import com.ipdial.ui.components.TopContactStat
 import com.ipdial.ui.components.filterHistoryForTarget
 import com.ipdial.ui.components.formatStatsDuration
@@ -762,9 +764,10 @@ private fun ActivityChartCard(
 ) {
     val maxTotal = remember(buckets) { buckets.maxOfOrNull { it.total }?.coerceAtLeast(1) ?: 1 }
     val selectedBucket = selectedIndex?.let { buckets.getOrNull(it) }
-    val incomingColor = MaterialTheme.colorScheme.primary
-    val outgoingColor = MaterialTheme.colorScheme.tertiary
-    val missedColor = MaterialTheme.colorScheme.error
+    val isDarkSurface = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    val incomingColor = SeabornChartPalette.incoming(isDarkSurface)
+    val outgoingColor = SeabornChartPalette.outgoing(isDarkSurface)
+    val missedColor = SeabornChartPalette.missed(isDarkSurface)
     val emptyBarColor = MaterialTheme.colorScheme.surfaceVariant
 
     Card(
@@ -970,9 +973,10 @@ private fun CallBreakdownDonutCard(
     stats: PeriodCallStats,
     isGlass: Boolean
 ) {
-    val incomingColor = MaterialTheme.colorScheme.primary
-    val outgoingColor = MaterialTheme.colorScheme.tertiary
-    val missedColor = MaterialTheme.colorScheme.error
+    val isDarkSurface = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    val incomingColor = SeabornChartPalette.incoming(isDarkSurface)
+    val outgoingColor = SeabornChartPalette.outgoing(isDarkSurface)
+    val missedColor = SeabornChartPalette.missed(isDarkSurface)
     val trackColor = MaterialTheme.colorScheme.surfaceVariant
 
     Card(
@@ -1115,7 +1119,7 @@ private fun CallBreakdownDonutCard(
                             modifier = Modifier
                                 .weight(simWeight)
                                 .fillMaxHeight()
-                                .background(MaterialTheme.colorScheme.primary)
+                                .background(SeabornChartPalette.sim(isDarkSurface))
                         )
                     }
                     if (sipWeight > 0f) {
@@ -1123,7 +1127,7 @@ private fun CallBreakdownDonutCard(
                             modifier = Modifier
                                 .weight(sipWeight)
                                 .fillMaxHeight()
-                                .background(MaterialTheme.colorScheme.secondary)
+                                .background(SeabornChartPalette.sip(isDarkSurface))
                         )
                     }
                 }
@@ -1188,6 +1192,9 @@ private fun WeekdayActivityCard(
     isGlass: Boolean
 ) {
     val maxDay = remember(weekdayBuckets) { weekdayBuckets.maxOfOrNull { it.total }?.coerceAtLeast(1) ?: 1 }
+    val isDarkSurface = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    val barColor = SeabornChartPalette.outgoing(isDarkSurface)
+    val peakBarColor = SeabornChartPalette.peak(isDarkSurface)
     Card(
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(
@@ -1224,7 +1231,7 @@ private fun WeekdayActivityCard(
                         Text(
                             text = if (bucket.total > 0) bucket.total.toString() else "",
                             style = MaterialTheme.typography.labelSmall,
-                            color = if (isPeak) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = if (isPeak) peakBarColor else MaterialTheme.colorScheme.onSurfaceVariant,
                             fontWeight = if (isPeak) FontWeight.Bold else FontWeight.Normal,
                             maxLines = 1
                         )
@@ -1237,8 +1244,8 @@ private fun WeekdayActivityCard(
                                 .background(
                                     when {
                                         bucket.total == 0 -> MaterialTheme.colorScheme.surfaceVariant
-                                        isPeak -> MaterialTheme.colorScheme.primary
-                                        else -> MaterialTheme.colorScheme.primary.copy(alpha = 0.58f)
+                                        isPeak -> peakBarColor
+                                        else -> barColor.copy(alpha = 0.72f)
                                     }
                                 )
                         )
@@ -1280,7 +1287,9 @@ private fun TopContactsLeaderboardCard(
                 color = MaterialTheme.colorScheme.onSurface
             )
             Spacer(Modifier.height(10.dp))
+            val isDarkSurface = MaterialTheme.colorScheme.surface.luminance() < 0.5f
             topContacts.forEachIndexed { idx, stat ->
+                val rowAccent = SeabornChartPalette.categorical(idx, isDarkSurface)
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1294,7 +1303,7 @@ private fun TopContactsLeaderboardCard(
                     ) {
                         Surface(
                             shape = CircleShape,
-                            color = MaterialTheme.colorScheme.primaryContainer,
+                            color = rowAccent.copy(alpha = 0.18f),
                             modifier = Modifier.size(26.dp)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
@@ -1302,7 +1311,7 @@ private fun TopContactsLeaderboardCard(
                                     text = "${idx + 1}",
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    color = rowAccent
                                 )
                             }
                         }
@@ -1331,7 +1340,7 @@ private fun TopContactsLeaderboardCard(
                                 text = "${stat.totalCalls} ${if (stat.totalCalls == 1) "call" else "calls"}",
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.primary
+                                color = rowAccent
                             )
                             if (stat.totalDurationSeconds > 0L) {
                                 Text(
@@ -1349,7 +1358,7 @@ private fun TopContactsLeaderboardCard(
                             .fillMaxWidth()
                             .height(5.dp)
                             .clip(RoundedCornerShape(3.dp)),
-                        color = MaterialTheme.colorScheme.primary,
+                        color = rowAccent,
                         trackColor = MaterialTheme.colorScheme.surfaceVariant
                     )
                 }

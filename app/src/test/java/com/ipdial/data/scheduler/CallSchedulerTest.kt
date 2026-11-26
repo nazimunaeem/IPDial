@@ -84,6 +84,8 @@ class CallSchedulerTest {
             phoneNumber = "+15551234567",
             scheduledAtMs = 1_800_000_000_000L,
             note = "Project sync",
+            lineId = "sip_work",
+            lineLabel = "Work SIP",
             status = ScheduledCallStatus.PENDING,
             createdAtMs = 1_700_000_000_000L
         )
@@ -100,5 +102,11 @@ class CallSchedulerTest {
         assertEquals(1, parsed.size)
         assertEquals(valid, parsed.first())
         assertTrue(ScheduledCallRepository.parseList("not-json").isEmpty())
+
+        val legacyJson = """[{"id":"old-1","contactName":"Bob","phoneNumber":"100","scheduledAtMs":1800000000000,"note":"","status":"PENDING","createdAtMs":1700000000000}]"""
+        val legacyParsed = ScheduledCallRepository.parseList(legacyJson)
+        assertEquals(1, legacyParsed.size)
+        assertEquals(null, legacyParsed.first().lineId)
+        assertEquals(null, legacyParsed.first().lineLabel)
     }
 }

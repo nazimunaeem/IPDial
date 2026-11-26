@@ -220,6 +220,15 @@ fun ScheduledCallConfirmOverlay(
                     )
                 }
 
+                if (!call.lineLabel.isNullOrBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = "Via ${call.lineLabel}",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = Color(0xFF86EFAC)
+                    )
+                }
+
                 if (call.note.isNotBlank()) {
                     Spacer(Modifier.height(10.dp))
                     Surface(

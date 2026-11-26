@@ -23,7 +23,11 @@ class SipAudioRouter(
     fun isBluetoothConnected(): Boolean {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val devices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-            return devices.any { it.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO }
+            return devices.any {
+                it.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                    (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                        it.type == android.media.AudioDeviceInfo.TYPE_BLE_HEADSET)
+            }
         } else {
             @Suppress("DEPRECATION")
             return audioManager.isBluetoothScoAvailableOffCall
@@ -55,13 +59,16 @@ class SipAudioRouter(
         audioManager.isSpeakerphoneOn = false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val devices = audioManager.availableCommunicationDevices
-            val earpieceDevice = devices.find { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_EARPIECE }
-            if (earpieceDevice != null) {
-                val res = audioManager.setCommunicationDevice(earpieceDevice)
-                Log.d(TAG, "setCommunicationDevice earpiece: $res")
+            val preferredDevice =
+                devices.find { it.type == android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET }
+                    ?: devices.find { it.type == android.media.AudioDeviceInfo.TYPE_USB_HEADSET }
+                    ?: devices.find { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_EARPIECE }
+            if (preferredDevice != null) {
+                val res = audioManager.setCommunicationDevice(preferredDevice)
+                Log.d(TAG, "setCommunicationDevice (${preferredDevice.type}): $res")
             } else {
                 audioManager.clearCommunicationDevice()
-                Log.d(TAG, "Earpiece device not found, clearCommunicationDevice")
+                Log.d(TAG, "Earpiece/headset device not found, clearCommunicationDevice")
             }
         }
     }
@@ -104,10 +111,10 @@ class SipAudioRouter(
                             // The bundled software EC can crash inside AudioRecord on
                             // Android devices, so rely on the platform audio path.
                             adm.setEcOptions(0, 0)
-                            Log.d(TAG, "EC tail set to ${if (on) 600 else 500} ms (speaker=$on)")
+                            Log.d(TAG, "Software EC kept off; relying on device HAL AEC (speaker=$on)")
                         }
                     } catch (e: Throwable) {
-                        Log.w(TAG, "Failed to adjust EC tail for speaker=$on: ${e.message}")
+                        Log.w(TAG, "Failed to confirm EC options for speaker=$on: ${e.message}")
                     }
                 }
             }
@@ -126,8 +133,18 @@ class SipAudioRouter(
                     Log.e(TAG, "Built-in speaker device not found")
                 }
             } else {
-                audioManager.clearCommunicationDevice()
-                Log.d(TAG, "clearCommunicationDevice")
+                val devices = audioManager.availableCommunicationDevices
+                val nonSpeakerDevice =
+                    devices.find { it.type == android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET }
+                        ?: devices.find { it.type == android.media.AudioDeviceInfo.TYPE_USB_HEADSET }
+                        ?: devices.find { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_EARPIECE }
+                if (nonSpeakerDevice != null) {
+                    val res = audioManager.setCommunicationDevice(nonSpeakerDevice)
+                    Log.d(TAG, "setCommunicationDevice non-speaker (${nonSpeakerDevice.type}): $res")
+                } else {
+                    audioManager.clearCommunicationDevice()
+                    Log.d(TAG, "clearCommunicationDevice")
+                }
             }
         }
     }
@@ -150,12 +167,15 @@ class SipAudioRouter(
             // Only SCO supports full-duplex (microphone + speaker) for VoIP.
             // A2DP is a music-only profile with no mic path; selecting it here
             // would silence the caller's microphone entirely.
-            val btDevice = devices.find { it.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO }
+            val btDevice = devices.find {
+                it.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                    it.type == android.media.AudioDeviceInfo.TYPE_BLE_HEADSET
+            }
             if (btDevice != null) {
                 val res = audioManager.setCommunicationDevice(btDevice)
-                Log.d(TAG, "setCommunicationDevice Bluetooth SCO: $res")
+                Log.d(TAG, "setCommunicationDevice Bluetooth (${btDevice.type}): $res")
             } else {
-                Log.e(TAG, "Bluetooth SCO device not found in available devices")
+                Log.e(TAG, "Bluetooth SCO/BLE device not found in available devices")
             }
         } else {
             @Suppress("DEPRECATION")

@@ -333,23 +333,6 @@ class ContactsRepository(private val context: Context) {
     suspend fun toggleFavorite(contactId: String, isFavorite: Boolean) = withContext(Dispatchers.IO) {
         // Local DB is the source of truth so favorites survive refreshes.
         contactDao.updateFavorite(contactId, isFavorite)
-        // Best-effort mirror to the device contacts provider (WRITE_CONTACTS).
-        try {
-            if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.WRITE_CONTACTS)
-                == android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                val values = android.content.ContentValues().apply {
-                    put(ContactsContract.Contacts.STARRED, if (isFavorite) 1 else 0)
-                }
-                context.contentResolver.update(
-                    ContactsContract.Contacts.CONTENT_URI,
-                    values,
-                    ContactsContract.Contacts._ID + " = ?",
-                    arrayOf(contactId)
-                )
-            }
-        } catch (e: Exception) {
-            android.util.Log.e("ContactsRepo", "Failed to mirror favorite to device: ${e.message}")
-        }
     }
 
     suspend fun loadContactDetails(contact: Contact): ContactDetailInfo = withContext(Dispatchers.IO) {
@@ -501,28 +484,5 @@ class ContactsRepository(private val context: Context) {
             phones = resolvedPhones,
             externalActions = sortedActions
         )
-    }
-
-    suspend fun deleteContact(contactId: String): Boolean = withContext(Dispatchers.IO) {
-        if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.WRITE_CONTACTS)
-            != PackageManager.PERMISSION_GRANTED
-        ) {
-            return@withContext false
-        }
-        val idLong = contactId.toLongOrNull() ?: return@withContext false
-        return@withContext try {
-            val baseUri = ContentUris.withAppendedId(ContactsContract.Contacts.CONTENT_URI, idLong)
-            val lookupUri = ContactsContract.Contacts.getLookupUri(context.contentResolver, baseUri) ?: baseUri
-            val deleted = context.contentResolver.delete(lookupUri, null, null)
-            val removed = deleted > 0 || context.contentResolver.delete(baseUri, null, null) > 0
-            if (removed) {
-                contactDao.deleteById(contactId)
-                buildNumberIndex()
-            }
-            removed
-        } catch (e: Exception) {
-            android.util.Log.e("ContactsRepo", "Failed to delete contact $contactId: ${e.message}")
-            false
-        }
     }
 }

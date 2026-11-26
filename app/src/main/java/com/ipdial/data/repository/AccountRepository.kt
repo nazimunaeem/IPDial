@@ -23,6 +23,7 @@ import com.ipdial.data.model.RegStatus
 import com.ipdial.data.model.SipAccount
 import com.ipdial.data.model.ThemeMode
 import com.ipdial.data.model.TurnTransport
+import com.ipdial.data.model.withSanitizedCodecs
 import com.ipdial.data.backup.BackupFrequency
 import com.ipdial.data.backup.BackupOptions
 import com.ipdial.data.backup.BackupSettings
@@ -346,8 +347,9 @@ class AccountRepository(private val context: Context) {
     }
 
     private fun unsecureAccount(acc: SipAccount): SipAccount {
-        if (acc.password.isBlank()) return acc
-        return acc.copy(password = decryptPassword(acc.password))
+        val clean = acc.withSanitizedCodecs()
+        if (clean.password.isBlank()) return clean
+        return clean.copy(password = decryptPassword(clean.password))
     }
 
     private fun encryptPassword(plain: String): String = CryptoHelper.encrypt(plain)
@@ -486,7 +488,8 @@ class AccountRepository(private val context: Context) {
         if (restored.isEmpty()) return 0
         val current = accounts.first().toMutableList()
         var mergedCount = 0
-        for (incoming in restored) {
+        for (rawIncoming in restored) {
+            val incoming = rawIncoming.withSanitizedCodecs()
             if (incoming.username.isBlank() && incoming.domain.isBlank()) continue
             val sanitizedIncoming = incoming.copy(
                 id = incoming.id.ifBlank { UUID.randomUUID().toString() },

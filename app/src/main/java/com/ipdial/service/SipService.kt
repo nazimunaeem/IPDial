@@ -468,6 +468,7 @@ class SipService : Service() {
                                 active.port != account.port ||
                                 active.transport != account.transport ||
                                 active.codec != account.codec ||
+                                active.enabledCodecs != account.enabledCodecs ||
                                 active.ecEnabled != account.ecEnabled ||
                                 active.nsEnabled != account.nsEnabled ||
                                 active.agcEnabled != account.agcEnabled

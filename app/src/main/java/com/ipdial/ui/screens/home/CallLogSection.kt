@@ -2,7 +2,9 @@ package com.ipdial.ui.screens.home
 
 import android.content.Intent
 import android.provider.ContactsContract
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -22,6 +24,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.CallMade
@@ -50,12 +53,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.ipdial.data.model.CallDirection
@@ -82,6 +87,84 @@ data class LogGroup(
     val count: Int,
     val allEntries: List<CallLogEntry>
 )
+
+@Composable
+fun callDirectionColor(entry: CallLogEntry): Color {
+    val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    return when {
+        entry.missed -> MaterialTheme.colorScheme.error
+        entry.direction == CallDirection.INCOMING -> if (isDark) Color(0xFF66BB6A) else Color(0xFF2E7D32)
+        else -> if (isDark) Color(0xFF64B5F6) else Color(0xFF1565C0)
+    }
+}
+
+@Composable
+fun callLineAccentColor(
+    transport: CallTransport,
+    label: String,
+    accountId: String = ""
+): Color {
+    val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    return when (transport) {
+        CallTransport.SIM -> {
+            val isSecondarySim = label.contains("2") || accountId.endsWith("2")
+            if (isSecondarySim) {
+                if (isDark) Color(0xFFFFB74D) else Color(0xFFB45309)
+            } else {
+                if (isDark) Color(0xFF4DB6AC) else Color(0xFF00796B)
+            }
+        }
+        CallTransport.SIP -> {
+            val key = accountId.ifBlank { label }
+            val variant = if (key.isNotBlank()) (key.hashCode() and 1) else 0
+            if (variant == 1) {
+                if (isDark) Color(0xFFCE93D8) else Color(0xFF8E24AA)
+            } else {
+                if (isDark) Color(0xFFA5B4FC) else Color(0xFF4F46E5)
+            }
+        }
+    }
+}
+
+@Composable
+fun CompactLineBadge(
+    label: String,
+    transport: CallTransport,
+    accountId: String = "",
+    modifier: Modifier = Modifier
+) {
+    val accent = callLineAccentColor(transport = transport, label = label, accountId = accountId)
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(5.dp),
+        color = accent.copy(alpha = 0.11f),
+        border = BorderStroke(0.5.dp, accent.copy(alpha = 0.25f))
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(5.dp)
+                    .clip(CircleShape)
+                    .background(accent)
+            )
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontSize = 10.sp,
+                    lineHeight = 12.sp,
+                    fontWeight = FontWeight.Medium
+                ),
+                color = accent,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -150,7 +233,7 @@ fun CallLogItem(
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Icon(
                         imageVector = when {
@@ -159,15 +242,18 @@ fun CallLogItem(
                             else                                   -> Icons.AutoMirrored.Filled.CallMade
                         },
                         contentDescription = null,
-                        tint = when {
-                            entry.missed -> MaterialTheme.colorScheme.error
-                            else         -> MaterialTheme.colorScheme.onSurfaceVariant
-                        },
+                        tint = callDirectionColor(entry),
                         modifier = Modifier.size(14.dp)
+                    )
+                    CompactLineBadge(
+                        label = viaLabel,
+                        transport = entry.transport,
+                        accountId = entry.accountId,
+                        modifier = Modifier.widthIn(max = 120.dp)
                     )
                     val durationSuffix = if (entry.missed) "" else " • ${formatDuration(entry.durationSeconds)}"
                     Text(
-                        text = "$viaLabel • $timeStr$durationSuffix",
+                        text = "$timeStr$durationSuffix",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -495,7 +581,7 @@ fun CallHistoryDetailDialog(
                                             else -> Icons.AutoMirrored.Filled.CallMade
                                         },
                                         contentDescription = callTypeText,
-                                        tint = if (entry.missed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        tint = callDirectionColor(entry),
                                         modifier = Modifier.size(16.dp)
                                     )
                                     Spacer(Modifier.width(10.dp))
@@ -509,8 +595,14 @@ fun CallHistoryDetailDialog(
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                                         ) {
+                                            CompactLineBadge(
+                                                label = viaLabel,
+                                                transport = entry.transport,
+                                                accountId = entry.accountId,
+                                                modifier = Modifier.widthIn(max = 110.dp)
+                                            )
                                             Text(
-                                                text = "$callTypeText$durationStr • $viaLabel$numberSuffix",
+                                                text = "$callTypeText$durationStr$numberSuffix",
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                 maxLines = 1,

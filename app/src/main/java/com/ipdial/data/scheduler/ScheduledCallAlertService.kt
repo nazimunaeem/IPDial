@@ -52,6 +52,8 @@ class ScheduledCallAlertService : Service() {
         val name = intent?.getStringExtra(CallSchedulerManager.EXTRA_SCHEDULED_CALL_NAME).orEmpty()
         val number = intent?.getStringExtra(CallSchedulerManager.EXTRA_SCHEDULED_CALL_NUMBER).orEmpty()
         val note = intent?.getStringExtra(CallSchedulerManager.EXTRA_SCHEDULED_CALL_NOTE).orEmpty()
+        val lineId = intent?.getStringExtra(CallSchedulerManager.EXTRA_SCHEDULED_CALL_LINE_ID)?.takeIf { it.isNotBlank() }
+        val lineLabel = intent?.getStringExtra(CallSchedulerManager.EXTRA_SCHEDULED_CALL_LINE_LABEL)?.takeIf { it.isNotBlank() }
         if (number.isBlank()) {
             stopAlertAndSelf()
             return START_NOT_STICKY
@@ -63,6 +65,8 @@ class ScheduledCallAlertService : Service() {
             phoneNumber = number,
             scheduledAtMs = System.currentTimeMillis(),
             note = note,
+            lineId = lineId,
+            lineLabel = lineLabel,
             status = ScheduledCallStatus.TRIGGERED
         )
 
@@ -151,6 +155,8 @@ class ScheduledCallAlertService : Service() {
                 putExtra(CallSchedulerManager.EXTRA_SCHEDULED_CALL_NAME, call.contactName)
                 putExtra(CallSchedulerManager.EXTRA_SCHEDULED_CALL_NUMBER, call.phoneNumber)
                 putExtra(CallSchedulerManager.EXTRA_SCHEDULED_CALL_NOTE, call.note)
+                putExtra(CallSchedulerManager.EXTRA_SCHEDULED_CALL_LINE_ID, call.lineId.orEmpty())
+                putExtra(CallSchedulerManager.EXTRA_SCHEDULED_CALL_LINE_LABEL, call.lineLabel.orEmpty())
             }
             try {
                 ContextCompat.startForegroundService(context, intent)
