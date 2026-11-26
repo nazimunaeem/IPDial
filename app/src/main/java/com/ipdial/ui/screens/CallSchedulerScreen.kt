@@ -1,11 +1,17 @@
 package com.ipdial.ui.screens
 
+import android.Manifest
 import android.app.AlarmManager
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -73,6 +79,8 @@ import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -89,6 +97,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.ipdial.data.model.Contact
 import com.ipdial.data.scheduler.ScheduledCall
 import com.ipdial.data.scheduler.ScheduledCallStatus
@@ -104,6 +116,12 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+
+private fun hasExactAlarmPermission(context: Context): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true
+    val am = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return true
+    return am.canScheduleExactAlarms()
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -130,12 +148,51 @@ fun CallSchedulerScreen(
     var showEditorSheet by remember { mutableStateOf(false) }
     var editingCall by remember { mutableStateOf<ScheduledCall?>(null) }
 
-    val canScheduleExact = remember(context) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val am = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
-            am?.canScheduleExactAlarms() ?: true
-        } else {
-            true
+    var canScheduleExact by remember { mutableStateOf(hasExactAlarmPermission(context)) }
+    val exactAlarmLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) {
+        canScheduleExact = hasExactAlarmPermission(context)
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(Unit) {
+        canScheduleExact = hasExactAlarmPermission(context)
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) {
+            vm.syncContacts()
+        }
+    }
+    DisposableEffect(lifecycleOwner, context) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                canScheduleExact = hasExactAlarmPermission(context)
+                if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) {
+                    vm.syncContacts()
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+
+        val alarmStateReceiver = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            object : BroadcastReceiver() {
+                override fun onReceive(ctx: Context?, intent: Intent?) {
+                    canScheduleExact = hasExactAlarmPermission(context)
+                }
+            }.also { receiver ->
+                ContextCompat.registerReceiver(
+                    context,
+                    receiver,
+                    IntentFilter(AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED),
+                    ContextCompat.RECEIVER_NOT_EXPORTED
+                )
+            }
+        } else null
+
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            if (alarmStateReceiver != null) {
+                runCatching { context.unregisterReceiver(alarmStateReceiver) }
+            }
         }
     }
 
@@ -224,11 +281,19 @@ fun CallSchedulerScreen(
                             TextButton(
                                 onClick = {
                                     runCatching {
-                                        context.startActivity(
+                                        exactAlarmLauncher.launch(
                                             Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
                                                 data = Uri.fromParts("package", context.packageName, null)
                                             }
                                         )
+                                    }.onFailure {
+                                        runCatching {
+                                            exactAlarmLauncher.launch(
+                                                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                                    data = Uri.fromParts("package", context.packageName, null)
+                                                }
+                                            )
+                                        }
                                     }
                                 }
                             ) {
@@ -370,6 +435,7 @@ fun CallSchedulerScreen(
         ScheduleCallEditorSheet(
             initialCall = editingCall,
             contacts = contacts,
+            onSyncContacts = { vm.syncContacts() },
             onDismiss = { showEditorSheet = false },
             onSave = { name, number, timeMs, note, existingId ->
                 vm.scheduleCall(
@@ -542,6 +608,7 @@ private fun ScheduledCallCard(
 private fun ScheduleCallEditorSheet(
     initialCall: ScheduledCall?,
     contacts: List<Contact>,
+    onSyncContacts: () -> Unit,
     onDismiss: () -> Unit,
     onSave: (contactName: String, phoneNumber: String, scheduledAtMs: Long, note: String, existingId: String?) -> Unit
 ) {
@@ -610,7 +677,7 @@ private fun ScheduleCallEditorSheet(
             ) {
                 Icon(Icons.Default.Contacts, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-                Text(if (contacts.isEmpty()) "Contacts list empty — enter number below" else "Pick Contact")
+                Text("Select Contact")
             }
 
             OutlinedTextField(
@@ -849,6 +916,7 @@ private fun ScheduleCallEditorSheet(
     if (showContactPicker) {
         ContactPickerDialog(
             contacts = contacts,
+            onSyncContacts = onSyncContacts,
             onDismiss = { showContactPicker = false },
             onSelect = { name, number ->
                 contactName = name
@@ -863,11 +931,25 @@ private fun ScheduleCallEditorSheet(
 @Composable
 private fun ContactPickerDialog(
     contacts: List<Contact>,
+    onSyncContacts: () -> Unit,
     onDismiss: () -> Unit,
     onSelect: (name: String, number: String) -> Unit
 ) {
+    val context = LocalContext.current
     var query by remember { mutableStateOf("") }
     var multiNumberContact by remember { mutableStateOf<Contact?>(null) }
+    var hasContactsPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) ==
+                PackageManager.PERMISSION_GRANTED
+        )
+    }
+    val contactsPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        hasContactsPermission = granted
+        if (granted) onSyncContacts()
+    }
 
     val filtered = remember(contacts, query) {
         val q = query.trim()
@@ -884,7 +966,7 @@ private fun ContactPickerDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                text = multiNumberContact?.let { "Select Number for ${it.name}" } ?: "Pick Contact",
+                text = multiNumberContact?.let { "Select Number for ${it.name}" } ?: "Select Contact",
                 fontWeight = FontWeight.Bold
             )
         },
@@ -925,9 +1007,28 @@ private fun ContactPickerDialog(
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    if (filtered.isEmpty()) {
+                    if (!hasContactsPermission && contacts.isEmpty()) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 12.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Text(
+                                text = "Allow contacts permission to select a saved contact.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Button(
+                                onClick = { contactsPermissionLauncher.launch(Manifest.permission.READ_CONTACTS) }
+                            ) {
+                                Text("Allow Contacts")
+                            }
+                        }
+                    } else if (filtered.isEmpty()) {
                         Text(
-                            text = "No matching contacts found.",
+                            text = if (contacts.isEmpty()) "No contacts found on device." else "No matching contacts found.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(vertical = 16.dp)

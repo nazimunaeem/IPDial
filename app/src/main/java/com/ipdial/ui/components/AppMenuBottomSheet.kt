@@ -24,7 +24,9 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Audiotrack
-import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Dialpad
+import androidx.compose.material.icons.filled.DisplaySettings
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Settings
@@ -180,7 +182,7 @@ fun AppMenuBottomSheet(
                         .weight(1f)
                         .testTag("menu_call_scheduler"),
                     icon = Icons.Default.Schedule,
-                    title = "Scheduler",
+                    title = "Call Scheduler",
                     subtitle = if (upcomingCount > 0) "$upcomingCount upcoming" else "Plan calls",
                     tint = Color(0xFF26A69A),
                     onClick = {
@@ -191,14 +193,14 @@ fun AppMenuBottomSheet(
                 MenuGridItem(
                     modifier = Modifier
                         .weight(1f)
-                        .testTag("menu_accounts"),
-                    icon = Icons.Default.AccountBalance,
-                    title = "Accounts",
-                    subtitle = "${accounts.size} configured",
+                        .testTag("menu_theme"),
+                    icon = Icons.Default.DisplaySettings,
+                    title = "Theme",
+                    subtitle = "App look",
                     tint = MaterialTheme.colorScheme.primary,
                     onClick = {
                         onDismissRequest()
-                        onNavigate(NavDest.Accounts.route)
+                        onNavigate(NavDest.ThemeSettings.route)
                     }
                 )
                 MenuGridItem(
@@ -238,32 +240,81 @@ fun AppMenuBottomSheet(
                 MenuGridItem(
                     modifier = Modifier
                         .weight(1f)
-                        .testTag("menu_backup_restore"),
-                    icon = Icons.Default.Folder,
-                    title = "Backup",
-                    subtitle = "Local folder",
+                        .testTag("menu_call_style"),
+                    icon = Icons.Default.Call,
+                    title = "Call Style",
+                    subtitle = "Answer UI",
                     tint = Color(0xFF64B5F6),
                     onClick = {
                         onDismissRequest()
-                        onNavigate(NavDest.Backup.route)
+                        onNavigate(NavDest.IncomingCallStyle.route)
                     }
                 )
                 MenuGridItem(
                     modifier = Modifier
                         .weight(1f)
-                        .testTag("menu_settings"),
-                    icon = Icons.Default.Settings,
-                    title = "Settings",
-                    subtitle = "Preferences",
+                        .testTag("menu_dialer_style"),
+                    icon = Icons.Default.Dialpad,
+                    title = "Dialer Style",
+                    subtitle = "Keypad look",
                     tint = Color(0xFFBA68C8),
                     onClick = {
                         onDismissRequest()
-                        onNavigate(NavDest.Settings.route)
+                        onNavigate(NavDest.DialpadStyle.route)
                     }
                 )
             }
 
             Spacer(Modifier.height(14.dp))
+
+            // 3. All Settings (Full Horizontal)
+            Surface(
+                onClick = {
+                    onDismissRequest()
+                    onNavigate(NavDest.Settings.route)
+                },
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .testTag("menu_settings")
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "All Settings",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(14.dp))
+                    Text(
+                        text = "All Settings",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(10.dp))
 
             // 3. Exit App Button
             Surface(

@@ -1,5 +1,12 @@
 # DialDuo Release Notes
 
+## v2.0.1
+
+### Highlights
+- **Main Menu Refresh**: Added full-width **All Settings** above Exit, renamed **Call Scheduler**, removed the redundant Accounts grid tile, and added quick shortcuts for **Theme**, **Call Style**, and **Dialer Style**.
+- **Call Scheduler Polish**: Fixed the Exact Alarm permission banner so it updates immediately after enabling permission, and updated contact selection to **Select Contact** with inline permission prompt when needed.
+- **Call History & Statistics**: Added universal and per-contact call statistics charts, all-time missed/incoming/outgoing call filters, Contact Details navigation from the history modal header, and an expandable Call History section inside Contact Details.
+
 ## v2.0.0
 
 ### Highlights
