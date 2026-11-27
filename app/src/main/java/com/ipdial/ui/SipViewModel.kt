@@ -874,7 +874,8 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         if (UssdHelper.isUssdCode(cleanNum)) {
             _dialString.value = TextFieldValue("")
             rememberDialLine(simLine.id)
-            UssdHelper.send(app, cleanNum, simLine) { success, message ->
+            val launchContext: Context = com.ipdial.AppState.currentActivityRef?.get() ?: app
+            UssdHelper.send(launchContext, cleanNum, simLine) { success, message ->
                 if (!success || message.isNotBlank()) {
                     _ussdDialog.value = UssdSession(
                         request = cleanNum,

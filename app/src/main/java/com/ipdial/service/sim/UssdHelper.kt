@@ -59,6 +59,13 @@ object UssdHelper {
         return code == "*#06#" || code == "*#07#"
     }
 
+    /** Formats a tel: URI string with `#` percent-encoded as `%23` for USSD/MMI safety. */
+    internal fun encodeTelUssdUriString(code: String): String =
+        "tel:" + code.trim().replace("#", "%23")
+
+    private fun buildEncodedTelUri(code: String): Uri =
+        Uri.parse("tel:" + code.trim().replace("#", Uri.encode("#")))
+
     @SuppressLint("MissingPermission")
     fun send(
         context: Context,
@@ -112,20 +119,14 @@ object UssdHelper {
             return
         }
 
-        // 3. System call path (matching Simple Dialer):
-        //    - Default dialer -> TelecomManager.placeCall directly
-        //    - Non-default dialer -> Intent.ACTION_CALL to system Telecom (then placeCall fallback)
+        // 3. Dispatch USSD via Intent.ACTION_CALL with %23-encoded tel: URI and selected SIM handle
+        //    first (rather than TelecomManager.placeCall voice-call path, which can hang on some OEMs).
         val isDefault = DefaultDialerHelper.isDefaultDialer(context)
-        val dispatched = if (isDefault) {
-            tryPlaceCallUssd(telecomManager, trimmed, simLine) ||
-                trySystemActionCall(context, trimmed, simLine)
-        } else {
-            trySystemActionCall(context, trimmed, simLine) ||
-                tryPlaceCallUssd(telecomManager, trimmed, simLine)
-        }
+        val dispatched = trySystemActionCall(context, trimmed, simLine) ||
+            (isDefault && tryPlaceCallUssd(telecomManager, trimmed, simLine))
 
         if (dispatched) {
-            Log.i(TAG, "USSD dispatched via system path (defaultDialer=$isDefault) on ${simLine.label}: $trimmed")
+            Log.i(TAG, "USSD dispatched via ACTION_CALL/system path (defaultDialer=$isDefault) on ${simLine.label}: $trimmed")
             onResult(true, "")
             return
         }
@@ -172,7 +173,7 @@ object UssdHelper {
         simLine: SimLine
     ): Boolean {
         if (telecomManager == null) return false
-        val uri = Uri.fromParts("tel", code, null)
+        val uri = buildEncodedTelUri(code)
         val extras = Bundle().apply {
             putParcelable(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, simLine.handle)
         }
@@ -194,23 +195,27 @@ object UssdHelper {
         code: String,
         simLine: SimLine
     ): Boolean {
-        val uri = Uri.fromParts("tel", code, null)
-        val candidates = LinkedHashSet<String>().apply {
+        val uri = buildEncodedTelUri(code)
+        val candidates = LinkedHashSet<String?>().apply {
             add(SYSTEM_TELECOM_PACKAGE)
             addAll(resolveExternalActionPackages(context, Intent.ACTION_CALL, uri))
+            add(null)
         }
+        val needsNewTaskFlag = context !is android.app.Activity
         for (pkg in candidates) {
             try {
                 val intent = Intent(Intent.ACTION_CALL, uri).apply {
-                    setPackage(pkg)
+                    if (pkg != null) setPackage(pkg)
                     putExtra(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, simLine.handle)
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    if (needsNewTaskFlag) {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
                 }
                 context.startActivity(intent)
-                Log.i(TAG, "Dispatched USSD via ACTION_CALL package=$pkg: $code")
+                Log.i(TAG, "Dispatched USSD via ACTION_CALL package=${pkg ?: "default"}: $code")
                 return true
             } catch (e: Exception) {
-                Log.w(TAG, "System ACTION_CALL USSD failed for package=$pkg: ${e.message}")
+                Log.w(TAG, "System ACTION_CALL USSD failed for package=${pkg ?: "default"}: ${e.message}")
             }
         }
         return false
@@ -302,12 +307,14 @@ object UssdHelper {
         telecomManager: TelecomManager?,
         code: String
     ): Boolean {
-        val uri = Uri.fromParts("tel", code, null)
+        val uri = buildEncodedTelUri(code)
         val systemPkg = resolveExternalDialerPackage(context, telecomManager, uri) ?: return false
         return try {
             val intent = Intent(Intent.ACTION_DIAL, uri).apply {
                 setPackage(systemPkg)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                if (context !is android.app.Activity) {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
             }
             context.startActivity(intent)
             Log.i(TAG, "Opened USSD/MMI code in external system dialer ($systemPkg): $code")

@@ -83,12 +83,6 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="tel" />
             </intent-filter>
-            <intent-filter android:priority="10">
-                <action android:name="android.intent.action.CALL" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="tel" />
-            </intent-filter>
 
             <!-- Support Smart Selection / Contextual Menu for phone numbers -->
             <intent-filter>

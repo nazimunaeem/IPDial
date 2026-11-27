@@ -157,6 +157,7 @@ object AppState {
     // Mirrors the "Disable proximity sensor" setting so the SIP service can skip the
     // proximity wake lock without touching DataStore from the service thread.
     var disableProximitySensor = false
+    var currentActivityRef: java.lang.ref.WeakReference<android.app.Activity>? = null
 }
 
 class MainActivity : ComponentActivity() {
@@ -199,6 +200,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         AppState.isForeground = true
+        AppState.currentActivityRef = java.lang.ref.WeakReference(this)
         vm.refreshSimAccounts()
         vm.refreshCallHistory()
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) {
@@ -226,6 +228,9 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         AppState.isForeground = false
+        if (AppState.currentActivityRef?.get() === this) {
+            AppState.currentActivityRef = null
+        }
         val session = currentLiveSession()
         if (isCallScreenVisible(session) && session != null) {
             com.ipdial.service.showCallNotificationStatic(this, session.remoteDisplayName, session.callId)

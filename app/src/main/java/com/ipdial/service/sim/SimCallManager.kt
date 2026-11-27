@@ -183,7 +183,7 @@ object SimCallManager {
             override fun onDetailsChanged(call: Call, details: Call.Details?) {
                 if (activeCall !== call || details == null) return
                 val cur = _callSession.value ?: return
-                val newNum = details.handle?.schemeSpecificPart?.takeIf { it.isNotBlank() } ?: cur.remoteUri
+                val newNum = details.handle?.schemeSpecificPart?.takeIf { it.isNotBlank() }?.let { android.net.Uri.decode(it) } ?: cur.remoteUri
                 if (UssdHelper.isUssdCode(newNum)) {
                     Log.d(TAG, "Ignoring transient USSD Telecom call updated in details: $newNum")
                     activeCallback?.let { cb ->
@@ -580,7 +580,8 @@ object SimCallManager {
 
     private fun extractNumber(call: Call): String {
         val handle = call.details?.handle ?: return ""
-        return handle.schemeSpecificPart?.takeIf { it.isNotBlank() } ?: handle.toString()
+        val raw = handle.schemeSpecificPart?.takeIf { it.isNotBlank() } ?: handle.toString()
+        return android.net.Uri.decode(raw)
     }
 
     private fun mapTelecomState(state: Int, direction: CallDirection): CallState {

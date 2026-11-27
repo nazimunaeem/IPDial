@@ -45,4 +45,11 @@ class UssdHelperTest {
         assertFalse(UssdHelper.isLocalDeviceInfoCode("*121#"))
         assertFalse(UssdHelper.isLocalDeviceInfoCode("*#21#"))
     }
+
+    @Test
+    fun encodeTelUssdUriString_percentEncodesHash() {
+        assertEquals("tel:*121%23", UssdHelper.encodeTelUssdUriString("*121#"))
+        assertEquals("tel:*123*1*4%23", UssdHelper.encodeTelUssdUriString(" *123*1*4# "))
+        assertEquals("tel:*%2306%23", UssdHelper.encodeTelUssdUriString("*#06#"))
+    }
 }
