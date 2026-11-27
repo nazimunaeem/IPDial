@@ -18,18 +18,22 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 
 /**
- * Sends USSD / MMI codes (e.g. *121#, *247#, *#06#, *123*1#) via Android's system telephony path.
+ * Sends USSD / MMI codes (e.g. *121#, *247#, *#06#, *123*1#) using the same system call path
+ * used by Simple Dialer / AOSP Dialer.
  *
- * Interactive carrier USSD sessions (common for mobile menus and banking/operator codes) and
- * supplementary MMI commands are not supported by [TelephonyManager.sendUssdRequest] on many
- * devices and carriers. Routing through [TelecomManager.handleMmi] / [TelecomManager.placeCall]
- * (with `Uri.fromParts("tel", code, null)` so `#` is never treated as a URI fragment) delegates
- * directly to the system Phone/Telecom stack, which opens Android's native interactive USSD dialog.
- * [TelephonyManager.sendUssdRequest] is retained only as a fallback when Telecom cannot dispatch.
+ * - Secret codes (`*#*#<code>#*#*`): dispatched via [TelephonyManager.sendDialerSpecialCode].
+ * - Device-local info codes (`*#06#`, `*#07#`): handed to the pre-installed system dialer.
+ * - Carrier USSD & MMI codes (`*121#`, `*247#`, `*123*1#`, etc.):
+ *   When DialDuo is the default dialer, placed directly through [TelecomManager.placeCall] with
+ *   `Uri.fromParts("tel", code, null)` and [TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE] (skipping
+ *   `TelecomManager.handleMmi`, which only handles PIN/PUK on AOSP and swallows USSD on some OEMs).
+ *   When DialDuo is not the default dialer, dispatched via `Intent.ACTION_CALL` to system Telecom
+ *   with [TelecomManager.placeCall] and [TelephonyManager.sendUssdRequest] as fallbacks.
  */
 object UssdHelper {
 
     private const val TAG = "UssdHelper"
+    private const val SYSTEM_TELECOM_PACKAGE = "com.android.server.telecom"
 
     /** True for MMI/USSD/special strings such as *121#, *#06#, *123*1#, #31#, *#*#4636#*#*. */
     fun isUssdCode(raw: String): Boolean {
@@ -49,7 +53,7 @@ object UssdHelper {
         return inner.takeIf { it.isNotEmpty() && it.all { ch -> ch.isDigit() || ch == '*' || ch == '#' } }
     }
 
-    /** True for local device information MMI codes (*#06#, *#07#) handled by system dialer/MMI. */
+    /** True for local device information MMI codes (*#06#, *#07#) handled by system dialer. */
     internal fun isLocalDeviceInfoCode(raw: String): Boolean {
         val code = raw.trim()
         return code == "*#06#" || code == "*#07#"
@@ -86,12 +90,8 @@ object UssdHelper {
             return
         }
 
-        // 2. Local device info codes (*#06#, *#07#) -> TelecomManager.handleMmi or system dialer
+        // 2. Local device info codes (*#06#, *#07#) -> pre-installed system dialer, else placeCall
         if (isLocalDeviceInfoCode(trimmed)) {
-            if (tryHandleMmi(context, telecomManager, trimmed, simLine)) {
-                onResult(true, "")
-                return
-            }
             if (openInSystemDialer(context, telecomManager, trimmed)) {
                 onResult(true, "")
                 return
@@ -112,28 +112,31 @@ object UssdHelper {
             return
         }
 
-        // 3. System Telecom MMI path (handles PIN/PUK MMI & OEM MMI extensions when default dialer)
-        if (tryHandleMmi(context, telecomManager, trimmed, simLine)) {
-            Log.i(TAG, "MMI handled via TelecomManager.handleMmi on ${simLine.label}: $trimmed")
+        // 3. System call path (matching Simple Dialer):
+        //    - Default dialer -> TelecomManager.placeCall directly
+        //    - Non-default dialer -> Intent.ACTION_CALL to system Telecom (then placeCall fallback)
+        val isDefault = DefaultDialerHelper.isDefaultDialer(context)
+        val dispatched = if (isDefault) {
+            tryPlaceCallUssd(telecomManager, trimmed, simLine) ||
+                trySystemActionCall(context, trimmed, simLine)
+        } else {
+            trySystemActionCall(context, trimmed, simLine) ||
+                tryPlaceCallUssd(telecomManager, trimmed, simLine)
+        }
+
+        if (dispatched) {
+            Log.i(TAG, "USSD dispatched via system path (defaultDialer=$isDefault) on ${simLine.label}: $trimmed")
             onResult(true, "")
             return
         }
 
-        // 4. Primary System USSD path: TelecomManager.placeCall -> TelephonyConnectionService ->
-        // system Phone app (handles single-shot & interactive multi-step USSD menus natively).
-        if (tryPlaceCallUssd(telecomManager, trimmed, simLine)) {
-            Log.i(TAG, "USSD dispatched via system Telecom path on ${simLine.label}: $trimmed")
-            onResult(true, "")
-            return
-        }
-
-        // 5. Fallback to TelephonyManager.sendUssdRequest if TelecomManager.placeCall couldn't dispatch
+        // 4. Fallback to TelephonyManager.sendUssdRequest if Telecom dispatch failed
         if (telephonyManager != null) {
             sendViaTelephonyManagerApi(context, telephonyManager, trimmed, simLine, onResult)
             return
         }
 
-        // 6. Last resort: hand off to the pre-installed system dialer
+        // 5. Last resort: open in pre-installed system dialer
         if (openInSystemDialer(context, telecomManager, trimmed)) {
             onResult(true, "")
         } else {
@@ -163,25 +166,6 @@ object UssdHelper {
     }
 
     @SuppressLint("MissingPermission")
-    private fun tryHandleMmi(
-        context: Context,
-        telecomManager: TelecomManager?,
-        code: String,
-        simLine: SimLine
-    ): Boolean {
-        if (telecomManager == null || !DefaultDialerHelper.isDefaultDialer(context)) return false
-        return try {
-            telecomManager.handleMmi(code, simLine.handle)
-        } catch (e: SecurityException) {
-            Log.w(TAG, "handleMmi permission denied: ${e.message}")
-            false
-        } catch (e: Exception) {
-            Log.w(TAG, "handleMmi failed: ${e.message}")
-            false
-        }
-    }
-
-    @SuppressLint("MissingPermission")
     private fun tryPlaceCallUssd(
         telecomManager: TelecomManager?,
         code: String,
@@ -202,6 +186,34 @@ object UssdHelper {
             Log.w(TAG, "TelecomManager.placeCall USSD failed: ${e.message}")
             false
         }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun trySystemActionCall(
+        context: Context,
+        code: String,
+        simLine: SimLine
+    ): Boolean {
+        val uri = Uri.fromParts("tel", code, null)
+        val candidates = LinkedHashSet<String>().apply {
+            add(SYSTEM_TELECOM_PACKAGE)
+            addAll(resolveExternalActionPackages(context, Intent.ACTION_CALL, uri))
+        }
+        for (pkg in candidates) {
+            try {
+                val intent = Intent(Intent.ACTION_CALL, uri).apply {
+                    setPackage(pkg)
+                    putExtra(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, simLine.handle)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(intent)
+                Log.i(TAG, "Dispatched USSD via ACTION_CALL package=$pkg: $code")
+                return true
+            } catch (e: Exception) {
+                Log.w(TAG, "System ACTION_CALL USSD failed for package=$pkg: ${e.message}")
+            }
+        }
+        return false
     }
 
     @SuppressLint("MissingPermission")
@@ -317,9 +329,16 @@ object UssdHelper {
             }
             if (sysPkg != null) return sysPkg
         }
+        return resolveExternalActionPackages(context, Intent.ACTION_DIAL, uri).firstOrNull()
+    }
 
+    private fun resolveExternalActionPackages(
+        context: Context,
+        action: String,
+        uri: Uri
+    ): List<String> {
         val pm = context.packageManager
-        val probe = Intent(Intent.ACTION_DIAL, uri)
+        val probe = Intent(action, uri)
         val candidates = try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 pm.queryIntentActivities(
@@ -334,10 +353,12 @@ object UssdHelper {
             emptyList()
         }.filter { it.activityInfo?.packageName != null && it.activityInfo.packageName != context.packageName }
 
-        val systemCandidate = candidates.firstOrNull {
+        val systemPackages = candidates.filter {
             val flags = it.activityInfo?.applicationInfo?.flags ?: 0
             (flags and ApplicationInfo.FLAG_SYSTEM) != 0
-        }
-        return (systemCandidate ?: candidates.firstOrNull())?.activityInfo?.packageName
+        }.mapNotNull { it.activityInfo?.packageName }
+
+        val otherPackages = candidates.mapNotNull { it.activityInfo?.packageName }
+        return (systemPackages + otherPackages).distinct()
     }
 }

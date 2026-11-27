@@ -101,7 +101,7 @@ import com.ipdial.ui.components.CallStatsDialog
 import com.ipdial.ui.components.ContactAvatar
 import com.ipdial.ui.components.NumberPickerDialog
 import com.ipdial.ui.components.filterHistoryForTarget
-import com.ipdial.ui.screens.call.formatDuration
+import com.ipdial.ui.screens.call.formatHistoryDurationSuffix
 import com.ipdial.ui.screens.home.CompactLineBadge
 import com.ipdial.ui.screens.home.callDirectionColor
 import com.ipdial.ui.theme.GlassMode
@@ -742,7 +742,7 @@ fun ContactDetailsContent(
                             val viaLabel = entry.lineLabel.ifBlank {
                                 if (entry.transport == CallTransport.SIM) "SIM" else "SIP"
                             }
-                            val durationStr = if (entry.missed) "" else " • ${formatDuration(entry.durationSeconds)}"
+                            val durationStr = formatHistoryDurationSuffix(entry.missed, entry.durationSeconds)
                             val entryNumber = cleanUri(entry.remoteUri)
                             val numberSuffix = if (phones.size > 1 && entryNumber.isNotBlank()) " • $entryNumber" else ""
 

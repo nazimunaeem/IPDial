@@ -63,4 +63,11 @@ class UtilsAndDialUriTest {
         assertEquals("alice", formatDisplayNumber("alice"))
         assertEquals("alice@sip.example.com", formatDisplayNumber("alice@sip.example.com"))
     }
+
+    @Test
+    fun formatHistoryDurationSuffixOmitsUnconnectedCalls() {
+        assertEquals("", com.ipdial.ui.screens.call.formatHistoryDurationSuffix(missed = false, durationSeconds = 0L))
+        assertEquals("", com.ipdial.ui.screens.call.formatHistoryDurationSuffix(missed = true, durationSeconds = 15L))
+        assertEquals(" • 00:42", com.ipdial.ui.screens.call.formatHistoryDurationSuffix(missed = false, durationSeconds = 42L))
+    }
 }

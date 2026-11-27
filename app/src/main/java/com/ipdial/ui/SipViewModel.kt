@@ -827,6 +827,20 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
 
+        // Skip the line picker modal when only a single SIM line or a single SIP account is available.
+        if (currentSims.size + enabledAccounts.size == 1) {
+            if (currentSims.size == 1) {
+                val onlySim = currentSims.single()
+                selectAccount(onlySim.id)
+                placeSimCallInternal(rawInput, onlySim)
+            } else {
+                val onlyAccount = enabledAccounts.single()
+                selectAccount(onlyAccount.id)
+                placeSipCallInternal(rawInput, onlyAccount)
+            }
+            return
+        }
+
         val preferredSim = currentSims.firstOrNull {
             it.id == preferredLineId || it.handle.id == preferredLineId ||
                 (!preferredLabel.isNullOrBlank() && it.label.equals(preferredLabel, ignoreCase = true))

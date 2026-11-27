@@ -184,6 +184,17 @@ object SimCallManager {
                 if (activeCall !== call || details == null) return
                 val cur = _callSession.value ?: return
                 val newNum = details.handle?.schemeSpecificPart?.takeIf { it.isNotBlank() } ?: cur.remoteUri
+                if (UssdHelper.isUssdCode(newNum)) {
+                    Log.d(TAG, "Ignoring transient USSD Telecom call updated in details: $newNum")
+                    activeCallback?.let { cb ->
+                        try {
+                            call.unregisterCallback(cb)
+                        } catch (_: Throwable) {}
+                    }
+                    activeCallback = null
+                    forceClear()
+                    return
+                }
                 val newName = details.callerDisplayName?.takeIf { it.isNotBlank() } ?: cur.remoteDisplayName
                 val newLine = SimPhoneAccountHelper.resolveLabelForHandle(ctx, details.accountHandle)
                 val isHd = com.ipdial.service.CallAudioQualityHelper.isTelecomHdAudio(details)

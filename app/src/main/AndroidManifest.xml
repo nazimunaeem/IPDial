@@ -239,6 +239,10 @@
             <data android:scheme="tel" />
         </intent>
         <intent>
+            <action android:name="android.intent.action.CALL" />
+            <data android:scheme="tel" />
+        </intent>
+        <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:mimeType="vnd.android.cursor.item/*" />
         </intent>

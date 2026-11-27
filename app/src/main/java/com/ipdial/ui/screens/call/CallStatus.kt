@@ -120,7 +120,8 @@ fun CompactHdBadge(modifier: Modifier = Modifier) {
 fun PulsingStateLabel(
     state: CallState,
     showShadow: Boolean = false,
-    textColor: Color? = null
+    textColor: Color? = null,
+    showLeadingSpacer: Boolean = true
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "statePulse")
 
@@ -188,8 +189,10 @@ fun PulsingStateLabel(
             modifier = Modifier.width(IntrinsicSize.Min),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Invisible dots on the left to balance the visible ones on the right
-            Box(modifier = Modifier.width(24.dp))
+            if (showLeadingSpacer) {
+                // Invisible dots on the left to balance the visible ones on the right
+                Box(modifier = Modifier.width(24.dp))
+            }
             Text(
                 text = label,
                 style = style,
@@ -215,3 +218,6 @@ fun formatDuration(seconds: Long): String {
     return if (h > 0) "%02d:%02d:%02d".format(h, m, s)
     else "%02d:%02d".format(m, s)
 }
+
+fun formatHistoryDurationSuffix(missed: Boolean, durationSeconds: Long): String =
+    if (missed || durationSeconds <= 0L) "" else " • ${formatDuration(durationSeconds)}"

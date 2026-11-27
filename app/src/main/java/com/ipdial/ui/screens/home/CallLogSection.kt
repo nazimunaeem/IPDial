@@ -73,7 +73,7 @@ import com.ipdial.ui.components.filterHistoryForTarget
 import com.ipdial.ui.screens.cleanDisplayName
 import com.ipdial.ui.screens.cleanUri
 import com.ipdial.ui.screens.call.CompactHdBadge
-import com.ipdial.ui.screens.call.formatDuration
+import com.ipdial.ui.screens.call.formatHistoryDurationSuffix
 import com.ipdial.ui.theme.GlassMode
 import com.ipdial.ui.theme.LocalGlassMode
 import com.ipdial.ui.theme.glass
@@ -251,7 +251,7 @@ fun CallLogItem(
                         accountId = entry.accountId,
                         modifier = Modifier.widthIn(max = 120.dp)
                     )
-                    val durationSuffix = if (entry.missed) "" else " • ${formatDuration(entry.durationSeconds)}"
+                    val durationSuffix = formatHistoryDurationSuffix(entry.missed, entry.durationSeconds)
                     Text(
                         text = "$timeStr$durationSuffix",
                         style = MaterialTheme.typography.bodySmall,
@@ -560,7 +560,7 @@ fun CallHistoryDetailDialog(
                                 val viaLabel = entry.lineLabel.ifBlank {
                                     if (entry.transport == CallTransport.SIM) "SIM" else "SIP"
                                 }
-                                val durationStr = if (entry.missed) "" else " • ${formatDuration(entry.durationSeconds)}"
+                                val durationStr = formatHistoryDurationSuffix(entry.missed, entry.durationSeconds)
                                 val entryNumber = cleanUri(entry.remoteUri)
                                 val numberSuffix = if ((contact?.numbers?.size ?: 0) > 1 && entryNumber.isNotBlank()) {
                                     " • $entryNumber"

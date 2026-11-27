@@ -510,14 +510,20 @@ private fun CallHeader(
                     }
                 }
             } else {
-                PulsingStateLabel(
-                    state = state,
-                    showShadow = photoMode,
-                    textColor = if (photoMode) Color.White else null
-                )
-                if (!hdBadgeLabel.isNullOrBlank()) {
-                    Spacer(Modifier.height(6.dp))
-                    HdAudioBadge(label = hdBadgeLabel, photoMode = photoMode)
+                val hasHdBadge = !hdBadgeLabel.isNullOrBlank()
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (hasHdBadge) {
+                        HdAudioBadge(label = hdBadgeLabel!!, photoMode = photoMode)
+                    }
+                    PulsingStateLabel(
+                        state = state,
+                        showShadow = photoMode,
+                        textColor = if (photoMode) Color.White else null,
+                        showLeadingSpacer = !hasHdBadge
+                    )
                 }
             }
         }
