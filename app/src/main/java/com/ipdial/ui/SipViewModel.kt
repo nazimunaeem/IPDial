@@ -853,28 +853,31 @@ class SipViewModel(app: Application) : AndroidViewModel(app) {
         }
 
         val app = getApplication<Application>()
+
+        // USSD / MMI codes (*121#, *247#, *#06#, *123*1#) go through UssdHelper,
+        // which dispatches via the system Telecom/Phone path (supporting interactive
+        // USSD menus) and falls back to TelephonyManager.sendUssdRequest or system dialer.
+        if (UssdHelper.isUssdCode(cleanNum)) {
+            _dialString.value = TextFieldValue("")
+            rememberDialLine(simLine.id)
+            UssdHelper.send(app, cleanNum, simLine) { success, message ->
+                if (!success || message.isNotBlank()) {
+                    _ussdDialog.value = UssdSession(
+                        request = cleanNum,
+                        response = message.takeIf { success && it.isNotBlank() },
+                        error = message.takeIf { !success }
+                    )
+                }
+            }
+            return
+        }
+
         if (androidx.core.content.ContextCompat.checkSelfPermission(
                 app,
                 android.Manifest.permission.CALL_PHONE
             ) != android.content.pm.PackageManager.PERMISSION_GRANTED
         ) {
             Toast.makeText(app, "Phone permission required for SIM calls", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        // USSD / MMI codes (*121#, *#06#, *123*1#) must go through TelephonyManager.
-        // Placing them as regular calls makes the network reply "connection problem or
-        // invalid MMI code".
-        if (UssdHelper.isUssdCode(cleanNum)) {
-            _dialString.value = TextFieldValue("")
-            rememberDialLine(simLine.id)
-            UssdHelper.send(app, cleanNum, simLine) { success, message ->
-                _ussdDialog.value = UssdSession(
-                    request = cleanNum,
-                    response = message.takeIf { success && it.isNotBlank() },
-                    error = message.takeIf { !success }
-                )
-            }
             return
         }
 

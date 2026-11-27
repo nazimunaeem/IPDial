@@ -104,6 +104,16 @@ object SimCallManager {
         if (activeCall === call) return
         val ctx = service.applicationContext
 
+        val rawState = getTelecomState(call)
+        val number = extractNumber(call)
+        if (UssdHelper.isUssdCode(number) ||
+            rawState == Call.STATE_DISCONNECTED ||
+            rawState == Call.STATE_DISCONNECTING
+        ) {
+            Log.d(TAG, "Ignoring transient USSD/disconnected Telecom call: number=$number state=$rawState")
+            return
+        }
+
         activeCallback?.let { prevCb ->
             try {
                 activeCall?.unregisterCallback(prevCb)
@@ -117,9 +127,7 @@ object SimCallManager {
         loggedCallLogId = null
         vibratedForCallId = -1
 
-        val rawState = getTelecomState(call)
         val direction = resolveDirection(call, rawState)
-        val number = extractNumber(call)
         val callerDisplay = call.details?.callerDisplayName?.takeIf { it.isNotBlank() } ?: number
         val lineLabel = SimPhoneAccountHelper.resolveLabelForHandle(ctx, call.details?.accountHandle)
         val callId = callIdSeq.incrementAndGet()
@@ -359,6 +367,7 @@ object SimCallManager {
     }
 
     private fun persistCallLogIfNeeded(ctx: Context, session: CallSession, call: Call) {
+        if (UssdHelper.isUssdCode(session.remoteUri)) return
         if (loggedCallLogId == session.callLogId) return
         loggedCallLogId = session.callLogId
 

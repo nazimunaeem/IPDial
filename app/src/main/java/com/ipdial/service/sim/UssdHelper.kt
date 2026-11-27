@@ -3,32 +3,56 @@ package com.ipdial.service.sim
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.telecom.TelecomManager
 import android.telephony.SubscriptionManager
 import android.telephony.TelephonyManager
 import android.util.Log
 import androidx.core.content.ContextCompat
 
 /**
- * Sends USSD / MMI codes (e.g. *121#, *#06#, *123*1#) through the telephony stack.
+ * Sends USSD / MMI codes (e.g. *121#, *247#, *#06#, *123*1#) via Android's system telephony path.
  *
- * Dialing these as normal calls (TelecomManager.placeCall) makes the modem reject them
- * with the generic "connection problem or invalid MMI code" error. They must go through
- * [TelephonyManager.sendUssdRequest] on the selected SIM subscription instead.
+ * Interactive carrier USSD sessions (common for mobile menus and banking/operator codes) and
+ * supplementary MMI commands are not supported by [TelephonyManager.sendUssdRequest] on many
+ * devices and carriers. Routing through [TelecomManager.handleMmi] / [TelecomManager.placeCall]
+ * (with `Uri.fromParts("tel", code, null)` so `#` is never treated as a URI fragment) delegates
+ * directly to the system Phone/Telecom stack, which opens Android's native interactive USSD dialog.
+ * [TelephonyManager.sendUssdRequest] is retained only as a fallback when Telecom cannot dispatch.
  */
 object UssdHelper {
 
     private const val TAG = "UssdHelper"
 
-    /** True for MMI/USSD strings such as *121#, *#06#, *123*1#, #31#. */
+    /** True for MMI/USSD/special strings such as *121#, *#06#, *123*1#, #31#, *#*#4636#*#*. */
     fun isUssdCode(raw: String): Boolean {
         val code = raw.trim()
+        if (extractSecretCode(code) != null) return true
         if (code.length < 3) return false
         if (!code.startsWith("*") && !code.startsWith("#")) return false
         if (!code.endsWith("#")) return false
         return code.all { it.isDigit() || it == '*' || it == '#' || it == '+' }
+    }
+
+    /** Extracts the inner code from `*#*#<code>#*#*`, or null if not a secret dialer code. */
+    internal fun extractSecretCode(raw: String): String? {
+        val code = raw.trim()
+        if (!code.startsWith("*#*#") || !code.endsWith("#*#*") || code.length <= 8) return null
+        val inner = code.substring(4, code.length - 4)
+        return inner.takeIf { it.isNotEmpty() && it.all { ch -> ch.isDigit() || ch == '*' || ch == '#' } }
+    }
+
+    /** True for local device information MMI codes (*#06#, *#07#) handled by system dialer/MMI. */
+    internal fun isLocalDeviceInfoCode(raw: String): Boolean {
+        val code = raw.trim()
+        return code == "*#06#" || code == "*#07#"
     }
 
     @SuppressLint("MissingPermission")
@@ -38,32 +62,157 @@ object UssdHelper {
         simLine: SimLine,
         onResult: (success: Boolean, message: String) -> Unit
     ) {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            onResult(false, "Phone permission is required to send USSD codes")
+        val trimmed = code.trim()
+        if (!isUssdCode(trimmed)) {
+            onResult(false, "Invalid USSD code")
             return
         }
 
-        val baseTm = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
-        if (baseTm == null) {
-            onResult(false, "Telephony is not available on this device")
-            return
-        }
+        val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
+        val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
 
-        val subId = simLine.subscriptionId
-            ?: SubscriptionManager.getDefaultSubscriptionId()
-        val tm = if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
-            try {
-                baseTm.createForSubscriptionId(subId)
-            } catch (e: Exception) {
-                Log.w(TAG, "createForSubscriptionId($subId) failed: ${e.message}")
-                baseTm
+        // 1. Secret dialer codes (*#*#4636#*#*) -> TelephonyManager.sendDialerSpecialCode / system dialer
+        val secretCode = extractSecretCode(trimmed)
+        if (secretCode != null) {
+            if (trySendSecretCode(context, telephonyManager, simLine, secretCode)) {
+                onResult(true, "")
+                return
             }
-        } else {
-            baseTm
+            if (openInSystemDialer(context, telecomManager, trimmed)) {
+                onResult(true, "")
+                return
+            }
+            onResult(false, "Unable to open special dialer code")
+            return
         }
 
+        // 2. Local device info codes (*#06#, *#07#) -> TelecomManager.handleMmi or system dialer
+        if (isLocalDeviceInfoCode(trimmed)) {
+            if (tryHandleMmi(context, telecomManager, trimmed, simLine)) {
+                onResult(true, "")
+                return
+            }
+            if (openInSystemDialer(context, telecomManager, trimmed)) {
+                onResult(true, "")
+                return
+            }
+        }
+
+        val hasCallPermission = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.CALL_PHONE
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (!hasCallPermission) {
+            if (openInSystemDialer(context, telecomManager, trimmed)) {
+                onResult(true, "")
+            } else {
+                onResult(false, "Phone permission is required to send USSD codes")
+            }
+            return
+        }
+
+        // 3. System Telecom MMI path (handles PIN/PUK MMI & OEM MMI extensions when default dialer)
+        if (tryHandleMmi(context, telecomManager, trimmed, simLine)) {
+            Log.i(TAG, "MMI handled via TelecomManager.handleMmi on ${simLine.label}: $trimmed")
+            onResult(true, "")
+            return
+        }
+
+        // 4. Primary System USSD path: TelecomManager.placeCall -> TelephonyConnectionService ->
+        // system Phone app (handles single-shot & interactive multi-step USSD menus natively).
+        if (tryPlaceCallUssd(telecomManager, trimmed, simLine)) {
+            Log.i(TAG, "USSD dispatched via system Telecom path on ${simLine.label}: $trimmed")
+            onResult(true, "")
+            return
+        }
+
+        // 5. Fallback to TelephonyManager.sendUssdRequest if TelecomManager.placeCall couldn't dispatch
+        if (telephonyManager != null) {
+            sendViaTelephonyManagerApi(context, telephonyManager, trimmed, simLine, onResult)
+            return
+        }
+
+        // 6. Last resort: hand off to the pre-installed system dialer
+        if (openInSystemDialer(context, telecomManager, trimmed)) {
+            onResult(true, "")
+        } else {
+            onResult(false, "Telephony service is not available on this device")
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun trySendSecretCode(
+        context: Context,
+        baseTm: TelephonyManager?,
+        simLine: SimLine,
+        secretCode: String
+    ): Boolean {
+        if (baseTm == null || !DefaultDialerHelper.isDefaultDialer(context)) return false
+        return try {
+            val tm = resolveTelephonyForSim(baseTm, simLine)
+            tm.sendDialerSpecialCode(secretCode)
+            true
+        } catch (e: SecurityException) {
+            Log.w(TAG, "sendDialerSpecialCode permission denied: ${e.message}")
+            false
+        } catch (e: Exception) {
+            Log.w(TAG, "sendDialerSpecialCode failed: ${e.message}")
+            false
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun tryHandleMmi(
+        context: Context,
+        telecomManager: TelecomManager?,
+        code: String,
+        simLine: SimLine
+    ): Boolean {
+        if (telecomManager == null || !DefaultDialerHelper.isDefaultDialer(context)) return false
+        return try {
+            telecomManager.handleMmi(code, simLine.handle)
+        } catch (e: SecurityException) {
+            Log.w(TAG, "handleMmi permission denied: ${e.message}")
+            false
+        } catch (e: Exception) {
+            Log.w(TAG, "handleMmi failed: ${e.message}")
+            false
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun tryPlaceCallUssd(
+        telecomManager: TelecomManager?,
+        code: String,
+        simLine: SimLine
+    ): Boolean {
+        if (telecomManager == null) return false
+        val uri = Uri.fromParts("tel", code, null)
+        val extras = Bundle().apply {
+            putParcelable(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, simLine.handle)
+        }
+        return try {
+            telecomManager.placeCall(uri, extras)
+            true
+        } catch (e: SecurityException) {
+            Log.w(TAG, "TelecomManager.placeCall USSD security exception: ${e.message}")
+            false
+        } catch (e: Exception) {
+            Log.w(TAG, "TelecomManager.placeCall USSD failed: ${e.message}")
+            false
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun sendViaTelephonyManagerApi(
+        context: Context,
+        baseTm: TelephonyManager,
+        code: String,
+        simLine: SimLine,
+        onResult: (success: Boolean, message: String) -> Unit
+    ) {
+        val tm = resolveTelephonyForSim(baseTm, simLine)
         val handler = Handler(Looper.getMainLooper())
         val callback = object : TelephonyManager.UssdResponseCallback() {
             override fun onReceiveUssdResponse(
@@ -92,13 +241,103 @@ object UssdHelper {
 
         try {
             tm.sendUssdRequest(code, callback, handler)
-            Log.i(TAG, "USSD sent on ${simLine.label}: $code")
+            Log.i(TAG, "USSD sent via TelephonyManager fallback on ${simLine.label}: $code")
         } catch (e: SecurityException) {
             Log.e(TAG, "SecurityException sending USSD: ${e.message}", e)
             onResult(false, "Permission denied while sending USSD")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to send USSD: ${e.message}", e)
-            onResult(false, e.message ?: "Failed to send USSD code")
+            val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
+            if (openInSystemDialer(context, telecomManager, code)) {
+                onResult(true, "")
+            } else {
+                onResult(false, e.message ?: "Failed to send USSD code")
+            }
         }
+    }
+
+    private fun resolveTelephonyForSim(
+        baseTm: TelephonyManager,
+        simLine: SimLine
+    ): TelephonyManager {
+        val handleSubId = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                baseTm.getSubscriptionId(simLine.handle)
+            } catch (_: Throwable) {
+                SubscriptionManager.INVALID_SUBSCRIPTION_ID
+            }
+        } else {
+            SubscriptionManager.INVALID_SUBSCRIPTION_ID
+        }
+        val subId = handleSubId.takeIf { it != SubscriptionManager.INVALID_SUBSCRIPTION_ID }
+            ?: simLine.subscriptionId
+            ?: SubscriptionManager.getDefaultSubscriptionId()
+
+        return if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+            try {
+                baseTm.createForSubscriptionId(subId)
+            } catch (e: Exception) {
+                Log.w(TAG, "createForSubscriptionId($subId) failed: ${e.message}")
+                baseTm
+            }
+        } else {
+            baseTm
+        }
+    }
+
+    private fun openInSystemDialer(
+        context: Context,
+        telecomManager: TelecomManager?,
+        code: String
+    ): Boolean {
+        val uri = Uri.fromParts("tel", code, null)
+        val systemPkg = resolveExternalDialerPackage(context, telecomManager, uri) ?: return false
+        return try {
+            val intent = Intent(Intent.ACTION_DIAL, uri).apply {
+                setPackage(systemPkg)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+            Log.i(TAG, "Opened USSD/MMI code in external system dialer ($systemPkg): $code")
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to open external system dialer ($systemPkg): ${e.message}")
+            false
+        }
+    }
+
+    private fun resolveExternalDialerPackage(
+        context: Context,
+        telecomManager: TelecomManager?,
+        uri: Uri
+    ): String? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val sysPkg = telecomManager?.systemDialerPackage?.takeIf {
+                it.isNotBlank() && it != context.packageName
+            }
+            if (sysPkg != null) return sysPkg
+        }
+
+        val pm = context.packageManager
+        val probe = Intent(Intent.ACTION_DIAL, uri)
+        val candidates = try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                pm.queryIntentActivities(
+                    probe,
+                    PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong())
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                pm.queryIntentActivities(probe, PackageManager.MATCH_DEFAULT_ONLY)
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }.filter { it.activityInfo?.packageName != null && it.activityInfo.packageName != context.packageName }
+
+        val systemCandidate = candidates.firstOrNull {
+            val flags = it.activityInfo?.applicationInfo?.flags ?: 0
+            (flags and ApplicationInfo.FLAG_SYSTEM) != 0
+        }
+        return (systemCandidate ?: candidates.firstOrNull())?.activityInfo?.packageName
     }
 }

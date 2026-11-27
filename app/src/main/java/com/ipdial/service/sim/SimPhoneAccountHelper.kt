@@ -12,6 +12,7 @@ import android.telecom.PhoneAccountHandle
 import android.telecom.TelecomManager
 import android.telephony.SubscriptionInfo
 import android.telephony.SubscriptionManager
+import android.telephony.TelephonyManager
 import android.util.Log
 import androidx.core.content.ContextCompat
 
@@ -51,6 +52,7 @@ object SimPhoneAccountHelper {
 
         val tm = context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager ?: return emptyList()
         val sm = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? SubscriptionManager
+        val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
 
         val handles = try {
             tm.callCapablePhoneAccounts
@@ -96,7 +98,7 @@ object SimPhoneAccountHelper {
             } catch (_: Exception) {
                 null
             }
-            val matchedSub = matchSubscription(handle, activeSubs, idx, simHandles.size)
+            val matchedSub = matchSubscription(telephonyManager, handle, activeSubs, idx, simHandles.size)
             val slotIdx = matchedSub?.simSlotIndex?.takeIf { it >= 0 }
             // Use the name the user gave the SIM in device settings when available.
             val renamed = matchedSub?.displayName?.toString()?.trim()?.takeIf { it.isNotBlank() }
@@ -133,12 +135,23 @@ object SimPhoneAccountHelper {
     }
 
     private fun matchSubscription(
+        telephonyManager: TelephonyManager?,
         handle: PhoneAccountHandle,
         subs: List<SubscriptionInfo>,
         index: Int,
         totalHandles: Int
     ): SubscriptionInfo? {
         if (subs.isEmpty()) return null
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && telephonyManager != null) {
+            val resolvedSubId = try {
+                telephonyManager.getSubscriptionId(handle)
+            } catch (_: Throwable) {
+                SubscriptionManager.INVALID_SUBSCRIPTION_ID
+            }
+            if (resolvedSubId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+                subs.firstOrNull { it.subscriptionId == resolvedSubId }?.let { return it }
+            }
+        }
         subs.firstOrNull { sub ->
             handle.id == sub.subscriptionId.toString() ||
                 (!sub.iccId.isNullOrBlank() && handle.id.startsWith(sub.iccId, ignoreCase = true))

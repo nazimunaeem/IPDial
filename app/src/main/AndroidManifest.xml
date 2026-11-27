@@ -235,6 +235,10 @@
 
     <queries>
         <intent>
+            <action android:name="android.intent.action.DIAL" />
+            <data android:scheme="tel" />
+        </intent>
+        <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:mimeType="vnd.android.cursor.item/*" />
         </intent>
